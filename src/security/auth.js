@@ -197,8 +197,9 @@ function clearFailures(ip) {
 
 function isSafeRedirect(path) {
   if (!path || typeof path !== 'string') return false;
-  // Must start with / and not contain protocol or double slashes
-  return path.startsWith('/') && !path.startsWith('//') && !path.includes('://');
+  // Must start with / and not contain protocol, double slashes, backslashes, or control chars
+  return path.startsWith('/') && !path.startsWith('//') && !path.includes('://')
+    && !path.includes('\\') && !/[\x00-\x1f]/.test(path);
 }
 
 // --- Login page template ---
@@ -352,13 +353,28 @@ export function setupAuth(app, authConfig, baseUrl) {
     res.redirect(302, redirectTo);
   });
 
-  // POST /logout
+  // POST /logout — strict same-origin CSRF protection
   app.post('/logout', (req, res) => {
-    // Origin/Referer check for CSRF protection
-    const origin = req.headers.origin || '';
-    const referer = req.headers.referer || '';
-    const host = req.headers.host || '';
-    if (origin && !origin.includes(host) && referer && !referer.includes(host)) {
+    const proto = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+    const expectedOrigin = `${proto}://${req.headers.host}`;
+    const origin = req.headers.origin;
+    const referer = req.headers.referer;
+
+    // Priority: Origin header > Referer header > reject
+    if (origin) {
+      if (origin !== expectedOrigin) {
+        return res.status(403).send('Forbidden');
+      }
+    } else if (referer) {
+      try {
+        if (new URL(referer).origin !== expectedOrigin) {
+          return res.status(403).send('Forbidden');
+        }
+      } catch {
+        return res.status(403).send('Forbidden');
+      }
+    } else {
+      // Neither Origin nor Referer — reject (most conservative)
       return res.status(403).send('Forbidden');
     }
 
@@ -378,7 +394,15 @@ export function setupAuth(app, authConfig, baseUrl) {
     }
 
     if (validateSession(getSessionCookie(req))) {
-      // Authenticated — prevent caching of protected content
+      // Authenticated — mark for no-store and override any downstream Cache-Control
+      res.locals.authenticated = true;
+      const origSetHeader = res.setHeader.bind(res);
+      res.setHeader = function(name, value) {
+        if (name.toLowerCase() === 'cache-control' && res.locals.authenticated) {
+          return origSetHeader('Cache-Control', 'no-store');
+        }
+        return origSetHeader(name, value);
+      };
       res.setHeader('Cache-Control', 'no-store');
       return next();
     }
