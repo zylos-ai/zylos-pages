@@ -33,7 +33,7 @@ export function pageRoute(config) {
       // ETag / 304 handling
       const clientEtag = req.headers['if-none-match'];
       if (clientEtag && clientEtag === result.etag) {
-        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, render_ms: elapsed });
+        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed });
         return res.status(304).end();
       }
 
@@ -41,7 +41,7 @@ export function pageRoute(config) {
       res.setHeader('Cache-Control', 'public, max-age=60');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
-      logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, render_ms: elapsed });
+      logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed });
       res.send(result.html);
     } catch (err) {
       const elapsed = Math.round(performance.now() - start);

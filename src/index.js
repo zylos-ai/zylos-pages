@@ -13,8 +13,6 @@ dotenv.config({ path: path.join(process.env.HOME, 'zylos/.env') });
 
 import express from 'express';
 import { getConfig, watchConfig, DATA_DIR } from './lib/config.js';
-import { initHighlighter } from './markdown/highlight.js';
-import { initRenderService } from './services/renderService.js';
 import { initCache } from './cache/pageCache.js';
 import { startWatcher, stopWatcher } from './services/watchService.js';
 import { securityHeaders } from './security/headers.js';
@@ -53,13 +51,7 @@ watchConfig((newConfig) => {
 
 // Main component logic
 async function main() {
-  // Initialize shiki highlighter
-  await initHighlighter(config.theme.codeTheme);
-
-  // Initialize render service
-  initRenderService({ codeTheme: config.theme.codeTheme });
-
-  // Initialize cache
+  // Initialize cache (render service uses worker_threads — no main-thread init needed)
   initCache({
     maxEntries: config.cache.maxEntries,
     ttlSeconds: config.cache.ttlSeconds,
