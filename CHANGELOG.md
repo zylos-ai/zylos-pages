@@ -1,9 +1,8 @@
 # Changelog
 
-## [0.1.0] - 2026-03-21
+## [0.1.0] - 2026-03-22
 
 ### Added
-- Initial release
 - Markdown rendering with GFM support (tables, task lists, strikethrough)
 - Code syntax highlighting via shiki (VS Code quality)
 - YAML frontmatter parsing (title, description, date, tags)
@@ -13,7 +12,21 @@
 - Content-hash ETag for HTTP caching
 - File watcher for automatic cache invalidation
 - Dark/light theme with auto-detection and manual toggle
+- Cookie-based session authentication with scrypt password hashing
+- CSRF protection (strict Origin/Referer validation)
+- Per-IP brute-force protection (5 attempts/min)
+- Login/logout pages with sign-out button
+- Responsive layout with mobile table scroll fix
 - Security: path traversal protection, HTML sanitization, CSP headers
 - Rate limiting and file size limits
-- Responsive layout with print stylesheet
+- Print stylesheet
 - Structured JSON logging for observability
+
+### Fixed
+- Caddy reverse proxy strip_prefix for correct path routing
+- 404 handling with ENOENT propagation from worker
+- Cache invalidation and render timeout (P0 blockers)
+- Post-login redirect behind HTTPS reverse proxy
+- Logout CSRF hardening, Cache-Control no-store override
+- Corrupted password hash resilience (try/catch in verifyPassword)
+- CSP policy, H1 deduplication, cache-busting (CocoClaw review)
