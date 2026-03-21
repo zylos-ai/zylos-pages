@@ -1,33 +1,47 @@
-// Authentication middleware for zylos-pages
-// Uses scrypt (Node built-in) for password hashing, with brute-force protection.
+// Cookie-based session authentication for zylos-pages
+// Implements CocoClaw's 9-point security checklist.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 
-const AUTH_USERNAME = 'pages';
 const SCRYPT_KEYLEN = 64;
+const COOKIE_NAME = '__Host-zylos_pages_session';
+const SESSION_ABSOLUTE_MS = 86400_000;   // 24 hours
+const SESSION_IDLE_MS = 3600_000;        // 60 minutes
+const CLEANUP_INTERVAL_MS = 300_000;     // 5 minutes
 
-// Brute-force protection: per-IP failure tracking
+// Session store: Map<sha256(token), { createdAt, lastActivityAt }>
+const sessions = new Map();
+
+// Brute-force protection
 const failedAttempts = new Map(); // ip -> { count, firstFailAt }
 const MAX_FAILURES = 5;
-const WINDOW_MS = 60_000;      // 1 minute window
-const LOCKOUT_MS = 600_000;    // 10 minute lockout
+const WINDOW_MS = 60_000;
+const LOCKOUT_MS = 600_000;
+let globalFailures = { count: 0, resetAt: Date.now() + 60_000 };
+const GLOBAL_MAX_PER_MIN = 30;
 
-/**
- * Hash a plaintext password with scrypt.
- * @returns {string} format: "scrypt:<salt_hex>:<hash_hex>"
- */
+// Periodic session cleanup
+setInterval(() => {
+  const now = Date.now();
+  for (const [hash, session] of sessions) {
+    if (now - session.createdAt > SESSION_ABSOLUTE_MS ||
+        now - session.lastActivityAt > SESSION_IDLE_MS) {
+      sessions.delete(hash);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+
+// --- Password hashing ---
+
 export function hashPassword(plaintext) {
   const salt = crypto.randomBytes(32);
   const hash = crypto.scryptSync(plaintext, salt, SCRYPT_KEYLEN);
   return `scrypt:${salt.toString('hex')}:${hash.toString('hex')}`;
 }
 
-/**
- * Verify a plaintext password against a scrypt hash.
- */
 function verifyPassword(plaintext, stored) {
   try {
     if (!stored.startsWith('scrypt:')) return false;
@@ -43,22 +57,13 @@ function verifyPassword(plaintext, stored) {
   }
 }
 
-/**
- * Check if a stored password is plaintext (not hashed).
- */
 function isPlaintext(password) {
   return typeof password === 'string' && !password.startsWith('scrypt:');
 }
 
-/**
- * Migrate plaintext password to scrypt hash in config.json.
- */
 export function migratePasswordIfNeeded(authConfig) {
   if (!authConfig.password || !isPlaintext(authConfig.password)) return;
-
-  const plaintext = authConfig.password;
-  const hashed = hashPassword(plaintext);
-
+  const hashed = hashPassword(authConfig.password);
   try {
     const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
     config.auth.password = hashed;
@@ -70,121 +75,317 @@ export function migratePasswordIfNeeded(authConfig) {
   }
 }
 
-/**
- * Check brute-force lockout for an IP.
- * @returns {boolean} true if IP is locked out
- */
+// --- Session management ---
+
+function sha256(data) {
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
+
+function createSession() {
+  const token = crypto.randomBytes(32).toString('hex');
+  const hash = sha256(token);
+  const now = Date.now();
+  sessions.set(hash, { createdAt: now, lastActivityAt: now });
+  return token;
+}
+
+function validateSession(token) {
+  if (!token) return false;
+  const hash = sha256(token);
+  const session = sessions.get(hash);
+  if (!session) return false;
+  const now = Date.now();
+  if (now - session.createdAt > SESSION_ABSOLUTE_MS ||
+      now - session.lastActivityAt > SESSION_IDLE_MS) {
+    sessions.delete(hash);
+    return false;
+  }
+  session.lastActivityAt = now;
+  return true;
+}
+
+function destroySession(token) {
+  if (!token) return;
+  sessions.delete(sha256(token));
+}
+
+// --- Cookie helpers ---
+
+function parseCookies(header) {
+  const cookies = {};
+  if (!header) return cookies;
+  for (const pair of header.split(';')) {
+    const [name, ...rest] = pair.trim().split('=');
+    if (name) cookies[name.trim()] = rest.join('=');
+  }
+  return cookies;
+}
+
+function getSessionCookie(req) {
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies[COOKIE_NAME] || null;
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie',
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`
+  );
+}
+
+function clearSessionCookie(res) {
+  res.setHeader('Set-Cookie',
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+  );
+}
+
+// --- Brute-force protection ---
+
+function getClientIp(req) {
+  // Only trust X-Forwarded-For from local reverse proxy (Caddy)
+  const remoteIp = req.socket.remoteAddress || '';
+  if (remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1') {
+    const xff = req.headers['x-forwarded-for'];
+    if (xff) return xff.split(',')[0].trim();
+  }
+  return remoteIp;
+}
+
 function isLockedOut(ip) {
   const record = failedAttempts.get(ip);
   if (!record) return false;
-
   const now = Date.now();
-
-  // If in lockout period
   if (record.count >= MAX_FAILURES) {
-    if (now - record.firstFailAt < LOCKOUT_MS) {
-      return true;
-    }
-    // Lockout expired, reset
+    if (now - record.firstFailAt < LOCKOUT_MS) return true;
     failedAttempts.delete(ip);
     return false;
   }
-
-  // If window expired, reset
   if (now - record.firstFailAt > WINDOW_MS) {
     failedAttempts.delete(ip);
     return false;
   }
-
   return false;
 }
 
-/**
- * Record a failed auth attempt.
- */
+function isGlobalLimited() {
+  const now = Date.now();
+  if (now > globalFailures.resetAt) {
+    globalFailures = { count: 0, resetAt: now + 60_000 };
+  }
+  return globalFailures.count >= GLOBAL_MAX_PER_MIN;
+}
+
 function recordFailure(ip) {
   const now = Date.now();
   const record = failedAttempts.get(ip);
-
   if (!record || now - record.firstFailAt > WINDOW_MS) {
     failedAttempts.set(ip, { count: 1, firstFailAt: now });
   } else {
     record.count++;
   }
+  if (now > globalFailures.resetAt) {
+    globalFailures = { count: 1, resetAt: now + 60_000 };
+  } else {
+    globalFailures.count++;
+  }
 }
 
-/**
- * Clear failure record on success.
- */
 function clearFailures(ip) {
   failedAttempts.delete(ip);
 }
 
+// --- Redirect safety ---
+
+function isSafeRedirect(path) {
+  if (!path || typeof path !== 'string') return false;
+  // Must start with / and not contain protocol or double slashes
+  return path.startsWith('/') && !path.startsWith('//') && !path.includes('://');
+}
+
+// --- Login page template ---
+
+function loginPageHtml(baseUrl, error, next) {
+  const nextParam = next && isSafeRedirect(next) ? next : '';
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Zylos Pages</title>
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
+  <script src="${baseUrl}/_assets/theme.js"></script>
+  <style>
+    .login-container {
+      max-width: 360px;
+      margin: 80px auto;
+      padding: 0 24px;
+    }
+    .login-card {
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 32px 24px;
+      background: var(--color-header-bg);
+    }
+    .login-card h1 {
+      font-size: 1.25em;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .login-card label {
+      display: block;
+      font-size: 14px;
+      color: var(--color-text-secondary);
+      margin-bottom: 6px;
+    }
+    .login-card input[type="password"] {
+      width: 100%;
+      padding: 8px 12px;
+      font-size: 14px;
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      background: var(--color-bg);
+      color: var(--color-text);
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+    .login-card input[type="password"]:focus {
+      outline: none;
+      border-color: var(--color-link);
+    }
+    .login-card button {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      background: var(--color-link);
+      color: #fff;
+      cursor: pointer;
+    }
+    .login-card button:hover { opacity: 0.9; }
+    .login-error {
+      color: #d1242f;
+      font-size: 13px;
+      text-align: center;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="login-card">
+      <h1>Zylos Pages</h1>
+      ${error ? `<p class="login-error">${error}</p>` : ''}
+      <form method="POST" action="${baseUrl}/login">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autofocus required>
+        ${nextParam ? `<input type="hidden" name="next" value="${nextParam.replace(/"/g, '&quot;')}">` : ''}
+        <button type="submit">Sign in</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+// --- Main exports ---
+
 /**
- * Create a Basic Auth middleware.
- * @param {object} authConfig - { enabled: boolean, password: string|null }
- * @returns Express middleware
+ * Set up cookie-based session auth on an Express app.
+ * @param {Express} app
+ * @param {object} authConfig - { enabled, password }
+ * @param {string} baseUrl - e.g. '/pages'
  */
-export function createAuth(authConfig) {
-  // Auto-migrate plaintext passwords on startup
+export function setupAuth(app, authConfig, baseUrl) {
   migratePasswordIfNeeded(authConfig);
 
-  return (req, res, next) => {
-    // Skip if auth disabled or no password configured
-    if (!authConfig.enabled || !authConfig.password) {
-      return next();
+  // Parse URL-encoded bodies for login form
+  app.use('/login', (req, res, next) => {
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        req.body = Object.fromEntries(new URLSearchParams(body));
+        next();
+      });
+    } else {
+      next();
     }
+  });
 
-    // Skip auth for static assets
-    if (req.path.startsWith('/_assets')) {
-      return next();
+  // GET /login — show login page
+  app.get('/login', (req, res) => {
+    // If already authenticated, redirect to index
+    if (validateSession(getSessionCookie(req))) {
+      return res.redirect(baseUrl + '/');
     }
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(loginPageHtml(baseUrl, null, req.query.next));
+  });
 
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  // POST /login — authenticate
+  app.post('/login', (req, res) => {
+    const ip = getClientIp(req);
 
-    // Check brute-force lockout
-    if (isLockedOut(ip)) {
+    if (isLockedOut(ip) || isGlobalLimited()) {
       logger.warn('auth blocked', { ip, reason: 'lockout' });
-      return res.status(429).send('Too many failed attempts. Try again later.');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.status(429).send(loginPageHtml(baseUrl, 'Too many attempts. Try again later.', req.body?.next));
     }
 
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Basic ')) {
-      res.setHeader('WWW-Authenticate', 'Basic realm="Zylos Pages"');
-      return res.status(401).send('Authentication required');
-    }
+    const password = req.body?.password || '';
 
-    let decoded;
-    try {
-      decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf-8');
-    } catch {
-      recordFailure(ip);
-      logger.warn('auth failed', { ip, reason: 'invalid_encoding' });
-      res.setHeader('WWW-Authenticate', 'Basic realm="Zylos Pages"');
-      return res.status(401).send('Invalid credentials');
-    }
-
-    const colonIdx = decoded.indexOf(':');
-    const username = colonIdx >= 0 ? decoded.slice(0, colonIdx) : '';
-    const password = colonIdx >= 0 ? decoded.slice(colonIdx + 1) : decoded;
-
-    // Verify fixed username
-    if (username !== AUTH_USERNAME) {
-      recordFailure(ip);
-      logger.warn('auth failed', { ip, reason: 'invalid_username' });
-      res.setHeader('WWW-Authenticate', 'Basic realm="Zylos Pages"');
-      return res.status(401).send('Invalid credentials');
-    }
-
-    // Verify password
     if (!verifyPassword(password, authConfig.password)) {
       recordFailure(ip);
       logger.warn('auth failed', { ip, reason: 'invalid_password' });
-      res.setHeader('WWW-Authenticate', 'Basic realm="Zylos Pages"');
-      return res.status(401).send('Invalid credentials');
+      res.setHeader('Cache-Control', 'no-store');
+      return res.send(loginPageHtml(baseUrl, 'Incorrect password.', req.body?.next));
     }
 
+    // Success — always issue new token (prevents session fixation)
     clearFailures(ip);
-    next();
-  };
+    const token = createSession();
+    setSessionCookie(res, token);
+
+    const next = req.body?.next;
+    const redirectTo = (next && isSafeRedirect(next)) ? next : baseUrl + '/';
+    res.redirect(302, redirectTo);
+  });
+
+  // POST /logout
+  app.post('/logout', (req, res) => {
+    // Origin/Referer check for CSRF protection
+    const origin = req.headers.origin || '';
+    const referer = req.headers.referer || '';
+    const host = req.headers.host || '';
+    if (origin && !origin.includes(host) && referer && !referer.includes(host)) {
+      return res.status(403).send('Forbidden');
+    }
+
+    destroySession(getSessionCookie(req));
+    clearSessionCookie(res);
+    res.redirect(302, baseUrl + '/login');
+  });
+
+  // Auth middleware — protect all other routes
+  app.use((req, res, next) => {
+    // Skip if auth disabled or no password
+    if (!authConfig.enabled || !authConfig.password) return next();
+
+    // Skip static assets and login/logout routes
+    if (req.path.startsWith('/_assets') || req.path === '/login' || req.path === '/logout') {
+      return next();
+    }
+
+    if (validateSession(getSessionCookie(req))) {
+      // Authenticated — prevent caching of protected content
+      res.setHeader('Cache-Control', 'no-store');
+      return next();
+    }
+
+    // Not authenticated — redirect to login
+    const next_url = req.originalUrl || req.url;
+    const safeNext = isSafeRedirect(next_url) ? `?next=${encodeURIComponent(next_url)}` : '';
+    res.redirect(302, `${baseUrl}/login${safeNext}`);
+  });
 }

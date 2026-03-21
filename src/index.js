@@ -16,7 +16,7 @@ import { getConfig, watchConfig, DATA_DIR } from './lib/config.js';
 import { initCache } from './cache/pageCache.js';
 import { startWatcher, stopWatcher } from './services/watchService.js';
 import { securityHeaders } from './security/headers.js';
-import { createAuth } from './security/auth.js';
+import { setupAuth } from './security/auth.js';
 import { createRateLimiter } from './security/rateLimit.js';
 import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
@@ -68,18 +68,18 @@ async function main() {
   // Security headers
   app.use(securityHeaders());
 
-  // Authentication
-  app.use(createAuth(config.auth || {}));
-
   // Rate limiting
   app.use(createRateLimiter(config.rateLimit));
 
-  // Serve static assets (CSS)
+  // Serve static assets (CSS/JS) — before auth so login page can load them
   const assetsDir = path.join(import.meta.dirname, '..', 'assets');
   app.use('/_assets', express.static(assetsDir, {
     maxAge: '1d',
     immutable: true,
   }));
+
+  // Cookie-based session authentication
+  setupAuth(app, config.auth || {}, '/pages');
 
   // Routes
   app.get('/', indexRoute(config));
