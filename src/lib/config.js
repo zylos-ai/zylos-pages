@@ -30,6 +30,10 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     minHeadings: 3,
   },
+  auth: {
+    enabled: true,
+    password: null,
+  },
   security: {
     allowRawHtml: false,
     maxFileSizeBytes: 1048576,

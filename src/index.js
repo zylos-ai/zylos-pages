@@ -16,6 +16,7 @@ import { getConfig, watchConfig, DATA_DIR } from './lib/config.js';
 import { initCache } from './cache/pageCache.js';
 import { startWatcher, stopWatcher } from './services/watchService.js';
 import { securityHeaders } from './security/headers.js';
+import { createAuth } from './security/auth.js';
 import { createRateLimiter } from './security/rateLimit.js';
 import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
@@ -31,6 +32,7 @@ console.log(`[pages] Config loaded, enabled: ${config.enabled}`);
 console.log(`[pages] Content dir: ${config.contentDir}`);
 console.log(`[pages] Security: rawHtml=${config.security.allowRawHtml}, maxFileSize=${config.security.maxFileSizeBytes}, timeout=${config.security.renderTimeoutMs}ms`);
 console.log(`[pages] Cache: max=${config.cache.maxEntries}, ttl=${config.cache.ttlSeconds}s`);
+console.log(`[pages] Auth: ${config.auth?.enabled && config.auth?.password ? 'enabled' : 'disabled'}`);
 
 if (!config.enabled) {
   console.log(`[pages] Component disabled in config, exiting.`);
@@ -65,6 +67,9 @@ async function main() {
 
   // Security headers
   app.use(securityHeaders());
+
+  // Authentication
+  app.use(createAuth(config.auth || {}));
 
   // Rate limiting
   app.use(createRateLimiter(config.rateLimit));

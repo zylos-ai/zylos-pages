@@ -8,15 +8,26 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/pages');
 const CONTENT_DIR = path.join(HOME, 'zylos/http/public/pages');
 
+// Generate random password and hash it
+const generatedPassword = crypto.randomBytes(16).toString('base64url');
+const salt = crypto.randomBytes(32);
+const hash = crypto.scryptSync(generatedPassword, salt, 64);
+const hashedPassword = `scrypt:${salt.toString('hex')}:${hash.toString('hex')}`;
+
 const INITIAL_CONFIG = {
   enabled: true,
   port: 3462,
   contentDir: CONTENT_DIR,
+  auth: {
+    enabled: true,
+    password: hashedPassword,
+  },
   theme: {
     colorScheme: 'auto',
     codeTheme: 'github-dark',
@@ -103,8 +114,23 @@ if (!fs.existsSync(configPath)) {
   console.log('\nCreating default config.json...');
   fs.writeFileSync(configPath, JSON.stringify(INITIAL_CONFIG, null, 2));
   console.log('  - config.json created');
+  console.log(`\n  Auth enabled. Username: pages  Password: ${generatedPassword}`);
+  console.log('  To disable auth, set auth.enabled = false in config.json');
 } else {
-  console.log('\nConfig already exists, skipping.');
+  // If config exists but has no auth section, add it
+  try {
+    const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    if (!existing.auth) {
+      existing.auth = { enabled: true, password: hashedPassword };
+      fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
+      console.log('\nAdded auth to existing config.');
+      console.log(`  Auth enabled. Password: ${generatedPassword}`);
+    } else {
+      console.log('\nConfig already exists with auth, skipping.');
+    }
+  } catch {
+    console.log('\nConfig already exists, skipping.');
+  }
 }
 
 // 4. Create sample welcome page if content dir is empty
