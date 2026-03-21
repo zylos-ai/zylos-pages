@@ -94,6 +94,26 @@ body {
 .theme-icon::before { content: "🌙"; }
 [data-theme="dark"] .theme-icon::before { content: "☀️"; }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logout-form { margin: 0; }
+
+.logout-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.logout-btn:hover { background: var(--color-code-bg); color: var(--color-text); }
+
 /* Layout */
 .page-layout {
   max-width: calc(var(--content-width) + 48px);

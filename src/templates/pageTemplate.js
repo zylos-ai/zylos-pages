@@ -35,9 +35,14 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
       <span class="sep">/</span>
       <span class="current">${escapeHtml(title)}</span>
     </nav>
-    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">
-      <span class="theme-icon"></span>
-    </button>
+    <div class="header-actions">
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">
+        <span class="theme-icon"></span>
+      </button>
+      <form method="POST" action="${baseUrl}/logout" class="logout-form">
+        <button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button>
+      </form>
+    </div>
   </header>
 
   <div class="page-layout${hasToc ? ' has-toc' : ''}">

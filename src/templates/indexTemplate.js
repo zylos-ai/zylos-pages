@@ -36,9 +36,14 @@ export function indexTemplate(pages, baseUrl) {
     <nav class="breadcrumb">
       <span class="current">Pages</span>
     </nav>
-    <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">
-      <span class="theme-icon"></span>
-    </button>
+    <div class="header-actions">
+      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">
+        <span class="theme-icon"></span>
+      </button>
+      <form method="POST" action="${baseUrl}/logout" class="logout-form">
+        <button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button>
+      </form>
+    </div>
   </header>
 
   <main class="page-content index-page">

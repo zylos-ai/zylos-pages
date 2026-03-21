@@ -353,24 +353,28 @@ export function setupAuth(app, authConfig, baseUrl) {
     res.redirect(302, redirectTo);
   });
 
-  // POST /logout — strict same-origin CSRF protection
+  // POST /logout — same-host CSRF protection
+  // Compare host portion only (protocol may differ behind reverse proxy)
   app.post('/logout', (req, res) => {
-    const proto = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-    const expectedOrigin = `${proto}://${req.headers.host}`;
+    const expectedHost = req.headers.host;
     const origin = req.headers.origin;
     const referer = req.headers.referer;
 
+    function extractHost(urlOrOrigin) {
+      try {
+        return new URL(urlOrOrigin).host;
+      } catch {
+        return null;
+      }
+    }
+
     // Priority: Origin header > Referer header > reject
     if (origin) {
-      if (origin !== expectedOrigin) {
+      if (extractHost(origin) !== expectedHost) {
         return res.status(403).send('Forbidden');
       }
     } else if (referer) {
-      try {
-        if (new URL(referer).origin !== expectedOrigin) {
-          return res.status(403).send('Forbidden');
-        }
-      } catch {
+      if (extractHost(referer) !== expectedHost) {
         return res.status(403).send('Forbidden');
       }
     } else {
