@@ -1,0 +1,42 @@
+/* Print stylesheet for zylos-pages */
+
+@media print {
+  .page-header,
+  .page-footer,
+  .theme-toggle,
+  .toc-sidebar {
+    display: none !important;
+  }
+
+  body {
+    font-size: 12pt;
+    color: #000;
+    background: #fff;
+  }
+
+  .page-layout {
+    display: block !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .markdown-body a {
+    color: #000;
+    text-decoration: underline;
+  }
+
+  .markdown-body a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 80%;
+    color: #666;
+  }
+
+  .markdown-body pre {
+    white-space: pre-wrap;
+    border: 1px solid #ccc;
+  }
+
+  .markdown-body img {
+    max-width: 100% !important;
+  }
+}

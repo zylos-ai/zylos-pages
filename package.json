@@ -1,0 +1,43 @@
+{
+  "name": "zylos-pages",
+  "version": "0.1.0",
+  "description": "Markdown-to-HTML rendering component for zylos — write .md, get beautiful web pages",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "homepage": "https://github.com/zylos-ai/zylos-pages#readme",
+  "bugs": {
+    "url": "https://github.com/zylos-ai/zylos-pages/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zylos-ai/zylos-pages.git"
+  },
+  "keywords": [
+    "zylos",
+    "pages",
+    "markdown",
+    "renderer",
+    "agent"
+  ],
+  "author": "Zylos AI",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "gray-matter": "^4.0.3",
+    "lru-cache": "^11.0.0",
+    "marked": "^15.0.0",
+    "marked-highlight": "^2.2.0",
+    "sanitize-html": "^2.13.0",
+    "shiki": "^1.24.0"
+  }
+}
