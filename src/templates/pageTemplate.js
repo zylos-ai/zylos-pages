@@ -8,6 +8,7 @@ import { escapeHtml } from '../security/sanitize.js';
 export function pageTemplate({ title, description, date, tags, bodyHtml, tocItems, baseUrl }) {
   const tocHtml = tocItems.length > 0 ? renderToc(tocItems) : '';
   const hasToc = tocItems.length > 0;
+  const cssVersion = Date.now();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -21,8 +22,8 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   <meta property="og:type" content="article">
   ${date ? `<meta property="article:published_time" content="${escapeHtml(String(date))}">` : ''}
   ${tags.length ? `<meta name="keywords" content="${tags.map(t => escapeHtml(String(t))).join(', ')}">` : ''}
-  <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
-  <link rel="stylesheet" href="${baseUrl}/_assets/print.css" media="print">
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${cssVersion}">
+  <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${cssVersion}" media="print">
 </head>
 <body>
   <header class="page-header">

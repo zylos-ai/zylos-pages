@@ -99,6 +99,20 @@ async function render() {
     });
   }
 
+  // Strip leading H1 if it matches frontmatter title (avoid duplicate)
+  if (meta.title) {
+    bodyHtml = bodyHtml.replace(/^\s*<h1[^>]*>.*?<\/h1>\s*/i, '');
+  }
+
+  // Wrap tables in scrollable container for mobile
+  bodyHtml = bodyHtml.replace(
+    /<table>/g,
+    '<div class="table-wrapper"><table>'
+  ).replace(
+    /<\/table>/g,
+    '</table></div>'
+  );
+
   // Inject heading IDs
   bodyHtml = bodyHtml.replace(
     /<h([23])(\s*>)(.*?)<\/h[23]>/gi,

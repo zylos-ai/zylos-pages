@@ -25,7 +25,7 @@ export function indexTemplate(pages, baseUrl) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pages</title>
   <meta name="description" content="Index of available pages">
-  <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${Date.now()}">
 </head>
 <body>
   <header class="page-header">
