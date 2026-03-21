@@ -408,7 +408,9 @@ export function setupAuth(app, authConfig, baseUrl) {
     }
 
     // Not authenticated — redirect to login
-    const next_url = req.originalUrl || req.url;
+    // Prepend baseUrl to captured path since reverse proxy strips the prefix
+    const rawNext = req.originalUrl || req.url;
+    const next_url = rawNext === '/' ? baseUrl + '/' : baseUrl + rawNext;
     const safeNext = isSafeRedirect(next_url) ? `?next=${encodeURIComponent(next_url)}` : '';
     res.redirect(302, `${baseUrl}/login${safeNext}`);
   });
