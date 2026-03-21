@@ -36,6 +36,7 @@ http_routes:
   - path: /pages/*
     type: reverse_proxy
     target: localhost:3462
+    strip_prefix: /pages
 
 dependencies: []
 ---
