@@ -12,4 +12,9 @@ function toggleTheme() {
   } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
     document.documentElement.setAttribute('data-theme', 'dark');
   }
+  // Bind toggle via event delegation on document (CSP blocks inline onclick)
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.theme-toggle');
+    if (btn) toggleTheme();
+  });
 })();

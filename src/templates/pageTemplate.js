@@ -26,7 +26,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   ${tags.length ? `<meta name="keywords" content="${tags.map(t => escapeHtml(String(t))).join(', ')}">` : ''}
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
   <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${ASSET_VERSION}" media="print">
-  <script src="${baseUrl}/_assets/theme.js"></script>
+  <script src="${baseUrl}/_assets/theme.js?v=${ASSET_VERSION}"></script>
 </head>
 <body>
   <header class="page-header">
@@ -36,7 +36,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
       <span class="current">${escapeHtml(title)}</span>
     </nav>
     <div class="header-actions">
-      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">
+      <button class="theme-toggle" aria-label="Toggle dark mode">
         <span class="theme-icon"></span>
       </button>
       <form method="POST" action="${baseUrl}/logout" class="logout-form">

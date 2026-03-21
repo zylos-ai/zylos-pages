@@ -203,6 +203,7 @@ function isSafeRedirect(path) {
 }
 
 // --- Login page template ---
+const LOGIN_ASSET_VERSION = Date.now();
 
 function loginPageHtml(baseUrl, error, next) {
   const nextParam = next && isSafeRedirect(next) ? next : '';
@@ -212,8 +213,8 @@ function loginPageHtml(baseUrl, error, next) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Login — Zylos Pages</title>
-  <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
-  <script src="${baseUrl}/_assets/theme.js"></script>
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${LOGIN_ASSET_VERSION}">
+  <script src="${baseUrl}/_assets/theme.js?v=${LOGIN_ASSET_VERSION}"></script>
   <style>
     .login-container {
       max-width: 360px;

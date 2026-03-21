@@ -29,7 +29,7 @@ export function indexTemplate(pages, baseUrl) {
   <title>Pages</title>
   <meta name="description" content="Index of available pages">
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
-  <script src="${baseUrl}/_assets/theme.js"></script>
+  <script src="${baseUrl}/_assets/theme.js?v=${ASSET_VERSION}"></script>
 </head>
 <body>
   <header class="page-header">
@@ -37,7 +37,7 @@ export function indexTemplate(pages, baseUrl) {
       <span class="current">Pages</span>
     </nav>
     <div class="header-actions">
-      <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle dark mode">
+      <button class="theme-toggle" aria-label="Toggle dark mode">
         <span class="theme-icon"></span>
       </button>
       <form method="POST" action="${baseUrl}/logout" class="logout-form">
