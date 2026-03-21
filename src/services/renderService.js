@@ -77,7 +77,9 @@ function runWorker(filePath, config, timeoutMs) {
       if (msg.ok) {
         resolve(msg.result);
       } else {
-        reject(new Error(msg.error));
+        const err = new Error(msg.error);
+        if (msg.code) err.code = msg.code;
+        reject(err);
       }
     });
 

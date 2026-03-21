@@ -129,4 +129,4 @@ async function render() {
 
 render()
   .then(result => parentPort.postMessage({ ok: true, result }))
-  .catch(err => parentPort.postMessage({ ok: false, error: err.message }));
+  .catch(err => parentPort.postMessage({ ok: false, error: err.message, code: err.code }));
