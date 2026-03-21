@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.1] - 2026-03-22
+
+### Fixed
+- PM2 ecosystem config: `cwd` path used `zylos-pages` instead of `pages` (component install name), causing service startup failure on fresh installs
+
 ## [0.1.0] - 2026-03-22
 
 ### Added
