@@ -67,7 +67,7 @@ Edit `~/zylos/components/pages/config.json`:
 ```json
 {
   "enabled": true,
-  "port": 3461,
+  "port": 3462,
   "contentDir": "~/zylos/http/public/pages",
   "theme": { "colorScheme": "auto", "codeTheme": "github-dark" },
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },

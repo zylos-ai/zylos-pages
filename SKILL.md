@@ -30,12 +30,12 @@ config:
   optional:
     - name: PAGES_PORT
       description: HTTP port for the pages service
-      default: "3461"
+      default: "3462"
 
 http_routes:
   - path: /pages/*
     type: reverse_proxy
-    target: localhost:3461
+    target: localhost:3462
 
 dependencies: []
 ---

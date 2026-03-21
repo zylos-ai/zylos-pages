@@ -15,7 +15,7 @@ export const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 // Default configuration
 export const DEFAULT_CONFIG = {
   enabled: true,
-  port: 3461,
+  port: 3462,
   contentDir: path.join(HOME, 'zylos/http/public/pages'),
   theme: {
     colorScheme: 'auto',
