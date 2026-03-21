@@ -29,13 +29,18 @@ export function hashPassword(plaintext) {
  * Verify a plaintext password against a scrypt hash.
  */
 function verifyPassword(plaintext, stored) {
-  if (!stored.startsWith('scrypt:')) return false;
-  const parts = stored.split(':');
-  if (parts.length !== 3) return false;
-  const salt = Buffer.from(parts[1], 'hex');
-  const expected = Buffer.from(parts[2], 'hex');
-  const actual = crypto.scryptSync(plaintext, salt, SCRYPT_KEYLEN);
-  return crypto.timingSafeEqual(expected, actual);
+  try {
+    if (!stored.startsWith('scrypt:')) return false;
+    const parts = stored.split(':');
+    if (parts.length !== 3) return false;
+    const salt = Buffer.from(parts[1], 'hex');
+    const expected = Buffer.from(parts[2], 'hex');
+    if (expected.length !== SCRYPT_KEYLEN) return false;
+    const actual = crypto.scryptSync(plaintext, salt, SCRYPT_KEYLEN);
+    return crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
 }
 
 /**
