@@ -99,9 +99,16 @@ async function render() {
     });
   }
 
-  // Strip leading H1 if it matches frontmatter title (avoid duplicate)
+  // Strip leading H1 only if its text matches the frontmatter title (avoid duplicate)
   if (meta.title) {
-    bodyHtml = bodyHtml.replace(/^\s*<h1[^>]*>.*?<\/h1>\s*/i, '');
+    const h1Match = bodyHtml.match(/^\s*<h1[^>]*>(.*?)<\/h1>/i);
+    if (h1Match) {
+      const h1Text = h1Match[1].replace(/<[^>]+>/g, '').trim();
+      const titleText = meta.title.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+      if (h1Text === titleText) {
+        bodyHtml = bodyHtml.replace(/^\s*<h1[^>]*>.*?<\/h1>\s*/i, '');
+      }
+    }
   }
 
   // Wrap tables in scrollable container for mobile

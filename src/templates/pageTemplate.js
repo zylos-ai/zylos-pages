@@ -2,13 +2,15 @@
 
 import { escapeHtml } from '../security/sanitize.js';
 
+// Stable cache version — generated once per process start
+const ASSET_VERSION = Date.now();
+
 /**
  * Generate a complete HTML page from rendered content.
  */
 export function pageTemplate({ title, description, date, tags, bodyHtml, tocItems, baseUrl }) {
   const tocHtml = tocItems.length > 0 ? renderToc(tocItems) : '';
   const hasToc = tocItems.length > 0;
-  const cssVersion = Date.now();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -22,8 +24,9 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   <meta property="og:type" content="article">
   ${date ? `<meta property="article:published_time" content="${escapeHtml(String(date))}">` : ''}
   ${tags.length ? `<meta name="keywords" content="${tags.map(t => escapeHtml(String(t))).join(', ')}">` : ''}
-  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${cssVersion}">
-  <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${cssVersion}" media="print">
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
+  <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${ASSET_VERSION}" media="print">
+  <script src="${baseUrl}/_assets/theme.js"></script>
 </head>
 <body>
   <header class="page-header">
@@ -53,23 +56,6 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
     <a href="${baseUrl}/">Back to index</a>
   </footer>
 
-  <script>
-    function toggleTheme() {
-      const html = document.documentElement;
-      const current = html.getAttribute('data-theme');
-      const next = current === 'dark' ? 'light' : 'dark';
-      html.setAttribute('data-theme', next);
-      localStorage.setItem('theme', next);
-    }
-    (function() {
-      const saved = localStorage.getItem('theme');
-      if (saved) {
-        document.documentElement.setAttribute('data-theme', saved);
-      } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      }
-    })();
-  </script>
 </body>
 </html>`;
 }

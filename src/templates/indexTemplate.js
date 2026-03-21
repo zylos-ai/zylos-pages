@@ -2,6 +2,9 @@
 
 import { escapeHtml } from '../security/sanitize.js';
 
+// Stable cache version — generated once per process start
+const ASSET_VERSION = Date.now();
+
 /**
  * Generate the directory index page listing all available pages.
  * @param {Array<{slug, title, description, date}>} pages
@@ -25,7 +28,8 @@ export function indexTemplate(pages, baseUrl) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pages</title>
   <meta name="description" content="Index of available pages">
-  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${Date.now()}">
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
+  <script src="${baseUrl}/_assets/theme.js"></script>
 </head>
 <body>
   <header class="page-header">
@@ -46,23 +50,6 @@ export function indexTemplate(pages, baseUrl) {
     }
   </main>
 
-  <script>
-    function toggleTheme() {
-      const html = document.documentElement;
-      const current = html.getAttribute('data-theme');
-      const next = current === 'dark' ? 'light' : 'dark';
-      html.setAttribute('data-theme', next);
-      localStorage.setItem('theme', next);
-    }
-    (function() {
-      const saved = localStorage.getItem('theme');
-      if (saved) {
-        document.documentElement.setAttribute('data-theme', saved);
-      } else if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        document.documentElement.setAttribute('data-theme', 'dark');
-      }
-    })();
-  </script>
 </body>
 </html>`;
 }

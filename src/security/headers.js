@@ -7,7 +7,7 @@ export function securityHeaders() {
       "style-src 'self' 'unsafe-inline'; " +
       "img-src 'self' data: https:; " +
       "font-src 'self'; " +
-      "script-src 'self' 'unsafe-inline'; " +
+      "script-src 'self'; " +
       "object-src 'none'; " +
       "frame-ancestors 'none'"
     );
