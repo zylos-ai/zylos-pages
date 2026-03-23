@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
+import { verifyShare } from '../sharing/share-manager.js';
 
 const SCRYPT_KEYLEN = 64;
 const COOKIE_NAME = '__Host-zylos_pages_session';
@@ -393,9 +394,26 @@ export function setupAuth(app, authConfig, baseUrl) {
     // Skip if auth disabled or no password
     if (!authConfig.enabled || !authConfig.password) return next();
 
-    // Skip static assets and login/logout routes
+    // Skip static assets, login/logout, and API routes (API has own auth checks)
     if (req.path.startsWith('/_assets') || req.path === '/login' || req.path === '/logout') {
       return next();
+    }
+
+    // Share token bypass — only for GET/HEAD on document routes (not /api/*, not /)
+    if ((req.method === 'GET' || req.method === 'HEAD') && req.query.token
+        && !req.path.startsWith('/api/') && req.path !== '/') {
+      const slug = req.path.slice(1); // strip leading /
+      const result = verifyShare(req.query.token, slug);
+      if (result.valid) {
+        res.locals.viewerType = 'share';
+        res.locals.authenticated = false;
+        // Shared pages: no-store + no-referrer to prevent token leakage
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        return next();
+      }
+      // Invalid token — fall through to normal auth check (don't reveal token was bad)
+      logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
     if (validateSession(getSessionCookie(req))) {

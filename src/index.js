@@ -18,6 +18,8 @@ import { startWatcher, stopWatcher } from './services/watchService.js';
 import { securityHeaders } from './security/headers.js';
 import { setupAuth } from './security/auth.js';
 import { createRateLimiter } from './security/rateLimit.js';
+import { setupShareApi } from './routes/share-api.js';
+import { cleanupShares } from './sharing/share-manager.js';
 import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
 import { logger } from './utils/logger.js';
@@ -33,6 +35,7 @@ console.log(`[pages] Content dir: ${config.contentDir}`);
 console.log(`[pages] Security: rawHtml=${config.security.allowRawHtml}, maxFileSize=${config.security.maxFileSizeBytes}, timeout=${config.security.renderTimeoutMs}ms`);
 console.log(`[pages] Cache: max=${config.cache.maxEntries}, ttl=${config.cache.ttlSeconds}s`);
 console.log(`[pages] Auth: ${config.auth?.enabled && config.auth?.password ? 'enabled' : 'disabled'}`);
+console.log(`[pages] Sharing: enabled=${config.sharing?.enabled ?? true}, allowPermanent=${config.sharing?.allowPermanent ?? false}`);
 
 if (!config.enabled) {
   console.log(`[pages] Component disabled in config, exiting.`);
@@ -40,6 +43,7 @@ if (!config.enabled) {
 }
 
 let server = null;
+let cleanupTimer = null;
 
 // Watch for config changes
 watchConfig((newConfig) => {
@@ -81,6 +85,12 @@ async function main() {
   // Cookie-based session authentication
   setupAuth(app, config.auth || {}, '/pages');
 
+  // Share API routes (after auth — requires authenticated session)
+  const sharingConfig = config.sharing || { enabled: true, allowPermanent: false };
+  if (sharingConfig.enabled !== false) {
+    setupShareApi(app, sharingConfig, '/pages');
+  }
+
   // Routes
   app.get('/', indexRoute(config));
   app.get('/:slug(*)', pageRoute(config));
@@ -97,12 +107,20 @@ async function main() {
     console.log(`[pages] Server listening on 127.0.0.1:${port}`);
     logger.info('server started', { port, contentDir: config.contentDir });
   });
+
+  // Hourly cleanup of expired/revoked shares
+  cleanupTimer = setInterval(() => {
+    try { cleanupShares(); } catch (err) {
+      logger.error('share cleanup failed', { err: err.message });
+    }
+  }, 3600_000);
 }
 
 // Graceful shutdown
 function shutdown() {
   console.log(`[pages] Shutting down...`);
   stopWatcher();
+  if (cleanupTimer) clearInterval(cleanupTimer);
   if (server) {
     server.close(() => {
       console.log(`[pages] Server closed`);

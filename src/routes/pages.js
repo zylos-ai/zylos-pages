@@ -3,6 +3,7 @@
 import { getPage } from '../services/pageService.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
+import { injectShareViewer } from '../templates/pageTemplate.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -26,6 +27,8 @@ export function pageRoute(config) {
       return res.redirect(301, `/pages/${slug}`);
     }
 
+    const isShareViewer = res.locals.viewerType === 'share';
+
     try {
       const result = await getPage(slug, config);
       const elapsed = Math.round(performance.now() - start);
@@ -33,16 +36,19 @@ export function pageRoute(config) {
       // ETag / 304 handling
       const clientEtag = req.headers['if-none-match'];
       if (clientEtag && clientEtag === result.etag) {
-        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed });
+        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth' });
         return res.status(304).end();
       }
 
       res.setHeader('ETag', result.etag);
-      res.setHeader('Cache-Control', 'public, max-age=60');
+      res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
-      logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed });
-      res.send(result.html);
+      // For share viewers: inject data-viewer attribute to hide auth-only elements
+      const html = isShareViewer ? injectShareViewer(result.html) : result.html;
+
+      logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth' });
+      res.send(html);
     } catch (err) {
       const elapsed = Math.round(performance.now() - start);
 
