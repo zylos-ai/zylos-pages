@@ -32,11 +32,16 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
 </head>
 <body>
   <header class="page-header">
-    <nav class="breadcrumb">
-      <a href="${baseUrl}/" class="auth-only">Pages</a>
-      <span class="sep auth-only">/</span>
-      <span class="current">${escapeHtml(title)}</span>
-    </nav>
+    <div class="header-left">
+      <button class="nav-toggle auth-only" aria-label="Toggle pages list">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M2 4h14v1.5H2zm0 4.25h14v1.5H2zm0 4.25h14v1.5H2z"/></svg>
+      </button>
+      <nav class="breadcrumb">
+        <a href="${baseUrl}/" class="auth-only">Pages</a>
+        <span class="sep auth-only">/</span>
+        <span class="current">${escapeHtml(title)}</span>
+      </nav>
+    </div>
     <div class="header-actions">
       <button class="share-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/></svg>
@@ -50,6 +55,9 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
       </form>
     </div>
   </header>
+
+  <!-- NAV_SIDEBAR -->
+  <div class="nav-overlay" hidden></div>
 
   <div class="page-layout${hasToc ? ' has-toc' : ''}">
     ${tocHtml ? `<aside class="toc-sidebar">${tocHtml}</aside>` : ''}
@@ -101,6 +109,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
     </div>
   </div>
   <script src="${baseUrl}/_assets/share.js?v=${ASSET_VERSION}"></script>
+  <script src="${baseUrl}/_assets/nav.js?v=${ASSET_VERSION}"></script>
 
 </body>
 </html>`;
@@ -113,6 +122,26 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
  */
 export function injectShareViewer(html) {
   return html.replace('<html lang="en">', '<html lang="en" data-viewer="share">');
+}
+
+/**
+ * Inject pages navigation sidebar into the rendered HTML (post-cache).
+ * Adds a left sidebar with all pages for quick switching.
+ */
+export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
+  const navHtml = renderNavSidebar(pages, currentSlug, baseUrl);
+  html = html.replace('<!-- NAV_SIDEBAR -->', navHtml);
+  return html;
+}
+
+function renderNavSidebar(pages, currentSlug, baseUrl) {
+  let html = '<aside class="nav-sidebar auth-only"><nav class="page-nav"><h4>Pages</h4><ul>';
+  for (const page of pages) {
+    const active = page.slug === currentSlug ? ' class="active"' : '';
+    html += `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${escapeHtml(page.title)}</a></li>`;
+  }
+  html += '</ul></nav></aside>';
+  return html;
 }
 
 function renderToc(items) {

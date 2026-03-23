@@ -3,7 +3,8 @@
 import { getPage } from '../services/pageService.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
-import { injectShareViewer } from '../templates/pageTemplate.js';
+import { injectShareViewer, injectNavSidebar } from '../templates/pageTemplate.js';
+import { scanPages } from './index.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -45,7 +46,14 @@ export function pageRoute(config) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
       // For share viewers: inject data-viewer attribute to hide auth-only elements
-      const html = isShareViewer ? injectShareViewer(result.html) : result.html;
+      // For auth viewers: inject pages nav sidebar for quick article switching
+      let html = result.html;
+      if (isShareViewer) {
+        html = injectShareViewer(html);
+      } else {
+        const pages = await scanPages(config.contentDir);
+        html = injectNavSidebar(html, pages, slug, '/pages');
+      }
 
       logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth' });
       res.send(html);

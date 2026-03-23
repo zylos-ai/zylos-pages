@@ -34,7 +34,7 @@ export function indexRoute(config) {
  * Recursively scan the content directory for .md files.
  * Hides files starting with _ or .
  */
-async function scanPages(contentDir, subdir = '') {
+export async function scanPages(contentDir, subdir = '') {
   const pages = [];
   const dirPath = path.join(contentDir, subdir);
 
