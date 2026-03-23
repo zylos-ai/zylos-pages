@@ -44,6 +44,11 @@ export async function renderPage(filePath, config = {}) {
 
   const showToc = meta.toc !== false && tocItems.length >= tocMinHeadings;
 
+  // Extract slug from filePath: strip contentDir prefix + .md extension
+  const slug = filePath
+    .replace(/^.*\/public\/pages\//, '')
+    .replace(/\.md$/i, '');
+
   const html = pageTemplate({
     title: meta.title || 'Untitled',
     description: meta.description || '',
@@ -52,6 +57,7 @@ export async function renderPage(filePath, config = {}) {
     bodyHtml,
     tocItems: showToc ? tocItems : [],
     baseUrl,
+    slug,
   });
 
   return { html, etag, meta, size };

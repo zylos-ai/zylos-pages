@@ -43,6 +43,10 @@ export const DEFAULT_CONFIG = {
     windowMs: 60000,
     max: 60,
   },
+  sharing: {
+    enabled: true,
+    allowPermanent: false,
+  },
 };
 
 let config = null;
