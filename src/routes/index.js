@@ -69,7 +69,7 @@ async function scanPages(contentDir, subdir = '') {
           slug,
           title: data.title || inferTitleFromContent(content) || slug,
           description: data.description || '',
-          date: data.date || stats.mtime.toISOString().split('T')[0],
+          date: data.date instanceof Date ? data.date.toISOString().split('T')[0] : (data.date || stats.mtime.toISOString().split('T')[0]),
           tags: data.tags || [],
         });
       } catch {
