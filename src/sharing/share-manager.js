@@ -263,10 +263,8 @@ export function listSharesForSlug(slug) {
  * token's natural expiry to prevent "resurrection" (HMAC is still valid
  * without the tombstone). Only delete:
  * - Expired records (revoked or not) — token is naturally invalid
- * - Revoked permanent tokens older than 90 days — tombstone retention limit
+ * - Revoked permanent tokens: NEVER deleted (tombstone is permanent)
  */
-const TOMBSTONE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
-
 export function cleanupShares() {
   const s = loadState();
   const now = Date.now();
@@ -279,15 +277,9 @@ export function cleanupShares() {
       // Token naturally expired — safe to remove regardless of revocation
       delete s.shares[tokenId];
       removed++;
-    } else if (record.revoked && record.expiresAt === 0) {
-      // Revoked permanent token — keep tombstone for 90 days, then remove
-      const revokedAge = now - (record.revokedAt || record.createdAt);
-      if (revokedAge > TOMBSTONE_RETENTION_MS) {
-        delete s.shares[tokenId];
-        removed++;
-      }
     }
     // Revoked non-permanent tokens: keep tombstone until natural expiry
+    // Revoked permanent tokens (expiresAt=0): tombstone kept forever
   }
 
   if (removed > 0) {
