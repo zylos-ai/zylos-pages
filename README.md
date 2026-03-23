@@ -19,10 +19,16 @@
 
 ---
 
+<p align="center">
+  <img src="./assets/screenshot.png" alt="zylos-pages screenshot" width="720">
+</p>
+
 - **Zero-build publishing** — write a `.md` file, it's instantly a web page
 - **Beautiful rendering** — GitHub-style theme with dark/light mode
 - **Code highlighting** — VS Code quality syntax highlighting via shiki
 - **Fast** — LRU cache + singleflight dedup + file-watch invalidation
+- **Navigation sidebar** — slide-out pages list for quick article switching
+- **Table of Contents** — independent scrolling TOC for long documents
 
 ## Install
 
