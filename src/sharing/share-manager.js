@@ -172,11 +172,17 @@ export function verifyShare(token, requestSlug) {
     return { valid: false };
   }
 
-  // Check revocation (requires storage lookup — only for revoked tokens)
+  // Check revocation and record consistency
   const record = s.shares[decoded.tokenId];
-  if (record && record.revoked) {
-    return { valid: false };
+  if (record) {
+    if (record.revoked) return { valid: false };
+    // Cross-check: record fields must match token claims
+    if (record.slug !== normalizedToken || record.expiresAt !== decoded.expiresAt) {
+      return { valid: false };
+    }
   }
+  // Note: if record is missing (e.g. never existed), the HMAC is still valid.
+  // This is the "stateless" path — only revocation requires the record.
 
   return { valid: true, slug: normalizedToken, viewerType: 'share' };
 }
@@ -191,6 +197,7 @@ export function revokeShare(tokenId) {
   const record = s.shares[tokenId];
   if (!record) return false;
   record.revoked = true;
+  record.revokedAt = Date.now();
   saveState();
   logger.info('share revoked', { tokenId, slug: record.slug });
   return true;
@@ -205,9 +212,11 @@ export function revokeAllForSlug(slug) {
   const s = loadState();
   const normalizedSlug = normalizeSlug(slug);
   let count = 0;
+  const now = Date.now();
   for (const [id, record] of Object.entries(s.shares)) {
     if (record.slug === normalizedSlug && !record.revoked) {
       record.revoked = true;
+      record.revokedAt = now;
       count++;
     }
   }
@@ -247,9 +256,17 @@ export function listSharesForSlug(slug) {
 }
 
 /**
- * Clean up expired and revoked share records.
+ * Clean up share records that are safe to remove.
  * Called periodically (hourly).
+ *
+ * IMPORTANT: Revoked records are tombstones — they MUST be kept until the
+ * token's natural expiry to prevent "resurrection" (HMAC is still valid
+ * without the tombstone). Only delete:
+ * - Expired records (revoked or not) — token is naturally invalid
+ * - Revoked permanent tokens older than 90 days — tombstone retention limit
  */
+const TOMBSTONE_RETENTION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
 export function cleanupShares() {
   const s = loadState();
   const now = Date.now();
@@ -257,10 +274,20 @@ export function cleanupShares() {
 
   for (const [tokenId, record] of Object.entries(s.shares)) {
     const expired = record.expiresAt !== 0 && now > record.expiresAt;
-    if (record.revoked || expired) {
+
+    if (expired) {
+      // Token naturally expired — safe to remove regardless of revocation
       delete s.shares[tokenId];
       removed++;
+    } else if (record.revoked && record.expiresAt === 0) {
+      // Revoked permanent token — keep tombstone for 90 days, then remove
+      const revokedAge = now - (record.revokedAt || record.createdAt);
+      if (revokedAge > TOMBSTONE_RETENTION_MS) {
+        delete s.shares[tokenId];
+        removed++;
+      }
     }
+    // Revoked non-permanent tokens: keep tombstone until natural expiry
   }
 
   if (removed > 0) {
