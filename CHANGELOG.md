@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.3] - 2026-03-23
+
+### Fixed
+- Page index crash when frontmatter `date` is a YAML Date object (fix was lost in v0.1.2 squash merge)
+
 ## [0.1.2] - 2026-03-23
 
 ### Added

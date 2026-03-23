@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.1.2
+version: 0.1.3
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
