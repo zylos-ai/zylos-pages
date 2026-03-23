@@ -32,11 +32,16 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
 </head>
 <body>
   <header class="page-header">
-    <nav class="breadcrumb">
-      <a href="${baseUrl}/" class="auth-only">Pages</a>
-      <span class="sep auth-only">/</span>
-      <span class="current">${escapeHtml(title)}</span>
-    </nav>
+    <div class="header-left">
+      <button class="nav-toggle auth-only" aria-label="Toggle pages list">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M2 4h14v1.5H2zm0 4.25h14v1.5H2zm0 4.25h14v1.5H2z"/></svg>
+      </button>
+      <nav class="breadcrumb">
+        <a href="${baseUrl}/" class="auth-only">Pages</a>
+        <span class="sep auth-only">/</span>
+        <span class="current">${escapeHtml(title)}</span>
+      </nav>
+    </div>
     <div class="header-actions">
       <button class="share-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/></svg>
@@ -51,8 +56,10 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
     </div>
   </header>
 
+  <!-- NAV_SIDEBAR -->
+  <div class="nav-overlay" hidden></div>
+
   <div class="page-layout${hasToc ? ' has-toc' : ''}">
-    <!-- NAV_SIDEBAR -->
     ${tocHtml ? `<aside class="toc-sidebar">${tocHtml}</aside>` : ''}
     <main class="page-content">
       ${date ? `<time class="page-date" datetime="${escapeHtml(String(date))}">${escapeHtml(String(date))}</time>` : ''}
@@ -102,6 +109,18 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
     </div>
   </div>
   <script src="${baseUrl}/_assets/share.js?v=${ASSET_VERSION}"></script>
+  <script>
+  (function(){
+    var toggle = document.querySelector('.nav-toggle');
+    var sidebar = document.querySelector('.nav-sidebar');
+    var overlay = document.querySelector('.nav-overlay');
+    if (!toggle || !sidebar) return;
+    function open() { sidebar.classList.add('open'); overlay.hidden = false; }
+    function close() { sidebar.classList.remove('open'); overlay.hidden = true; }
+    toggle.addEventListener('click', function(){ sidebar.classList.contains('open') ? close() : open(); });
+    overlay.addEventListener('click', close);
+  })();
+  </script>
 
 </body>
 </html>`;
@@ -123,8 +142,6 @@ export function injectShareViewer(html) {
 export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
   const navHtml = renderNavSidebar(pages, currentSlug, baseUrl);
   html = html.replace('<!-- NAV_SIDEBAR -->', navHtml);
-  // Add has-nav class to page-layout
-  html = html.replace('class="page-layout', 'class="page-layout has-nav');
   return html;
 }
 
