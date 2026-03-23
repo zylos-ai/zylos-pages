@@ -109,18 +109,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
     </div>
   </div>
   <script src="${baseUrl}/_assets/share.js?v=${ASSET_VERSION}"></script>
-  <script>
-  (function(){
-    var toggle = document.querySelector('.nav-toggle');
-    var sidebar = document.querySelector('.nav-sidebar');
-    var overlay = document.querySelector('.nav-overlay');
-    if (!toggle || !sidebar) return;
-    function open() { sidebar.classList.add('open'); overlay.hidden = false; }
-    function close() { sidebar.classList.remove('open'); overlay.hidden = true; }
-    toggle.addEventListener('click', function(){ sidebar.classList.contains('open') ? close() : open(); });
-    overlay.addEventListener('click', close);
-  })();
-  </script>
+  <script src="${baseUrl}/_assets/nav.js?v=${ASSET_VERSION}"></script>
 
 </body>
 </html>`;
