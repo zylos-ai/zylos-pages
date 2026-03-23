@@ -52,6 +52,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   </header>
 
   <div class="page-layout${hasToc ? ' has-toc' : ''}">
+    <!-- NAV_SIDEBAR -->
     ${tocHtml ? `<aside class="toc-sidebar">${tocHtml}</aside>` : ''}
     <main class="page-content">
       ${date ? `<time class="page-date" datetime="${escapeHtml(String(date))}">${escapeHtml(String(date))}</time>` : ''}
@@ -113,6 +114,28 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
  */
 export function injectShareViewer(html) {
   return html.replace('<html lang="en">', '<html lang="en" data-viewer="share">');
+}
+
+/**
+ * Inject pages navigation sidebar into the rendered HTML (post-cache).
+ * Adds a left sidebar with all pages for quick switching.
+ */
+export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
+  const navHtml = renderNavSidebar(pages, currentSlug, baseUrl);
+  html = html.replace('<!-- NAV_SIDEBAR -->', navHtml);
+  // Add has-nav class to page-layout
+  html = html.replace('class="page-layout', 'class="page-layout has-nav');
+  return html;
+}
+
+function renderNavSidebar(pages, currentSlug, baseUrl) {
+  let html = '<aside class="nav-sidebar auth-only"><nav class="page-nav"><h4>Pages</h4><ul>';
+  for (const page of pages) {
+    const active = page.slug === currentSlug ? ' class="active"' : '';
+    html += `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${escapeHtml(page.title)}</a></li>`;
+  }
+  html += '</ul></nav></aside>';
+  return html;
 }
 
 function renderToc(items) {
