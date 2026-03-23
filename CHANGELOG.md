@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.4] - 2026-03-23
+
+### Added
+- Navigation sidebar: slide-out drawer from left screen edge for quick article switching
+- Hamburger toggle button in header to open/close pages list
+- Overlay backdrop when drawer is open (click to close)
+- Independent TOC scrolling: right-side table of contents scrolls independently from page content
+- Screenshot added to README
+
+### Fixed
+- Inline nav toggle script blocked by CSP `script-src 'self'` — moved to external `nav.js`
+- Replaced broken logo in README with Zylos mascot
+
 ## [0.1.3] - 2026-03-23
 
 ### Fixed
