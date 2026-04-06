@@ -19,6 +19,8 @@ import { securityHeaders } from './security/headers.js';
 import { setupAuth } from './security/auth.js';
 import { createRateLimiter } from './security/rateLimit.js';
 import { setupShareApi } from './routes/share-api.js';
+import { setupTodoApi } from './routes/todo-api.js';
+import { todoRoute } from './routes/todo-page.js';
 import { cleanupShares } from './sharing/share-manager.js';
 import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
@@ -89,6 +91,12 @@ async function main() {
   const sharingConfig = config.sharing || { enabled: true, allowPermanent: false };
   if (sharingConfig.enabled !== false) {
     setupShareApi(app, sharingConfig, '/pages');
+  }
+
+  // Todo routes (before catch-all)
+  if (config.todo?.enabled) {
+    setupTodoApi(app, config);
+    app.get('/todo/:board', todoRoute(config));
   }
 
   // Routes
