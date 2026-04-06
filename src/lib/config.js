@@ -47,6 +47,10 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     allowPermanent: false,
   },
+  todo: {
+    enabled: false,
+    boards: {},
+  },
 };
 
 let config = null;
