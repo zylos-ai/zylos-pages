@@ -4,7 +4,9 @@
   if (!tabs.length) return;
 
   const params = new URLSearchParams(window.location.search);
-  const initial = params.get('tab') || 'pages';
+  const allowed = new Set(['pages', 'todo']);
+  const raw = params.get('tab') || 'pages';
+  const initial = allowed.has(raw) ? raw : 'pages';
 
   function activate(name) {
     tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
