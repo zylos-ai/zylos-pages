@@ -10,7 +10,7 @@ const ASSET_VERSION = Date.now();
  * @param {Array<{slug, title, description, date}>} pages
  * @param {string} baseUrl
  */
-export function indexTemplate(pages, baseUrl) {
+export function indexTemplate(pages, baseUrl, todoBoards = []) {
   const pageRows = pages.map(p => `
     <li class="page-item">
       <a href="${baseUrl}/${encodeURI(p.slug)}">
@@ -47,6 +47,20 @@ export function indexTemplate(pages, baseUrl) {
   </header>
 
   <main class="page-content index-page">
+    ${todoBoards.length > 0 ? `
+    <section class="todo-boards-section">
+      <h2>Todo Boards</h2>
+      <ul class="page-list">
+        ${todoBoards.map(b => `
+          <li class="page-item">
+            <a href="${baseUrl}/${encodeURI(b.slug)}">
+              <span class="page-item-title">${escapeHtml(b.name)}</span>
+            </a>
+          </li>
+        `).join('')}
+      </ul>
+    </section>
+    ` : ''}
     <h1>Pages</h1>
     <p class="index-count">${pages.length} page${pages.length !== 1 ? 's' : ''}</p>
     ${pages.length === 0
