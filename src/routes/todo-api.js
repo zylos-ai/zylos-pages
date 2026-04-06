@@ -9,6 +9,19 @@ import { parseTodoFile, updateItemStatus, deleteItem, addItem } from '../todos/t
 import { logger } from '../utils/logger.js';
 
 /**
+ * Sanitize todo input: strip newlines, markdown heading markers, and limit length.
+ */
+function sanitizeTodoInput(str, maxLen = 200) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/[\r\n]+/g, ' ')    // collapse newlines to spaces
+    .replace(/^#{1,6}\s*/g, '')   // strip leading markdown heading markers
+    .replace(/\|/g, '—')         // replace pipe (used as ID delimiter in H3)
+    .trim()
+    .slice(0, maxLen);
+}
+
+/**
  * CSRF validation via Origin/Referer headers.
  * Same approach as share-api.js.
  */
@@ -124,7 +137,23 @@ export function setupTodoApi(app, config) {
         return res.status(400).json({ error: 'Missing or empty title' });
       }
 
-      const item = addItem(boardPath, { title: title.trim(), metadata: metadata || {} });
+      // Sanitize: strip newlines and markdown control chars from title
+      const sanitizedTitle = sanitizeTodoInput(title, 200);
+      if (!sanitizedTitle) {
+        return res.status(400).json({ error: 'Title is empty after sanitization' });
+      }
+
+      // Sanitize metadata values
+      const sanitizedMeta = {};
+      if (metadata && typeof metadata === 'object') {
+        for (const [k, v] of Object.entries(metadata)) {
+          if (typeof v === 'string') {
+            sanitizedMeta[sanitizeTodoInput(k, 50)] = sanitizeTodoInput(v, 500);
+          }
+        }
+      }
+
+      const item = addItem(boardPath, { title: sanitizedTitle, metadata: sanitizedMeta });
       res.json({ ok: true, item });
     } catch (err) {
       const status = err.statusCode || 500;

@@ -235,11 +235,23 @@ function writeTodoFile(filePath, data) {
 /**
  * Render a single todo item as markdown.
  */
+/**
+ * Strip newlines and markdown control characters from a string.
+ * Defense-in-depth: prevents structure injection even if API layer misses it.
+ */
+function sanitizeLine(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str.replace(/[\r\n]+/g, ' ').replace(/^#{1,6}\s*/g, '').trim();
+}
+
 function renderItem(item) {
-  let block = `### ${item.id} | ${item.title}\n`;
+  const safeTitle = sanitizeLine(String(item.title));
+  let block = `### ${item.id} | ${safeTitle}\n`;
   for (const [key, value] of Object.entries(item.metadata)) {
     if (value !== undefined && value !== null && value !== '') {
-      block += `- **${key}**: ${value}\n`;
+      const safeKey = sanitizeLine(String(key));
+      const safeValue = sanitizeLine(String(value));
+      block += `- **${safeKey}**: ${safeValue}\n`;
     }
   }
   block += '\n';

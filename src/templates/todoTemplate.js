@@ -3,6 +3,13 @@
 
 import { escapeHtml } from '../security/sanitize.js';
 
+const SAFE_URL_SCHEMES = /^https?:\/\//i;
+
+function isSafeUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  return SAFE_URL_SCHEMES.test(url.trim());
+}
+
 const ASSET_VERSION = Date.now();
 
 /**
@@ -118,7 +125,12 @@ function renderCard(item, columnType, canEdit) {
       const value = item.metadata[key];
       if (!value) continue;
       if (key === 'link') {
-        html += `<div class="todo-meta-line"><strong>${escapeHtml(key)}:</strong> <a href="${escapeHtml(value)}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a></div>`;
+        const safeUrl = isSafeUrl(value) ? escapeHtml(value) : null;
+        if (safeUrl) {
+          html += `<div class="todo-meta-line"><strong>${escapeHtml(key)}:</strong> <a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${escapeHtml(value)}</a></div>`;
+        } else {
+          html += `<div class="todo-meta-line"><strong>${escapeHtml(key)}:</strong> ${escapeHtml(value)}</div>`;
+        }
       } else {
         html += `<div class="todo-meta-line"><strong>${escapeHtml(key)}:</strong> ${escapeHtml(value)}</div>`;
       }
