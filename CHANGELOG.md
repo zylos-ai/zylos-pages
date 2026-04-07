@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.5] - 2026-04-07
+
+### Added
+- TODO kanban board: interactive web-based task management with drag-and-drop columns
+- Tab-based navigation on index page (Pages / Todo tabs) with URL state sync
+- Security: `isSafeUrl()` link validation and `sanitizeTodoInput()`/`sanitizeLine()` to prevent XSS and markdown structure injection (code review by Jinglever)
+
+### Fixed
+- `resolveBoardPath` now handles object config format (`board.file`)
+- Tab switching JS moved to external `tabs.js` for CSP `script-src 'self'` compliance (inline script was silently blocked)
+- Invalid `tab` query parameter (e.g. `?tab=foo`) no longer causes blank page — falls back to `pages`
+
 ## [0.1.4] - 2026-03-23
 
 ### Added
