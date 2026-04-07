@@ -11,7 +11,9 @@ import { logger } from '../utils/logger.js';
  */
 function resolveBoardPath(boardName, todoConfig) {
   if (!todoConfig?.boards || !todoConfig.boards[boardName]) return null;
-  const boardPath = todoConfig.boards[boardName];
+  const board = todoConfig.boards[boardName];
+  const boardPath = typeof board === 'string' ? board : board?.file;
+  if (!boardPath) return null;
   if (path.isAbsolute(boardPath)) return boardPath;
   return path.join(process.env.HOME, boardPath);
 }
