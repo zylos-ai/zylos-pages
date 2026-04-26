@@ -50,6 +50,12 @@ const INITIAL_CONFIG = {
     windowMs: 60000,
     max: 60,
   },
+  externalFiles: {
+    enabled: true,
+    allowedSources: {
+      recruit: path.join(HOME, 'zylos/components/recruit'),
+    },
+  },
 };
 
 const SAMPLE_PAGE = `---
@@ -120,13 +126,30 @@ if (!fs.existsSync(configPath)) {
   // If config exists but has no auth section, add it
   try {
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    let migrated = false;
+    let generatedAuth = false;
     if (!existing.auth) {
       existing.auth = { enabled: true, password: hashedPassword };
+      migrated = true;
+      generatedAuth = true;
+    }
+    if (!existing.externalFiles) {
+      existing.externalFiles = {
+        enabled: true,
+        allowedSources: {
+          recruit: path.join(HOME, 'zylos/components/recruit'),
+        },
+      };
+      migrated = true;
+    }
+    if (migrated) {
       fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
-      console.log('\nAdded auth to existing config.');
-      console.log(`  Auth enabled. Password: ${generatedPassword}`);
+      console.log('\nUpdated existing config.');
+      if (generatedAuth) {
+        console.log(`  Auth enabled. Password: ${generatedPassword}`);
+      }
     } else {
-      console.log('\nConfig already exists with auth, skipping.');
+      console.log('\nConfig already exists, skipping.');
     }
   } catch {
     console.log('\nConfig already exists, skipping.');
