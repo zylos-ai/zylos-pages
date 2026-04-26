@@ -63,6 +63,52 @@ Pages may maintain a registry such as `external-files.json` to track:
 The registry should not store recruit-specific concepts such as candidate,
 role, evaluation, verdict, or interview status. Those belong in recruit.
 
+## Registry Maintenance and Concurrency
+
+`external-files.json` should be owned and written only by the pages
+registration surface. External components such as recruit should never edit the
+registry directly.
+
+Registry updates should be serialized with a local lock. A simple filesystem
+lock is sufficient for the first version because registration happens on the
+same host as pages. For example, pages can acquire a lock by creating an
+`external-files.lock` directory atomically, retry briefly when the lock already
+exists, and include diagnostic owner information such as process id and
+timestamp in the lock directory.
+
+While holding the lock, registration should:
+
+- read the latest registry file
+- validate the requested slug and source path
+- create or update the pages-managed symlink
+- update the in-memory registry object
+- write the registry to a temporary file
+- atomically rename the temporary file to `external-files.json`
+- release the lock
+
+This makes concurrent registrations safe. Multiple recruit workers may generate
+documents at the same time, but their pages registration operations are queued
+through the pages lock. Each operation reads the latest registry state before
+writing, so concurrent writes do not lose each other's updates.
+
+Registration should be idempotent where possible:
+
+- same slug and same source path: succeed and refresh registry metadata
+- same slug and different source path: reject unless replacement is explicitly
+  requested
+- slug points to a normal pages document: reject
+- source path no longer exists or escapes the allowed source root: reject
+
+Unregistration should use the same lock. It should remove only pages-managed
+symlinks that are recorded in the registry, update the registry with an atomic
+write, and never delete the source Markdown file owned by the external
+component.
+
+If a registration fails after creating a symlink but before the registry write
+completes, pages should attempt to roll back the symlink. If a process exits
+after the atomic registry write succeeds, the registry remains authoritative and
+the next operation can continue from that state.
+
 ## Expected zylos-pages Changes
 
 Pages should add a small external-file registration surface. A local CLI is
@@ -96,6 +142,8 @@ registered files. It should not need to understand recruit.
 - Registration cannot overwrite an existing normal pages document.
 - Registration records enough information for pages to unregister or diagnose a
   registered external document.
+- Concurrent registration requests are serialized so that registry updates are
+  not lost.
 - Unregistering removes the pages-managed symlink and registry entry without
   deleting the source document.
 - Existing normal pages documents, share links, index rendering, and TODO board
