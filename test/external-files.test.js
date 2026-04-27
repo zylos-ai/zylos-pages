@@ -102,7 +102,7 @@ test('register creates symlink and registry entry, unregister removes only the s
   assert.equal(fs.realpathSync(linkPath), source);
 
   const registry = JSON.parse(fs.readFileSync(path.join(fixture.dataDir, 'external-files.json'), 'utf8'));
-  assert.equal(registry.entries['recruit/questions'].sourceRealPath, source);
+  assert.equal(registry.entries['recruit/questions'].sourceRealPath, fs.realpathSync(source));
 
   const unregistered = runCli(fixture, ['unregister', '--slug', 'recruit/questions', '--json']);
   assert.equal(unregistered.ok, true);
