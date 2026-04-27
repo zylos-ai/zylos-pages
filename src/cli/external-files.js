@@ -9,9 +9,9 @@ import { normalizeSlug } from '../utils/slug.js';
 
 const REGISTRY_PATH = path.join(DATA_DIR, 'external-files.json');
 const LOCK_PATH = path.join(DATA_DIR, 'external-files.lock');
-const LOCK_RETRY_MS = 100;
-const LOCK_TIMEOUT_MS = 5000;
-const STALE_LOCK_MS = 30000;
+const LOCK_RETRY_MS = Number.parseInt(process.env.PAGES_EXTERNAL_FILES_LOCK_RETRY_MS || '100', 10);
+const LOCK_TIMEOUT_MS = Number.parseInt(process.env.PAGES_EXTERNAL_FILES_LOCK_TIMEOUT_MS || '5000', 10);
+const STALE_LOCK_MS = Number.parseInt(process.env.PAGES_EXTERNAL_FILES_STALE_LOCK_MS || '30000', 10);
 
 class CliError extends Error {
   constructor(code, message) {
@@ -209,15 +209,23 @@ function pidIsAlive(pid) {
 function maybeRemoveStaleLock() {
   const ownerPath = path.join(LOCK_PATH, 'owner.json');
   let owner = null;
+  let ownerReadable = false;
   try {
     owner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
+    ownerReadable = true;
   } catch {
+    owner = null;
+  }
+
+  const lockStats = lstatOrNull(LOCK_PATH);
+  if (!lockStats) {
     return;
   }
 
-  const createdAt = Date.parse(owner.createdAt);
+  const createdAt = ownerReadable ? Date.parse(owner.createdAt) : lockStats.mtimeMs;
   const isOld = Number.isFinite(createdAt) && Date.now() - createdAt > STALE_LOCK_MS;
-  if (isOld && !pidIsAlive(owner.pid)) {
+  const ownerAlive = ownerReadable && pidIsAlive(owner.pid);
+  if (isOld && !ownerAlive) {
     fs.rmSync(LOCK_PATH, { recursive: true, force: true });
   }
 }
@@ -292,15 +300,47 @@ function removeRegisteredSymlink(linkPath, entry) {
   fs.unlinkSync(linkPath);
 }
 
-function createSymlinkAtomic(sourceRealPath, linkPath) {
+function existingSlugError(linkPath, entry) {
+  const stats = lstatOrNull(linkPath);
+  if (!stats) {
+    return null;
+  }
+  if (stats.isSymbolicLink()) {
+    if (entry && symlinkIsPagesOwned(linkPath, entry)) {
+      return new CliError('slug_conflict', 'registered slug path points to a different source');
+    }
+    return new CliError('slug_conflict', 'slug path exists but is not a pages-owned symlink');
+  }
+  if (entry) {
+    return new CliError('slug_conflict', 'registered slug path exists but is not a pages-owned symlink');
+  }
+  return new CliError('normal_page_exists', 'a normal pages document already exists at this slug');
+}
+
+function createSymlinkNoReplace(sourceRealPath, linkPath, entry = null) {
   fs.mkdirSync(path.dirname(linkPath), { recursive: true });
-  const tmpPath = `${linkPath}.tmp.${process.pid}.${Date.now()}`;
   try {
-    fs.symlinkSync(sourceRealPath, tmpPath);
-    fs.renameSync(tmpPath, linkPath);
+    fs.symlinkSync(sourceRealPath, linkPath);
+    return true;
   } catch (err) {
-    fs.rmSync(tmpPath, { force: true });
+    if (err.code === 'EEXIST') {
+      if (entry && symlinkIsPagesOwned(linkPath, entry) && symlinkPointsTo(linkPath, sourceRealPath)) {
+        return false;
+      }
+      throw existingSlugError(linkPath, entry) || err;
+    }
     throw err;
+  }
+}
+
+function rollbackCreatedSymlink(linkPath, sourceRealPath) {
+  try {
+    const stats = fs.lstatSync(linkPath);
+    if (stats.isSymbolicLink() && symlinkPointsTo(linkPath, sourceRealPath)) {
+      fs.unlinkSync(linkPath);
+    }
+  } catch {
+    // Best-effort rollback; the original error is more useful to callers.
   }
 }
 
@@ -360,13 +400,11 @@ function commandRegister(args) {
         }
         if (!symlinkPointsTo(linkPath, sourceRealPath)) {
           removeRegisteredSymlink(linkPath, existingEntry);
-          createSymlinkAtomic(sourceRealPath, linkPath);
-          createdLink = true;
+          createdLink = createSymlinkNoReplace(sourceRealPath, linkPath, existingEntry);
         }
       } else {
         removeRegisteredSymlink(linkPath, existingEntry);
-        createSymlinkAtomic(sourceRealPath, linkPath);
-        createdLink = true;
+        createdLink = createSymlinkNoReplace(sourceRealPath, linkPath, existingEntry);
       }
 
       existingEntry.sourcePath = args.source;
@@ -387,8 +425,7 @@ function commandRegister(args) {
       throw new CliError('normal_page_exists', 'a normal pages document already exists at this slug');
     }
 
-    createSymlinkAtomic(sourceRealPath, linkPath);
-    createdLink = true;
+    createdLink = createSymlinkNoReplace(sourceRealPath, linkPath);
     registry.entries[slug] = {
       slug,
       component,
@@ -409,13 +446,7 @@ function commandRegister(args) {
     }, args.json);
   } catch (err) {
     if (createdLink) {
-      try {
-        if (fs.lstatSync(linkPath).isSymbolicLink()) {
-          fs.unlinkSync(linkPath);
-        }
-      } catch {
-        // Best-effort rollback; the original error is more useful to callers.
-      }
+      rollbackCreatedSymlink(linkPath, sourceRealPath);
     }
     throw err;
   } finally {

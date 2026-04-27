@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "external-files": "node src/cli/external-files.js"
+    "external-files": "node src/cli/external-files.js",
+    "test": "node --test"
   },
   "homepage": "https://github.com/zylos-ai/zylos-pages#readme",
   "bugs": {
