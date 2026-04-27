@@ -39,6 +39,17 @@ if (fs.existsSync(configPath)) {
     migrated = true;
   }
 
+  // Migration: add external file registration section if missing
+  if (!config.externalFiles) {
+    config.externalFiles = {
+      enabled: true,
+      allowedSources: {
+        recruit: path.join(HOME, 'zylos/components/recruit'),
+      },
+    };
+    migrated = true;
+  }
+
   if (migrated) {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
     console.log('[post-upgrade] Config migrated');

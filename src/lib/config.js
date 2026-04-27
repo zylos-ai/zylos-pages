@@ -47,6 +47,12 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     allowPermanent: false,
   },
+  externalFiles: {
+    enabled: true,
+    allowedSources: {
+      recruit: path.join(HOME, 'zylos/components/recruit'),
+    },
+  },
   todo: {
     enabled: false,
     boards: {},
