@@ -126,6 +126,24 @@ test('register is idempotent for the same slug and source', () => {
   assert.deepEqual(list.entries.map((entry) => entry.slug), ['recruit/questions']);
 });
 
+test('register does not overwrite a registered symlink that drifted to another source', () => {
+  const fixture = makeFixture();
+  const original = path.join(fixture.sourceRoot, 'original.md');
+  const replacement = path.join(fixture.sourceRoot, 'replacement.md');
+  fs.writeFileSync(original, '# Original\n');
+  fs.writeFileSync(replacement, '# Replacement\n');
+
+  runCli(fixture, registerArgs('questions', original));
+  const linkPath = path.join(fixture.contentDir, 'questions.md');
+  fs.unlinkSync(linkPath);
+  fs.symlinkSync(replacement, linkPath);
+
+  const result = runCli(fixture, registerArgs('questions', original), { expectFailure: true });
+  assert.equal(result.code, 'slug_conflict');
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
+  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(replacement));
+});
+
 test('registered file is rendered by page service and reflects source updates', async () => {
   const fixture = makeFixture();
   const source = path.join(fixture.sourceRoot, 'render-source.md');

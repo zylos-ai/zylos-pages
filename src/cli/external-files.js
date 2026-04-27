@@ -411,8 +411,7 @@ function commandRegister(args) {
           throw new CliError('slug_conflict', 'registered slug path exists but is not a pages-owned symlink');
         }
         if (!symlinkPointsTo(linkPath, sourceRealPath)) {
-          removeRegisteredSymlink(linkPath, existingEntry);
-          createdLink = createSymlinkNoReplace(sourceRealPath, linkPath, existingEntry);
+          throw new CliError('slug_conflict', 'registered slug path points to a different source');
         }
       } else {
         removeRegisteredSymlink(linkPath, existingEntry);
