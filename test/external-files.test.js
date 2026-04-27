@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { getPage } from '../src/services/pageService.js';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const cliPath = path.join(repoRoot, 'src/cli/external-files.js');
@@ -111,6 +112,43 @@ test('register creates symlink and registry entry, unregister removes only the s
   assert.equal(fs.existsSync(source), true);
 });
 
+test('register is idempotent for the same slug and source', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'questions.md');
+  fs.writeFileSync(source, '# Questions\n');
+
+  const first = runCli(fixture, registerArgs('recruit/questions', source));
+  const second = runCli(fixture, registerArgs('recruit/questions', source));
+
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  const list = runCli(fixture, ['list', '--json']);
+  assert.deepEqual(list.entries.map((entry) => entry.slug), ['recruit/questions']);
+});
+
+test('registered file is rendered by page service and reflects source updates', async () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'render-source.md');
+  fs.writeFileSync(source, '# First Render\n');
+
+  runCli(fixture, registerArgs('external/render-source', source));
+  const config = {
+    contentDir: fixture.contentDir,
+    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
+    toc: { minHeadings: 3 },
+    theme: { codeTheme: 'github-dark' },
+  };
+
+  const first = await getPage('external/render-source', config);
+  assert.match(first.html, /First Render/);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  fs.writeFileSync(source, '# Updated Render\n');
+
+  const updated = await getPage('external/render-source', config);
+  assert.match(updated.html, /Updated Render/);
+});
+
 test('source symlink escaping allowed root is rejected', () => {
   const fixture = makeFixture();
   const outside = path.join(fixture.home, 'outside.md');
@@ -145,6 +183,57 @@ test('existing normal page is not overwritten', () => {
   assert.equal(result.code, 'normal_page_exists');
   assert.equal(fs.readFileSync(linkPath, 'utf8'), '# Normal Page\n');
   assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), false);
+});
+
+test('unknown symlink at slug is treated as a slug conflict', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'questions.md');
+  const linkPath = path.join(fixture.contentDir, 'questions.md');
+  fs.writeFileSync(source, '# Questions\n');
+  fs.symlinkSync(source, linkPath);
+
+  const result = runCli(fixture, registerArgs('questions', source), { expectFailure: true });
+  assert.equal(result.code, 'slug_conflict');
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
+});
+
+test('slug parent file conflict is rejected without overwriting', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'questions.md');
+  const parentPath = path.join(fixture.contentDir, 'recruit');
+  fs.writeFileSync(source, '# Questions\n');
+  fs.writeFileSync(parentPath, 'not a directory\n');
+
+  const result = runCli(fixture, registerArgs('recruit/questions', source), { expectFailure: true });
+  assert.equal(result.code, 'slug_conflict');
+  assert.equal(fs.readFileSync(parentPath, 'utf8'), 'not a directory\n');
+});
+
+test('invalid encoded slug is rejected as invalid_slug', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'questions.md');
+  fs.writeFileSync(source, '# Questions\n');
+
+  const result = runCli(fixture, registerArgs('%E0%A4%A', source), { expectFailure: true });
+  assert.equal(result.code, 'invalid_slug');
+});
+
+test('unregister does not delete a symlink that no longer points to the registry source', () => {
+  const fixture = makeFixture();
+  const original = path.join(fixture.sourceRoot, 'original.md');
+  const replacement = path.join(fixture.sourceRoot, 'replacement.md');
+  fs.writeFileSync(original, '# Original\n');
+  fs.writeFileSync(replacement, '# Replacement\n');
+
+  runCli(fixture, registerArgs('questions', original));
+  const linkPath = path.join(fixture.contentDir, 'questions.md');
+  fs.unlinkSync(linkPath);
+  fs.symlinkSync(replacement, linkPath);
+
+  const result = runCli(fixture, ['unregister', '--slug', 'questions', '--json']);
+  assert.equal(result.ok, true);
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
+  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(replacement));
 });
 
 test('stale lock without owner file is recovered', async () => {

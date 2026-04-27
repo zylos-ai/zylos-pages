@@ -108,7 +108,12 @@ function normalizeAndValidateSlug(rawSlug) {
     throw new CliError('invalid_slug', 'slug is required');
   }
 
-  const slug = normalizeSlug(rawSlug);
+  let slug;
+  try {
+    slug = normalizeSlug(rawSlug);
+  } catch {
+    throw new CliError('invalid_slug', 'slug must be a valid URL path');
+  }
   if (!slug || slug.includes('\\') || slug.split('/').includes('..') || slug.split('/').includes('.')) {
     throw new CliError('invalid_slug', 'slug must be a non-empty relative pages path');
   }
@@ -282,7 +287,7 @@ function lstatOrNull(filePath) {
   try {
     return fs.lstatSync(filePath);
   } catch (err) {
-    if (err.code === 'ENOENT') {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
       return null;
     }
     throw err;
@@ -318,7 +323,14 @@ function existingSlugError(linkPath, entry) {
 }
 
 function createSymlinkNoReplace(sourceRealPath, linkPath, entry = null) {
-  fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+  try {
+    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
+  } catch (err) {
+    if (err.code === 'EEXIST' || err.code === 'ENOTDIR') {
+      throw new CliError('slug_conflict', 'slug parent path conflicts with an existing pages document');
+    }
+    throw err;
+  }
   try {
     fs.symlinkSync(sourceRealPath, linkPath);
     return true;
@@ -421,8 +433,9 @@ function commandRegister(args) {
       }, args.json);
     }
 
-    if (lstatOrNull(linkPath)) {
-      throw new CliError('normal_page_exists', 'a normal pages document already exists at this slug');
+    const existingLinkStats = lstatOrNull(linkPath);
+    if (existingLinkStats) {
+      throw existingSlugError(linkPath) || new CliError('normal_page_exists', 'a normal pages document already exists at this slug');
     }
 
     createdLink = createSymlinkNoReplace(sourceRealPath, linkPath);
@@ -465,7 +478,7 @@ function commandUnregister(args) {
     const entry = registry.entries[slug];
     if (entry) {
       try {
-        if (fs.lstatSync(entry.linkPath).isSymbolicLink()) {
+        if (fs.lstatSync(entry.linkPath).isSymbolicLink() && symlinkPointsTo(entry.linkPath, entry.sourceRealPath)) {
           fs.unlinkSync(entry.linkPath);
         }
       } catch (err) {

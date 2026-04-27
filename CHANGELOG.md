@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.7] - 2026-04-27
+
+### Added
+- External file registration for component-owned Markdown files, with source allowlists and registry locking
+
+### Fixed
+- Hardened external file registration against malformed slugs, unknown symlinks, parent path conflicts, and unregister target drift
+
 ## [0.1.6] - 2026-04-07
 
 ### Added
