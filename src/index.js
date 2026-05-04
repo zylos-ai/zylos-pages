@@ -27,6 +27,8 @@ import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
 import { logger } from './utils/logger.js';
 
+const BASE_URL = '/pages';
+
 // Initialize
 console.log(`[pages] Starting...`);
 console.log(`[pages] Data directory: ${DATA_DIR}`);
@@ -80,29 +82,38 @@ async function main() {
 
   // Serve static assets (CSS/JS) — before auth so login page can load them
   const assetsDir = path.join(import.meta.dirname, '..', 'assets');
-  app.use('/_assets', express.static(assetsDir, {
+  const staticOptions = {
     maxAge: '1d',
     immutable: true,
-  }));
+  };
+  app.use('/_assets', express.static(assetsDir, staticOptions));
+  // Also mount at BASE_URL/_assets so direct, unstripped access works.
+  app.use(BASE_URL + '/_assets', express.static(assetsDir, staticOptions));
 
   // Cookie-based session authentication
-  setupAuth(app, config.auth || {}, '/pages');
+  setupAuth(app, config.auth || {}, BASE_URL);
 
   // Share API routes (after auth — requires authenticated session)
   const sharingConfig = config.sharing || { enabled: true, allowPermanent: false };
   if (sharingConfig.enabled !== false) {
-    setupShareApi(app, sharingConfig, '/pages');
+    setupShareApi(app, sharingConfig, BASE_URL);
+    setupShareApi(app, sharingConfig, BASE_URL, BASE_URL);
   }
   setupRawApi(app, config);
 
   // Todo routes (before catch-all)
   if (config.todo?.enabled) {
     setupTodoApi(app, config);
+    setupTodoApi(app, config, BASE_URL);
     app.get('/todo/:board', todoRoute(config));
+    app.get(BASE_URL + '/todo/:board', todoRoute(config));
   }
 
   // Routes
   app.get('/', indexRoute(config));
+  app.get(BASE_URL, (_req, res) => res.redirect(301, BASE_URL + '/'));
+  app.get(BASE_URL + '/', indexRoute(config));
+  app.get(BASE_URL + '/:slug(*)', pageRoute(config));
   app.get('/:slug(*)', pageRoute(config));
 
   // Error handler

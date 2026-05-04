@@ -25,7 +25,7 @@ let globalFailures = { count: 0, resetAt: Date.now() + 60_000 };
 const GLOBAL_MAX_PER_MIN = 30;
 
 // Periodic session cleanup
-setInterval(() => {
+const cleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [hash, session] of sessions) {
     if (now - session.createdAt > SESSION_ABSOLUTE_MS ||
@@ -34,6 +34,7 @@ setInterval(() => {
     }
   }
 }, CLEANUP_INTERVAL_MS);
+cleanupTimer.unref?.();
 
 // --- Password hashing ---
 
@@ -302,8 +303,13 @@ function loginPageHtml(baseUrl, error, next) {
 export function setupAuth(app, authConfig, baseUrl) {
   migratePasswordIfNeeded(authConfig);
 
+  const loginPath = '/login';
+  const logoutPath = '/logout';
+  const baseLoginPath = baseUrl + loginPath;
+  const baseLogoutPath = baseUrl + logoutPath;
+
   // Parse URL-encoded bodies for login form
-  app.use('/login', (req, res, next) => {
+  function parseLoginBody(req, res, next) {
     if (req.method === 'POST') {
       let body = '';
       req.on('data', chunk => { body += chunk.toString(); });
@@ -314,20 +320,26 @@ export function setupAuth(app, authConfig, baseUrl) {
     } else {
       next();
     }
-  });
+  }
+
+  app.use(loginPath, parseLoginBody);
+  app.use(baseLoginPath, parseLoginBody);
 
   // GET /login — show login page
-  app.get('/login', (req, res) => {
+  function loginGet(req, res) {
     // If already authenticated, redirect to index
     if (validateSession(getSessionCookie(req))) {
       return res.redirect(baseUrl + '/');
     }
     res.setHeader('Cache-Control', 'no-store');
     res.send(loginPageHtml(baseUrl, null, req.query.next));
-  });
+  }
+
+  app.get(loginPath, loginGet);
+  app.get(baseLoginPath, loginGet);
 
   // POST /login — authenticate
-  app.post('/login', (req, res) => {
+  function loginPost(req, res) {
     const ip = getClientIp(req);
 
     if (isLockedOut(ip) || isGlobalLimited()) {
@@ -353,11 +365,14 @@ export function setupAuth(app, authConfig, baseUrl) {
     const next = req.body?.next;
     const redirectTo = (next && isSafeRedirect(next)) ? next : baseUrl + '/';
     res.redirect(302, redirectTo);
-  });
+  }
+
+  app.post(loginPath, loginPost);
+  app.post(baseLoginPath, loginPost);
 
   // POST /logout — same-host CSRF protection
   // Compare host portion only (protocol may differ behind reverse proxy)
-  app.post('/logout', (req, res) => {
+  function logoutPost(req, res) {
     const expectedHost = req.headers.host;
     const origin = req.headers.origin;
     const referer = req.headers.referer;
@@ -387,7 +402,10 @@ export function setupAuth(app, authConfig, baseUrl) {
     destroySession(getSessionCookie(req));
     clearSessionCookie(res);
     res.redirect(302, baseUrl + '/login');
-  });
+  }
+
+  app.post(logoutPath, logoutPost);
+  app.post(baseLogoutPath, logoutPost);
 
   // Auth middleware — protect all other routes
   app.use((req, res, next) => {
@@ -395,14 +413,20 @@ export function setupAuth(app, authConfig, baseUrl) {
     if (!authConfig.enabled || !authConfig.password) return next();
 
     // Skip static assets, login/logout, and API routes (API has own auth checks)
-    if (req.path.startsWith('/_assets') || req.path === '/login' || req.path === '/logout') {
+    if (req.path.startsWith('/_assets') || req.path.startsWith(baseUrl + '/_assets')
+        || req.path === loginPath || req.path === logoutPath
+        || req.path === baseLoginPath || req.path === baseLogoutPath) {
       return next();
     }
 
     // Share token bypass — only for GET/HEAD on document routes (not /api/*, not /)
     if ((req.method === 'GET' || req.method === 'HEAD') && req.query.token
-        && !req.path.startsWith('/api/') && req.path !== '/') {
-      const slug = req.path.slice(1); // strip leading /
+        && !req.path.startsWith('/api/') && !req.path.startsWith(baseUrl + '/api/')
+        && req.path !== '/' && req.path !== baseUrl && req.path !== baseUrl + '/') {
+      const baseRelativePath = req.path.startsWith(baseUrl + '/')
+        ? req.path.slice(baseUrl.length)
+        : req.path;
+      const slug = baseRelativePath.slice(1); // strip leading /
       const result = verifyShare(req.query.token, slug);
       if (result.valid) {
         res.locals.viewerType = 'share';
@@ -433,7 +457,10 @@ export function setupAuth(app, authConfig, baseUrl) {
     // Not authenticated — redirect to login
     // Prepend baseUrl to captured path since reverse proxy strips the prefix
     const rawNext = req.originalUrl || req.url;
-    const next_url = rawNext === '/' ? baseUrl + '/' : baseUrl + rawNext;
+    const alreadyPrefixed = rawNext === baseUrl || rawNext.startsWith(baseUrl + '/');
+    const next_url = rawNext === '/' ? baseUrl + '/'
+      : alreadyPrefixed ? rawNext
+        : baseUrl + rawNext;
     const safeNext = isSafeRedirect(next_url) ? `?next=${encodeURIComponent(next_url)}` : '';
     res.redirect(302, `${baseUrl}/login${safeNext}`);
   });

@@ -97,12 +97,13 @@ function resolveBoardPath(boardName, todoConfig) {
  * Must be called AFTER auth middleware.
  * @param {Express} app
  * @param {object} config - Full config object
+ * @param {string} routePrefix - optional route mount prefix when reverse proxy does not strip baseUrl
  */
-export function setupTodoApi(app, config) {
+export function setupTodoApi(app, config, routePrefix = '') {
   const todoConfig = config.todo;
 
   // GET /api/todo/:board — list all items
-  app.get('/api/todo/:board', (req, res) => {
+  app.get(routePrefix + '/api/todo/:board', (req, res) => {
     const boardPath = resolveBoardPath(req.params.board, todoConfig);
     if (!boardPath) {
       return res.status(404).json({ error: 'Board not found' });
@@ -119,7 +120,7 @@ export function setupTodoApi(app, config) {
   });
 
   // POST /api/todo/:board — add new item
-  app.post('/api/todo/:board', async (req, res) => {
+  app.post(routePrefix + '/api/todo/:board', async (req, res) => {
     if (!csrfCheck(req, res)) return;
 
     if (res.locals.viewerType === 'share') {
@@ -165,7 +166,7 @@ export function setupTodoApi(app, config) {
   });
 
   // PATCH /api/todo/:board/:id — update item (status change)
-  app.patch('/api/todo/:board/:id', async (req, res) => {
+  app.patch(routePrefix + '/api/todo/:board/:id', async (req, res) => {
     if (!csrfCheck(req, res)) return;
 
     if (res.locals.viewerType === 'share') {
@@ -200,7 +201,7 @@ export function setupTodoApi(app, config) {
   });
 
   // DELETE /api/todo/:board/:id — remove item
-  app.delete('/api/todo/:board/:id', (req, res) => {
+  app.delete(routePrefix + '/api/todo/:board/:id', (req, res) => {
     if (!csrfCheck(req, res)) return;
 
     if (res.locals.viewerType === 'share') {

@@ -69,10 +69,11 @@ function parseJsonBody(req) {
  * @param {Express} app
  * @param {object} sharingConfig - { allowPermanent }
  * @param {string} baseUrl - e.g. '/pages'
+ * @param {string} routePrefix - optional route mount prefix when reverse proxy does not strip baseUrl
  */
-export function setupShareApi(app, sharingConfig, baseUrl) {
+export function setupShareApi(app, sharingConfig, baseUrl, routePrefix = '') {
   // POST /api/share — create a share link
-  app.post('/api/share', async (req, res) => {
+  app.post(routePrefix + '/api/share', async (req, res) => {
     if (!csrfCheck(req, res)) return;
 
     // Must be authenticated (not share viewer)
@@ -113,7 +114,7 @@ export function setupShareApi(app, sharingConfig, baseUrl) {
   });
 
   // DELETE /api/share/:tokenId — revoke a single share
-  app.delete('/api/share/:tokenId', (req, res) => {
+  app.delete(routePrefix + '/api/share/:tokenId', (req, res) => {
     if (!csrfCheck(req, res)) return;
 
     if (res.locals.viewerType === 'share') {
@@ -134,7 +135,7 @@ export function setupShareApi(app, sharingConfig, baseUrl) {
   });
 
   // GET /api/shares/:slug(*) — list active shares for a document
-  app.get('/api/shares/:slug(*)', (req, res) => {
+  app.get(routePrefix + '/api/shares/:slug(*)', (req, res) => {
     if (res.locals.viewerType === 'share') {
       return res.status(403).json({ error: 'Share viewers cannot list shares' });
     }
@@ -145,7 +146,7 @@ export function setupShareApi(app, sharingConfig, baseUrl) {
   });
 
   // DELETE /api/shares/:slug(*) — revoke all shares for a document
-  app.delete('/api/shares/:slug(*)', (req, res) => {
+  app.delete(routePrefix + '/api/shares/:slug(*)', (req, res) => {
     if (!csrfCheck(req, res)) return;
 
     if (res.locals.viewerType === 'share') {
