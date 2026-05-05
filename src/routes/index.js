@@ -5,9 +5,10 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import { indexTemplate } from '../templates/indexTemplate.js';
 import { logger } from '../utils/logger.js';
+import { browserBaseFromRequest } from '../lib/browser-base.js';
 
 /**
- * Route handler for GET /pages/ — lists all available pages.
+ * Route handler for GET / — lists all available pages.
  */
 export function indexRoute(config) {
   return async (req, res) => {
@@ -24,7 +25,7 @@ export function indexRoute(config) {
         }
       }
 
-      const html = indexTemplate(pages, '/pages', todoBoards);
+      const html = indexTemplate(pages, browserBaseFromRequest(req), todoBoards);
       const elapsed = Math.round(performance.now() - start);
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');

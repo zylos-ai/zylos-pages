@@ -2,7 +2,7 @@
 // Uses native fs.watch (chokidar v4 doesn't fire events on this platform)
 
 import { watch } from 'node:fs';
-import { invalidatePage } from '../cache/pageCache.js';
+import { invalidatePagesForSlug } from '../cache/pageCache.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
@@ -37,7 +37,7 @@ export function startWatcher(contentRoot) {
 
       debounceTimers.set(key, setTimeout(() => {
         debounceTimers.delete(key);
-        const evicted = invalidatePage(key);
+        const evicted = invalidatePagesForSlug(key);
         logger.info(`file ${eventType}, cache ${evicted ? 'invalidated' : 'not cached'}`, {
           file: filename, key, event: eventType,
         });

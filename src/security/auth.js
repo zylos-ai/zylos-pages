@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 import { verifyShare } from '../sharing/share-manager.js';
+import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
 
 const SCRYPT_KEYLEN = 64;
 const COOKIE_NAME = '__Host-zylos_pages_session';
@@ -197,18 +198,15 @@ function clearFailures(ip) {
 
 // --- Redirect safety ---
 
-function isSafeRedirect(path) {
-  if (!path || typeof path !== 'string') return false;
-  // Must start with / and not contain protocol, double slashes, backslashes, or control chars
-  return path.startsWith('/') && !path.startsWith('//') && !path.includes('://')
-    && !path.includes('\\') && !/[\x00-\x1f]/.test(path);
+function isSafeRedirect(path, baseUrl = '') {
+  return isPathWithinBase(path, baseUrl);
 }
 
 // --- Login page template ---
 const LOGIN_ASSET_VERSION = Date.now();
 
 function loginPageHtml(baseUrl, error, next) {
-  const nextParam = next && isSafeRedirect(next) ? next : '';
+  const nextParam = next && isSafeRedirect(next, baseUrl) ? next : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -298,15 +296,14 @@ function loginPageHtml(baseUrl, error, next) {
  * Set up cookie-based session auth on an Express app.
  * @param {Express} app
  * @param {object} authConfig - { enabled, password }
- * @param {string} baseUrl - e.g. '/pages'
+ * Browser-visible paths are derived from X-Forwarded-Prefix when Caddy strips
+ * /pages before proxying; direct localhost access uses root-relative URLs.
  */
-export function setupAuth(app, authConfig, baseUrl) {
+export function setupAuth(app, authConfig) {
   migratePasswordIfNeeded(authConfig);
 
   const loginPath = '/login';
   const logoutPath = '/logout';
-  const baseLoginPath = baseUrl + loginPath;
-  const baseLogoutPath = baseUrl + logoutPath;
 
   // Parse URL-encoded bodies for login form
   function parseLoginBody(req, res, next) {
@@ -323,29 +320,29 @@ export function setupAuth(app, authConfig, baseUrl) {
   }
 
   app.use(loginPath, parseLoginBody);
-  app.use(baseLoginPath, parseLoginBody);
 
   // GET /login — show login page
   function loginGet(req, res) {
+    const browserBase = browserBaseFromRequest(req);
     // If already authenticated, redirect to index
     if (validateSession(getSessionCookie(req))) {
-      return res.redirect(baseUrl + '/');
+      return res.redirect(browserRoot(browserBase));
     }
     res.setHeader('Cache-Control', 'no-store');
-    res.send(loginPageHtml(baseUrl, null, req.query.next));
+    res.send(loginPageHtml(browserBase, null, req.query.next));
   }
 
   app.get(loginPath, loginGet);
-  app.get(baseLoginPath, loginGet);
 
   // POST /login — authenticate
   function loginPost(req, res) {
+    const browserBase = browserBaseFromRequest(req);
     const ip = getClientIp(req);
 
     if (isLockedOut(ip) || isGlobalLimited()) {
       logger.warn('auth blocked', { ip, reason: 'lockout' });
       res.setHeader('Cache-Control', 'no-store');
-      return res.status(429).send(loginPageHtml(baseUrl, 'Too many attempts. Try again later.', req.body?.next));
+      return res.status(429).send(loginPageHtml(browserBase, 'Too many attempts. Try again later.', req.body?.next));
     }
 
     const password = req.body?.password || '';
@@ -354,7 +351,7 @@ export function setupAuth(app, authConfig, baseUrl) {
       recordFailure(ip);
       logger.warn('auth failed', { ip, reason: 'invalid_password' });
       res.setHeader('Cache-Control', 'no-store');
-      return res.send(loginPageHtml(baseUrl, 'Incorrect password.', req.body?.next));
+      return res.send(loginPageHtml(browserBase, 'Incorrect password.', req.body?.next));
     }
 
     // Success — always issue new token (prevents session fixation)
@@ -363,12 +360,11 @@ export function setupAuth(app, authConfig, baseUrl) {
     setSessionCookie(res, token);
 
     const next = req.body?.next;
-    const redirectTo = (next && isSafeRedirect(next)) ? next : baseUrl + '/';
+    const redirectTo = (next && isSafeRedirect(next, browserBase)) ? next : browserRoot(browserBase);
     res.redirect(302, redirectTo);
   }
 
   app.post(loginPath, loginPost);
-  app.post(baseLoginPath, loginPost);
 
   // POST /logout — same-host CSRF protection
   // Compare host portion only (protocol may differ behind reverse proxy)
@@ -401,32 +397,29 @@ export function setupAuth(app, authConfig, baseUrl) {
 
     destroySession(getSessionCookie(req));
     clearSessionCookie(res);
-    res.redirect(302, baseUrl + '/login');
+    const browserBase = browserBaseFromRequest(req);
+    res.redirect(302, `${browserPath(browserBase, 'login')}?next=${encodeURIComponent(browserRoot(browserBase))}`);
   }
 
   app.post(logoutPath, logoutPost);
-  app.post(baseLogoutPath, logoutPost);
 
   // Auth middleware — protect all other routes
   app.use((req, res, next) => {
+    const browserBase = browserBaseFromRequest(req);
     // Skip if auth disabled or no password
     if (!authConfig.enabled || !authConfig.password) return next();
 
     // Skip static assets, login/logout, and API routes (API has own auth checks)
-    if (req.path.startsWith('/_assets') || req.path.startsWith(baseUrl + '/_assets')
-        || req.path === loginPath || req.path === logoutPath
-        || req.path === baseLoginPath || req.path === baseLogoutPath) {
+    if (req.path.startsWith('/_assets')
+        || req.path === loginPath || req.path === logoutPath) {
       return next();
     }
 
     // Share token bypass — only for GET/HEAD on document routes (not /api/*, not /)
     if ((req.method === 'GET' || req.method === 'HEAD') && req.query.token
-        && !req.path.startsWith('/api/') && !req.path.startsWith(baseUrl + '/api/')
-        && req.path !== '/' && req.path !== baseUrl && req.path !== baseUrl + '/') {
-      const baseRelativePath = req.path.startsWith(baseUrl + '/')
-        ? req.path.slice(baseUrl.length)
-        : req.path;
-      const slug = baseRelativePath.slice(1); // strip leading /
+        && !req.path.startsWith('/api/')
+        && req.path !== '/') {
+      const slug = req.path.slice(1); // strip leading /
       const result = verifyShare(req.query.token, slug);
       if (result.valid) {
         res.locals.viewerType = 'share';
@@ -455,13 +448,9 @@ export function setupAuth(app, authConfig, baseUrl) {
     }
 
     // Not authenticated — redirect to login
-    // Prepend baseUrl to captured path since reverse proxy strips the prefix
     const rawNext = req.originalUrl || req.url;
-    const alreadyPrefixed = rawNext === baseUrl || rawNext.startsWith(baseUrl + '/');
-    const next_url = rawNext === '/' ? baseUrl + '/'
-      : alreadyPrefixed ? rawNext
-        : baseUrl + rawNext;
-    const safeNext = isSafeRedirect(next_url) ? `?next=${encodeURIComponent(next_url)}` : '';
-    res.redirect(302, `${baseUrl}/login${safeNext}`);
+    const nextUrl = rawNext === '/' ? browserRoot(browserBase) : `${browserBase}${rawNext}`;
+    const safeNext = isSafeRedirect(nextUrl, browserBase) ? `?next=${encodeURIComponent(nextUrl)}` : '';
+    res.redirect(302, `${browserPath(browserBase, 'login')}${safeNext}`);
   });
 }
