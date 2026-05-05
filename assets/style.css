@@ -559,8 +559,9 @@ body {
 /* Share viewer — hide auth-only elements */
 [data-viewer="share"] .auth-only { display: none !important; }
 
-/* Share button */
-.share-btn {
+/* Header action buttons */
+.share-btn,
+.copy-raw-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -573,9 +574,28 @@ body {
   font-size: 13px;
 }
 
-.share-btn:hover { background: var(--color-code-bg); color: var(--color-link); }
+.share-btn:hover,
+.copy-raw-btn:hover { background: var(--color-code-bg); color: var(--color-link); }
 
-.share-btn svg { flex-shrink: 0; }
+.share-btn:disabled,
+.copy-raw-btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.share-btn svg,
+.copy-raw-btn svg { flex-shrink: 0; }
+
+@media (max-width: 768px) {
+  .copy-raw-btn {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 4px 8px;
+  }
+
+  .copy-raw-label { display: none; }
+}
 
 /* Share Modal */
 .share-modal {

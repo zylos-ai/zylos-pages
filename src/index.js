@@ -19,6 +19,7 @@ import { securityHeaders } from './security/headers.js';
 import { setupAuth } from './security/auth.js';
 import { createRateLimiter } from './security/rateLimit.js';
 import { setupShareApi } from './routes/share-api.js';
+import { setupRawApi } from './routes/raw-api.js';
 import { setupTodoApi } from './routes/todo-api.js';
 import { todoRoute } from './routes/todo-page.js';
 import { cleanupShares } from './sharing/share-manager.js';
@@ -92,6 +93,7 @@ async function main() {
   if (sharingConfig.enabled !== false) {
     setupShareApi(app, sharingConfig, '/pages');
   }
+  setupRawApi(app, config);
 
   // Todo routes (before catch-all)
   if (config.todo?.enabled) {
