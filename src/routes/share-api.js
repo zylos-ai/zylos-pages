@@ -7,6 +7,7 @@
 import { createShare, revokeShare, revokeAllForSlug, listSharesForSlug } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
+import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
@@ -68,9 +69,8 @@ function parseJsonBody(req) {
  * Must be called AFTER auth middleware so that only authenticated users reach these.
  * @param {Express} app
  * @param {object} sharingConfig - { allowPermanent }
- * @param {string} baseUrl - e.g. '/pages'
  */
-export function setupShareApi(app, sharingConfig, baseUrl) {
+export function setupShareApi(app, sharingConfig) {
   // POST /api/share — create a share link
   app.post('/api/share', async (req, res) => {
     if (!csrfCheck(req, res)) return;
@@ -97,7 +97,8 @@ export function setupShareApi(app, sharingConfig, baseUrl) {
       const proto = req.headers['x-forwarded-proto'] || 'https';
       const host = req.headers.host;
       const normalizedSlug = normalizeSlug(slug);
-      const shareUrl = `${proto}://${host}${baseUrl}/${normalizedSlug}?token=${result.token}`;
+      const browserBase = browserBaseFromRequest(req);
+      const shareUrl = `${proto}://${host}${browserPath(browserBase, normalizedSlug)}?token=${result.token}`;
 
       res.json({
         ok: true,

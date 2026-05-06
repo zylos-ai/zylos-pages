@@ -53,6 +53,23 @@ export function invalidatePage(key) {
 }
 
 /**
+ * Invalidate every browser-base variant for a normalized page slug.
+ */
+export function invalidatePagesForSlug(slug) {
+  if (!cache) return false;
+  let evicted = false;
+  const suffix = `:${slug}`;
+  for (const key of cache.keys()) {
+    if (key === slug || key.endsWith(suffix)) {
+      cache.delete(key);
+      evicted = true;
+      logger.info('cache invalidated', { key, slug });
+    }
+  }
+  return evicted;
+}
+
+/**
  * Get cache stats for observability.
  */
 export function getCacheStats() {

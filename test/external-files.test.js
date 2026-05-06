@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { getPage } from '../src/services/pageService.js';
+import { getCachedPage, initCache, invalidatePagesForSlug, setCachedPage } from '../src/cache/pageCache.js';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const cliPath = path.join(repoRoot, 'src/cli/external-files.js');
@@ -165,6 +166,40 @@ test('registered file is rendered by page service and reflects source updates', 
 
   const updated = await getPage('external/render-source', config);
   assert.match(updated.html, /Updated Render/);
+});
+
+test('page service renders root-internal and forwarded-prefix browser bases separately', async () => {
+  const fixture = makeFixture();
+  const nestedDir = path.join(fixture.contentDir, 'docs');
+  fs.mkdirSync(nestedDir, { recursive: true });
+  fs.writeFileSync(path.join(nestedDir, 'nested.md'), '# Nested Page\n');
+
+  const config = {
+    contentDir: fixture.contentDir,
+    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
+    toc: { minHeadings: 3 },
+    theme: { codeTheme: 'github-dark' },
+  };
+
+  const direct = await getPage('docs/nested', config, '');
+  assert.match(direct.html, /href="\/_assets\/style\.css/);
+  assert.match(direct.html, /data-base-url=""/);
+
+  const proxied = await getPage('docs/nested', config, '/pages');
+  assert.match(proxied.html, /href="\/pages\/_assets\/style\.css/);
+  assert.match(proxied.html, /data-base-url="\/pages"/);
+});
+
+test('cache invalidation clears all browser-base variants for a slug', () => {
+  initCache({ maxEntries: 10, ttlSeconds: 60 });
+  setCachedPage('/:docs/nested', { html: 'direct' });
+  setCachedPage('/pages:docs/nested', { html: 'proxied' });
+  setCachedPage('/pages:other', { html: 'other' });
+
+  assert.equal(invalidatePagesForSlug('docs/nested'), true);
+  assert.equal(getCachedPage('/:docs/nested'), undefined);
+  assert.equal(getCachedPage('/pages:docs/nested'), undefined);
+  assert.deepEqual(getCachedPage('/pages:other'), { html: 'other' });
 });
 
 test('source symlink escaping allowed root is rejected', () => {

@@ -80,18 +80,19 @@ async function main() {
 
   // Serve static assets (CSS/JS) — before auth so login page can load them
   const assetsDir = path.join(import.meta.dirname, '..', 'assets');
-  app.use('/_assets', express.static(assetsDir, {
+  const staticOptions = {
     maxAge: '1d',
     immutable: true,
-  }));
+  };
+  app.use('/_assets', express.static(assetsDir, staticOptions));
 
   // Cookie-based session authentication
-  setupAuth(app, config.auth || {}, '/pages');
+  setupAuth(app, config.auth || {});
 
   // Share API routes (after auth — requires authenticated session)
   const sharingConfig = config.sharing || { enabled: true, allowPermanent: false };
   if (sharingConfig.enabled !== false) {
-    setupShareApi(app, sharingConfig, '/pages');
+    setupShareApi(app, sharingConfig);
   }
   setupRawApi(app, config);
 

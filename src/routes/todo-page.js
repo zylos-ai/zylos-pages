@@ -5,6 +5,7 @@ import path from 'node:path';
 import { parseTodoFile } from '../todos/todo-manager.js';
 import { todoTemplate } from '../templates/todoTemplate.js';
 import { logger } from '../utils/logger.js';
+import { browserBaseFromRequest } from '../lib/browser-base.js';
 
 /**
  * Resolve a board name to its file path from config.
@@ -46,7 +47,7 @@ export function todoRoute(config) {
         boardName,
         active: data.active,
         completed: data.completed,
-        baseUrl: '/pages',
+        baseUrl: browserBaseFromRequest(req),
         isAuthenticated,
         isShareViewer,
       });
