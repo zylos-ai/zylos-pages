@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8] - 2026-05-06
+
+### Added
+- **Copy raw Markdown button** (#21): Copy the original Markdown source text from the page header. Correctly hidden from share viewers.
+
+### Fixed
+- **Dynamic base-path auth routes** (#20): Removes hardcoded `/pages` base URL. All routes dynamically resolve from `X-Forwarded-Prefix` header, supporting both Caddy stripped-prefix proxy and direct local access. New `browser-base.js` module with prefix validation, open-redirect prevention, and dot-segment escape protection. Cache keys include browser base to prevent cross-prefix poisoning. 7 new tests added.
+
 ## [0.1.7] - 2026-04-27
 
 ### Added
