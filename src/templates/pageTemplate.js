@@ -29,6 +29,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
   <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${ASSET_VERSION}" media="print">
   <script src="${baseUrl}/_assets/theme.js?v=${ASSET_VERSION}"></script>
+  <script src="${baseUrl}/_assets/raw.js?v=${ASSET_VERSION}" defer></script>
 </head>
 <body>
   <header class="page-header">
@@ -43,6 +44,10 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
       </nav>
     </div>
     <div class="header-actions">
+      <button class="copy-raw-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Copy raw Markdown">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 1.5A1.5 1.5 0 0 1 6.5 0h6A1.5 1.5 0 0 1 14 1.5v8A1.5 1.5 0 0 1 12.5 11h-6A1.5 1.5 0 0 1 5 9.5zm1.5-.25a.25.25 0 0 0-.25.25v8c0 .138.112.25.25.25h6a.25.25 0 0 0 .25-.25v-8a.25.25 0 0 0-.25-.25zM2 4.5A1.5 1.5 0 0 1 3.5 3H4v1.25h-.5a.25.25 0 0 0-.25.25v8c0 .138.112.25.25.25h6a.25.25 0 0 0 .25-.25V12H11v.5A1.5 1.5 0 0 1 9.5 14h-6A1.5 1.5 0 0 1 2 12.5z"/></svg>
+        <span class="copy-raw-label">Copy Markdown</span>
+      </button>
       <button class="share-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/></svg>
         Share
