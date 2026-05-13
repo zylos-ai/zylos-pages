@@ -18,6 +18,7 @@ export function createParser(highlighter, options = {}) {
     markedHighlight({
       highlight(code, lang) {
         try {
+          if (lang === 'mermaid') return code;
           if (!highlighterInstance) {
             return code;
           }
@@ -38,6 +39,17 @@ export function createParser(highlighter, options = {}) {
     gfm: true,
     breaks: false,
   });
+
+  // Mermaid: post-process to replace <pre><code class="language-mermaid"> with <pre class="mermaid">
+  const origParse = marked.parse.bind(marked);
+  marked.parse = function(src, opts) {
+    let html = origParse(src, opts);
+    html = html.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g, (m, inner) => {
+      const code = inner.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+      return `<pre class="mermaid">${code}</pre>`;
+    });
+    return html;
+  };
 
   return marked;
 }
