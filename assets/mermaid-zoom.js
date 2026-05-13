@@ -17,7 +17,7 @@
     style.textContent =
       '#' + OVERLAY_ID + '{position:fixed;inset:0;z-index:10000;display:none}' +
       '#' + OVERLAY_ID + '.active{display:flex;flex-direction:column}' +
-      '.mz-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.75)}' +
+      '.mz-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.8)}' +
       '.mz-toolbar{position:relative;z-index:1;display:flex;align-items:center;justify-content:flex-end;padding:12px 16px;gap:12px}' +
       '.mz-hint{color:rgba(255,255,255,.6);font-size:13px;margin-right:auto}' +
       '.mz-btn{background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:14px;cursor:pointer;transition:background .15s}' +
@@ -25,7 +25,8 @@
       '.mz-close{font-size:22px;padding:4px 12px;line-height:1}' +
       '.mz-container{position:relative;z-index:1;flex:1;overflow:hidden;cursor:grab}' +
       '.mz-container.dragging{cursor:grabbing}' +
-      '.mz-content{transform-origin:0 0;will-change:transform;display:inline-block;padding:40px}' +
+      '.mz-content{transform-origin:0 0;will-change:transform}' +
+      '.mz-content .mz-svg-wrap{background:#fff;border-radius:8px;box-shadow:0 4px 24px rgba(0,0,0,.3);display:inline-block;padding:20px}' +
       '.mz-content svg{display:block;max-width:none!important;height:auto!important}' +
       '.markdown-body .mermaid{cursor:zoom-in;position:relative;transition:box-shadow .2s}' +
       '.markdown-body .mermaid:hover{box-shadow:0 0 0 2px var(--color-link,#2563eb)}';
@@ -49,25 +50,45 @@
       content.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + scale + ')';
     }
 
-    function open(svgEl) {
-      var clone = svgEl.cloneNode(true);
-      clone.removeAttribute('style');
-      clone.style.width = svgEl.getBoundingClientRect().width + 'px';
+    function centerAndFit() {
+      var cr = container.getBoundingClientRect();
+      var wrap = content.querySelector('.mz-svg-wrap');
+      if (!wrap) return;
+      var natW = wrap.offsetWidth;
+      var natH = wrap.offsetHeight;
+      var fitScale = Math.min((cr.width - 60) / natW, (cr.height - 60) / natH, 2);
+      scale = Math.max(fitScale, 0.1);
+      tx = (cr.width - natW * scale) / 2;
+      ty = (cr.height - natH * scale) / 2;
+      applyTransform();
+    }
+
+    function open(mermaidEl) {
+      var svg = mermaidEl.querySelector('svg');
+      if (!svg) return;
+
+      var clone = svg.cloneNode(true);
+      var rect = svg.getBoundingClientRect();
+      clone.setAttribute('width', rect.width);
+      clone.setAttribute('height', rect.height);
+      clone.style.width = rect.width + 'px';
+      clone.style.height = rect.height + 'px';
+      clone.style.maxWidth = 'none';
+
+      var wrap = document.createElement('div');
+      wrap.className = 'mz-svg-wrap';
+      wrap.appendChild(clone);
+
       content.innerHTML = '';
-      content.appendChild(clone);
+      content.appendChild(wrap);
 
       scale = 1; tx = 0; ty = 0;
-
-      var cr = container.getBoundingClientRect();
-      var sr = clone.getBoundingClientRect();
-      var fitScale = Math.min(cr.width / (sr.width + 80), cr.height / (sr.height + 80), 2);
-      scale = fitScale;
-      tx = (cr.width - sr.width * scale) / 2;
-      ty = (cr.height - sr.height * scale) / 2;
-
-      applyTransform();
       overlay.classList.add('active');
       document.body.style.overflow = 'hidden';
+
+      requestAnimationFrame(function () {
+        centerAndFit();
+      });
     }
 
     function close() {
@@ -76,23 +97,8 @@
       content.innerHTML = '';
     }
 
-    function resetZoom() {
-      var cr = container.getBoundingClientRect();
-      var svg = content.querySelector('svg');
-      if (!svg) return;
-      scale = 1; tx = 0; ty = 0;
-      var sr = svg.getBoundingClientRect();
-      var fitScale = Math.min(cr.width / (sr.width + 80), cr.height / (sr.height + 80), 2);
-      scale = fitScale;
-      applyTransform();
-      sr = svg.getBoundingClientRect();
-      tx = (cr.width - sr.width) / 2;
-      ty = (cr.height - sr.height) / 2;
-      applyTransform();
-    }
-
     closeBtn.addEventListener('click', close);
-    resetBtn.addEventListener('click', resetZoom);
+    resetBtn.addEventListener('click', centerAndFit);
     overlay.querySelector('.mz-backdrop').addEventListener('click', close);
 
     document.addEventListener('keydown', function (e) {
@@ -139,7 +145,6 @@
       container.classList.remove('dragging');
     });
 
-    // Touch support for mobile
     var lastTouchDist = 0, lastTouchCenter = null;
     container.addEventListener('touchstart', function (e) {
       if (e.touches.length === 1) {
@@ -191,24 +196,21 @@
       lastTouchCenter = null;
     }, { passive: true });
 
-    // Bind click handlers to mermaid diagrams
     document.querySelectorAll('.markdown-body .mermaid').forEach(function (el) {
-      var svg = el.querySelector('svg');
-      if (svg) {
-        el.addEventListener('click', function () { open(svg); });
+      if (el.querySelector('svg')) {
+        el.addEventListener('click', function () { open(el); });
       }
     });
   }
 
-  // Run after mermaid finishes rendering
   if (typeof mermaid !== 'undefined') {
     var origRun = mermaid.run;
     mermaid.run = function () {
       var result = origRun.apply(this, arguments);
       if (result && typeof result.then === 'function') {
-        result.then(function () { setTimeout(init, 50); });
+        result.then(function () { setTimeout(init, 100); });
       } else {
-        setTimeout(init, 50);
+        setTimeout(init, 100);
       }
       return result;
     };
