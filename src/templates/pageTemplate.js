@@ -116,6 +116,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   <script src="${baseUrl}/_assets/share.js?v=${ASSET_VERSION}"></script>
   <script src="${baseUrl}/_assets/nav.js?v=${ASSET_VERSION}"></script>
   <script src="${baseUrl}/_assets/mermaid.min.js"></script>
+  <script src="${baseUrl}/_assets/mermaid-zoom.js?v=${ASSET_VERSION}"></script>
   <script src="${baseUrl}/_assets/mermaid-init.js?v=${ASSET_VERSION}"></script>
 
 </body>
