@@ -27,8 +27,8 @@ export function indexTemplate(pageTree, baseUrl, todoBoards = []) {
   `).join('');
 
   const pageContent = [
-    topLevelRows ? `<ul class="page-list page-list-top-level">${topLevelRows}</ul>` : '',
     folderRows ? `<div class="page-folders">${folderRows}</div>` : '',
+    topLevelRows ? `<ul class="page-list page-list-top-level">${topLevelRows}</ul>` : '',
   ].filter(Boolean).join('');
 
   const todoRows = todoBoards.map(b => `
