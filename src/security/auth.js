@@ -1,24 +1,60 @@
 // Cookie-based session authentication for zylos-pages
 // Implements CocoClaw's 9-point security checklist.
+// Sessions are persisted in SQLite — survives service restarts.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { CONFIG_PATH } from '../lib/config.js';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { CONFIG_PATH, DATA_DIR } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 import { verifyShare } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
 
 const SCRYPT_KEYLEN = 64;
 const COOKIE_NAME = '__Host-zylos_pages_session';
-const SESSION_ABSOLUTE_MS = 86400_000;   // 24 hours
-const SESSION_IDLE_MS = 3600_000;        // 60 minutes
-const CLEANUP_INTERVAL_MS = 300_000;     // 5 minutes
+const SESSION_ABSOLUTE_MS = 86_400_000;      // 24 hours
+const SESSION_IDLE_MS = 3_600_000;            // 60 minutes
+const REMEMBER_ABSOLUTE_MS = 30 * 86_400_000; // 30 days
+const REMEMBER_IDLE_MS = 7 * 86_400_000;      // 7 days
+const CLEANUP_INTERVAL_MS = 300_000;          // 5 minutes
 
-// Session store: Map<sha256(token), { createdAt, lastActivityAt }>
-const sessions = new Map();
+// --- SQLite session store ---
 
-// Brute-force protection
-const failedAttempts = new Map(); // ip -> { count, firstFailAt }
+const DB_PATH = path.join(DATA_DIR, 'pages.db');
+
+let db;
+let _insertSession;
+let _getSession;
+let _touchSession;
+let _deleteSession;
+let _cleanExpired;
+
+function initSessionStore() {
+  db = new Database(DB_PATH);
+  db.pragma('journal_mode = WAL');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL,
+      last_activity_at INTEGER NOT NULL,
+      remember INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  _insertSession = db.prepare(
+    'INSERT OR REPLACE INTO auth_sessions (token_hash, created_at, last_activity_at, remember) VALUES (?, ?, ?, ?)'
+  );
+  _getSession = db.prepare('SELECT * FROM auth_sessions WHERE token_hash = ?');
+  _touchSession = db.prepare('UPDATE auth_sessions SET last_activity_at = ? WHERE token_hash = ?');
+  _deleteSession = db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?');
+  _cleanExpired = db.prepare(
+    'DELETE FROM auth_sessions WHERE (remember = 0 AND (created_at < ? OR last_activity_at < ?)) OR (remember = 1 AND (created_at < ? OR last_activity_at < ?))'
+  );
+  logger.info('session store initialized', { path: DB_PATH });
+}
+
+// Brute-force protection (in-memory — transient by design)
+const failedAttempts = new Map();
 const MAX_FAILURES = 5;
 const WINDOW_MS = 60_000;
 const LOCKOUT_MS = 600_000;
@@ -27,13 +63,16 @@ const GLOBAL_MAX_PER_MIN = 30;
 
 // Periodic session cleanup
 const cleanupTimer = setInterval(() => {
+  if (!db) return;
   const now = Date.now();
-  for (const [hash, session] of sessions) {
-    if (now - session.createdAt > SESSION_ABSOLUTE_MS ||
-        now - session.lastActivityAt > SESSION_IDLE_MS) {
-      sessions.delete(hash);
-    }
-  }
+  try {
+    _cleanExpired.run(
+      now - SESSION_ABSOLUTE_MS,
+      now - SESSION_IDLE_MS,
+      now - REMEMBER_ABSOLUTE_MS,
+      now - REMEMBER_IDLE_MS
+    );
+  } catch { /* db may be closed during shutdown */ }
 }, CLEANUP_INTERVAL_MS);
 cleanupTimer.unref?.();
 
@@ -84,32 +123,34 @@ function sha256(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
 }
 
-function createSession() {
-  const token = crypto.randomBytes(32).toString('hex');
+function createSession(remember = false) {
+  const token = crypto.randomBytes(64).toString('hex');
   const hash = sha256(token);
   const now = Date.now();
-  sessions.set(hash, { createdAt: now, lastActivityAt: now });
+  _insertSession.run(hash, now, now, remember ? 1 : 0);
   return token;
 }
 
 function validateSession(token) {
   if (!token) return false;
   const hash = sha256(token);
-  const session = sessions.get(hash);
+  const session = _getSession.get(hash);
   if (!session) return false;
   const now = Date.now();
-  if (now - session.createdAt > SESSION_ABSOLUTE_MS ||
-      now - session.lastActivityAt > SESSION_IDLE_MS) {
-    sessions.delete(hash);
+  const absoluteMs = session.remember ? REMEMBER_ABSOLUTE_MS : SESSION_ABSOLUTE_MS;
+  const idleMs = session.remember ? REMEMBER_IDLE_MS : SESSION_IDLE_MS;
+  if (now - session.created_at > absoluteMs ||
+      now - session.last_activity_at > idleMs) {
+    _deleteSession.run(hash);
     return false;
   }
-  session.lastActivityAt = now;
+  _touchSession.run(now, hash);
   return true;
 }
 
 function destroySession(token) {
   if (!token) return;
-  sessions.delete(sha256(token));
+  _deleteSession.run(sha256(token));
 }
 
 // --- Cookie helpers ---
@@ -129,9 +170,10 @@ function getSessionCookie(req) {
   return cookies[COOKIE_NAME] || null;
 }
 
-function setSessionCookie(res, token) {
+function setSessionCookie(res, token, remember = false) {
+  const maxAge = remember ? 30 * 86400 : 86400;
   res.setHeader('Set-Cookie',
-    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`
   );
 }
 
@@ -144,7 +186,6 @@ function clearSessionCookie(res) {
 // --- Brute-force protection ---
 
 function getClientIp(req) {
-  // Only trust X-Forwarded-For from local reverse proxy (Caddy)
   const remoteIp = req.socket.remoteAddress || '';
   if (remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1') {
     const xff = req.headers['x-forwarded-for'];
@@ -253,6 +294,17 @@ function loginPageHtml(baseUrl, error, next) {
       outline: none;
       border-color: var(--color-link);
     }
+    .login-card .remember-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+      color: var(--color-text-secondary);
+    }
+    .login-card .remember-row input[type="checkbox"] {
+      margin: 0;
+    }
     .login-card button {
       width: 100%;
       padding: 10px;
@@ -281,6 +333,10 @@ function loginPageHtml(baseUrl, error, next) {
       <form method="POST" action="${baseUrl}/login">
         <label for="password">Password</label>
         <input type="password" id="password" name="password" autofocus required>
+        <div class="remember-row">
+          <input type="checkbox" id="remember" name="remember" value="on">
+          <label for="remember" style="margin-bottom: 0;">Remember me</label>
+        </div>
         ${nextParam ? `<input type="hidden" name="next" value="${nextParam.replace(/"/g, '&quot;')}">` : ''}
         <button type="submit">Sign in</button>
       </form>
@@ -300,6 +356,7 @@ function loginPageHtml(baseUrl, error, next) {
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
 export function setupAuth(app, authConfig) {
+  initSessionStore();
   migratePasswordIfNeeded(authConfig);
 
   const loginPath = '/login';
@@ -324,7 +381,6 @@ export function setupAuth(app, authConfig) {
   // GET /login — show login page
   function loginGet(req, res) {
     const browserBase = browserBaseFromRequest(req);
-    // If already authenticated, redirect to index
     if (validateSession(getSessionCookie(req))) {
       return res.redirect(browserRoot(browserBase));
     }
@@ -356,8 +412,9 @@ export function setupAuth(app, authConfig) {
 
     // Success — always issue new token (prevents session fixation)
     clearFailures(ip);
-    const token = createSession();
-    setSessionCookie(res, token);
+    const remember = req.body?.remember === 'on';
+    const token = createSession(remember);
+    setSessionCookie(res, token, remember);
 
     const next = req.body?.next;
     const redirectTo = (next && isSafeRedirect(next, browserBase)) ? next : browserRoot(browserBase);
@@ -367,7 +424,6 @@ export function setupAuth(app, authConfig) {
   app.post(loginPath, loginPost);
 
   // POST /logout — same-host CSRF protection
-  // Compare host portion only (protocol may differ behind reverse proxy)
   function logoutPost(req, res) {
     const expectedHost = req.headers.host;
     const origin = req.headers.origin;
@@ -381,7 +437,6 @@ export function setupAuth(app, authConfig) {
       }
     }
 
-    // Priority: Origin header > Referer header > reject
     if (origin) {
       if (extractHost(origin) !== expectedHost) {
         return res.status(403).send('Forbidden');
@@ -391,7 +446,6 @@ export function setupAuth(app, authConfig) {
         return res.status(403).send('Forbidden');
       }
     } else {
-      // Neither Origin nor Referer — reject (most conservative)
       return res.status(403).send('Forbidden');
     }
 
@@ -406,35 +460,30 @@ export function setupAuth(app, authConfig) {
   // Auth middleware — protect all other routes
   app.use((req, res, next) => {
     const browserBase = browserBaseFromRequest(req);
-    // Skip if auth disabled or no password
     if (!authConfig.enabled || !authConfig.password) return next();
 
-    // Skip static assets, login/logout, and API routes (API has own auth checks)
     if (req.path.startsWith('/_assets')
         || req.path === loginPath || req.path === logoutPath) {
       return next();
     }
 
-    // Share token bypass — only for GET/HEAD on document routes (not /api/*, not /)
+    // Share token bypass
     if ((req.method === 'GET' || req.method === 'HEAD') && req.query.token
         && !req.path.startsWith('/api/')
         && req.path !== '/') {
-      const slug = req.path.slice(1); // strip leading /
+      const slug = req.path.slice(1);
       const result = verifyShare(req.query.token, slug);
       if (result.valid) {
         res.locals.viewerType = 'share';
         res.locals.authenticated = false;
-        // Shared pages: no-store + no-referrer to prevent token leakage
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Referrer-Policy', 'no-referrer');
         return next();
       }
-      // Invalid token — fall through to normal auth check (don't reveal token was bad)
       logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
     if (validateSession(getSessionCookie(req))) {
-      // Authenticated — mark for no-store and override any downstream Cache-Control
       res.locals.authenticated = true;
       const origSetHeader = res.setHeader.bind(res);
       res.setHeader = function(name, value) {
@@ -447,7 +496,6 @@ export function setupAuth(app, authConfig) {
       return next();
     }
 
-    // Not authenticated — redirect to login
     const rawNext = req.originalUrl || req.url;
     const nextUrl = rawNext === '/' ? browserRoot(browserBase) : `${browserBase}${rawNext}`;
     const safeNext = isSafeRedirect(nextUrl, browserBase) ? `?next=${encodeURIComponent(nextUrl)}` : '';
