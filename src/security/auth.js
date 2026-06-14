@@ -31,6 +31,7 @@ let _deleteSession;
 let _cleanExpired;
 
 function initSessionStore() {
+  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
   db.exec(`
@@ -356,7 +357,9 @@ function loginPageHtml(baseUrl, error, next) {
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
 export function setupAuth(app, authConfig) {
-  initSessionStore();
+  if (authConfig.enabled && authConfig.password) {
+    initSessionStore();
+  }
   migratePasswordIfNeeded(authConfig);
 
   const loginPath = '/login';
