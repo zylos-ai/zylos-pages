@@ -2,6 +2,7 @@
 
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
+import { postProcessMermaid } from './mermaid.js';
 
 let highlighterInstance = null;
 
@@ -40,15 +41,9 @@ export function createParser(highlighter, options = {}) {
     breaks: false,
   });
 
-  // Mermaid: post-process to replace <pre><code class="language-mermaid"> with <pre class="mermaid">
   const origParse = marked.parse.bind(marked);
   marked.parse = function(src, opts) {
-    let html = origParse(src, opts);
-    html = html.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g, (m, inner) => {
-      const code = inner.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-      return `<pre class="mermaid">${code}</pre>`;
-    });
-    return html;
+    return postProcessMermaid(origParse(src, opts));
   };
 
   return marked;

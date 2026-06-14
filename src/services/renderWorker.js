@@ -7,6 +7,7 @@ import { markedHighlight } from 'marked-highlight';
 import { createHighlighter } from 'shiki';
 import matter from 'gray-matter';
 import sanitizeHtml from 'sanitize-html';
+import { postProcessMermaid } from '../markdown/mermaid.js';
 
 const { filePath, config } = workerData;
 
@@ -76,15 +77,9 @@ async function render() {
   );
   marked.setOptions({ gfm: true, breaks: false });
 
-  // Mermaid: post-process to replace <pre><code class="language-mermaid"> with <pre class="mermaid">
   const origParse = marked.parse.bind(marked);
   marked.parse = function(src, opts) {
-    let html = origParse(src, opts);
-    html = html.replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g, (m, inner) => {
-      const code = inner.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-      return `<pre class="mermaid">${code}</pre>`;
-    });
-    return html;
+    return postProcessMermaid(origParse(src, opts));
   };
 
   // Render markdown
