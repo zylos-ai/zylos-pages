@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0] - 2026-06-14
+
+### Added
+- **Folder-aware page navigation** (#18, #26): Pages with path separators in their slug are automatically grouped into collapsible folder sections on the index page, with folder groups displayed above ungrouped pages. Sidebar navigation groups pages by folder with the current page's folder auto-expanded. Breadcrumb shows full folder path. Shared `buildPageTree()` utility in `src/utils/pageTree.js`.
+- **Mermaid diagram rendering** (#23): Render Mermaid diagrams in Markdown files using fenced code blocks. Lazy-loaded, shared module, cache-busted. Includes entity decoding security fix.
+- **Persistent sessions with remember-me** (#25): Login sessions persist across server restarts via SQLite-backed session store. "Remember me" checkbox extends session to 30 days.
+
 ## [0.1.8] - 2026-05-06
 
 ### Added
