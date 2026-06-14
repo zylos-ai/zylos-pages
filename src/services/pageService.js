@@ -51,6 +51,7 @@ export async function getPage(rawSlug, config, browserBase = '') {
       codeTheme: config.theme?.codeTheme ?? 'github-dark',
       renderTimeoutMs: config.security?.renderTimeoutMs ?? 5000,
       baseUrl: browserBase,
+      slug,
     });
     // Store in cache with timestamp for mtime validation
     setCachedPage(cacheKey, {

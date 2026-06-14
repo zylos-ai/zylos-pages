@@ -80,6 +80,10 @@ body {
   color: var(--color-text-secondary);
 }
 
+.breadcrumb-folder {
+  color: var(--color-text-secondary);
+}
+
 .theme-toggle {
   background: none;
   border: 1px solid var(--color-border);
@@ -194,6 +198,46 @@ body {
 }
 
 .page-nav li { margin: 2px 0; }
+
+.page-nav-list > .nav-folder {
+  margin: 6px 0;
+}
+
+.nav-folder summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+}
+
+.nav-folder summary:hover {
+  background: var(--color-code-bg);
+  color: var(--color-text);
+}
+
+.nav-folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-folder-count {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.nav-folder-list {
+  margin: 2px 0 4px;
+  padding-left: 10px !important;
+  border-left: 1px solid var(--color-border);
+}
 
 .page-nav a {
   display: block;
@@ -473,6 +517,53 @@ body {
 .page-list {
   list-style: none;
   padding: 0;
+}
+
+.page-list-top-level {
+  margin-bottom: 20px;
+}
+
+.page-folders {
+  display: grid;
+  gap: 12px;
+}
+
+.page-folder {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+}
+
+.page-folder summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.page-folder summary:hover {
+  background: var(--color-code-bg);
+}
+
+.page-folder-name {
+  font-weight: 600;
+}
+
+.page-folder-count {
+  flex-shrink: 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.page-folder-list {
+  padding: 0 12px;
+}
+
+.page-folder-list .page-item:last-child {
+  border-bottom: 0;
 }
 
 .page-item {

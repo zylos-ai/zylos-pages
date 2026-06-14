@@ -7,22 +7,29 @@ const ASSET_VERSION = Date.now();
 
 /**
  * Generate the directory index page listing all available pages.
- * @param {Array<{slug, title, description, date}>} pages
+ * @param {{topLevel: Array<{slug, title, description, date}>, folders: Array<{path, label, pages: Array<{slug, title, description, date}>}>}} pageTree
  * @param {string} baseUrl
  * @param {Array<{name, slug}>} todoBoards
  */
-export function indexTemplate(pages, baseUrl, todoBoards = []) {
+export function indexTemplate(pageTree, baseUrl, todoBoards = []) {
   const hasTodo = todoBoards.length > 0;
+  const pageCount = getPageCount(pageTree);
 
-  const pageRows = pages.map(p => `
-    <li class="page-item">
-      <a href="${baseUrl}/${encodeURI(p.slug)}">
-        <span class="page-item-title">${escapeHtml(p.title)}</span>
-        ${p.date ? `<time class="page-item-date">${escapeHtml(String(p.date))}</time>` : ''}
-      </a>
-      ${p.description ? `<p class="page-item-desc">${escapeHtml(p.description)}</p>` : ''}
-    </li>
+  const topLevelRows = renderPageRows(pageTree.topLevel, baseUrl);
+  const folderRows = pageTree.folders.map(folder => `
+    <details class="page-folder">
+      <summary>
+        <span class="page-folder-name">${escapeHtml(folder.label)}</span>
+        <span class="page-folder-count">${folder.pages.length} page${folder.pages.length !== 1 ? 's' : ''}</span>
+      </summary>
+      <ul class="page-list page-folder-list">${renderPageRows(folder.pages, baseUrl)}</ul>
+    </details>
   `).join('');
+
+  const pageContent = [
+    topLevelRows ? `<ul class="page-list page-list-top-level">${topLevelRows}</ul>` : '',
+    folderRows ? `<div class="page-folders">${folderRows}</div>` : '',
+  ].filter(Boolean).join('');
 
   const todoRows = todoBoards.map(b => `
     <li class="page-item">
@@ -95,10 +102,10 @@ export function indexTemplate(pages, baseUrl, todoBoards = []) {
     ` : ''}
 
     <div id="panel-pages" class="tab-panel active">
-      <p class="index-count">${pages.length} page${pages.length !== 1 ? 's' : ''}</p>
-      ${pages.length === 0
+      <p class="index-count">${pageCount} page${pageCount !== 1 ? 's' : ''}</p>
+      ${pageCount === 0
         ? '<p class="empty-state">No pages yet. Write a <code>.md</code> file to get started.</p>'
-        : `<ul class="page-list">${pageRows}</ul>`
+        : pageContent
       }
     </div>
 
@@ -114,4 +121,20 @@ export function indexTemplate(pages, baseUrl, todoBoards = []) {
 
 </body>
 </html>`;
+}
+
+function renderPageRows(pages, baseUrl) {
+  return pages.map(p => `
+    <li class="page-item">
+      <a href="${baseUrl}/${encodeURI(p.slug)}">
+        <span class="page-item-title">${escapeHtml(p.title)}</span>
+        ${p.date ? `<time class="page-item-date">${escapeHtml(String(p.date))}</time>` : ''}
+      </a>
+      ${p.description ? `<p class="page-item-desc">${escapeHtml(p.description)}</p>` : ''}
+    </li>
+  `).join('');
+}
+
+function getPageCount(pageTree) {
+  return pageTree.topLevel.length + pageTree.folders.reduce((sum, folder) => sum + folder.pages.length, 0);
 }

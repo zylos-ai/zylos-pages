@@ -23,7 +23,7 @@ export function initRenderService(_config = {}) {
  * it is terminated (not just a Promise race).
  *
  * @param {string} filePath - absolute path to the .md file
- * @param {object} config - { allowRawHtml, maxFileSizeBytes, tocMinHeadings, baseUrl, codeTheme, renderTimeoutMs }
+ * @param {object} config - { allowRawHtml, maxFileSizeBytes, tocMinHeadings, baseUrl, codeTheme, renderTimeoutMs, slug }
  * @returns {{ html: string, etag: string, meta: object, size: number }}
  */
 export async function renderPage(filePath, config = {}) {
@@ -34,6 +34,7 @@ export async function renderPage(filePath, config = {}) {
     baseUrl = '',
     codeTheme = 'github-dark',
     renderTimeoutMs = 5000,
+    slug = '',
   } = config;
 
   const { bodyHtml, meta, tocItems, etag, size } = await runWorker(filePath, {
@@ -43,11 +44,6 @@ export async function renderPage(filePath, config = {}) {
   }, renderTimeoutMs);
 
   const showToc = meta.toc !== false && tocItems.length >= tocMinHeadings;
-
-  // Extract slug from filePath: strip contentDir prefix + .md extension
-  const slug = filePath
-    .replace(/^.*\/public\/pages\//, '')
-    .replace(/\.md$/i, '');
 
   const html = pageTemplate({
     title: meta.title || 'Untitled',

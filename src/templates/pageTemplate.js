@@ -1,6 +1,7 @@
 // HTML page template with SEO meta, TOC, theme support, and sharing
 
 import { escapeHtml } from '../security/sanitize.js';
+import { buildPageTree } from '../utils/pageTree.js';
 
 // Stable cache version — generated once per process start
 const ASSET_VERSION = Date.now();
@@ -37,11 +38,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
       <button class="nav-toggle auth-only" aria-label="Toggle pages list">
         <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M2 4h14v1.5H2zm0 4.25h14v1.5H2zm0 4.25h14v1.5H2z"/></svg>
       </button>
-      <nav class="breadcrumb">
-        <a href="${baseUrl}/" class="auth-only">Pages</a>
-        <span class="sep auth-only">/</span>
-        <span class="current">${escapeHtml(title)}</span>
-      </nav>
+      ${renderBreadcrumb({ baseUrl, slug, title })}
     </div>
     <div class="header-actions">
       <button class="copy-raw-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Copy raw Markdown">
@@ -143,13 +140,43 @@ export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
 }
 
 function renderNavSidebar(pages, currentSlug, baseUrl) {
-  let html = '<aside class="nav-sidebar auth-only"><nav class="page-nav"><h4>Pages</h4><ul>';
-  for (const page of pages) {
-    const active = page.slug === currentSlug ? ' class="active"' : '';
-    html += `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${escapeHtml(page.title)}</a></li>`;
+  const pageTree = buildPageTree(pages);
+  let html = '<aside class="nav-sidebar auth-only"><nav class="page-nav"><h4>Pages</h4><ul class="page-nav-list">';
+  for (const page of pageTree.topLevel) {
+    html += renderNavPageItem(page, currentSlug, baseUrl);
   }
+
+  for (const folder of pageTree.folders) {
+    const isOpen = folder.pages.some(page => page.slug === currentSlug);
+    html += `<li class="nav-folder"><details${isOpen ? ' open' : ''}><summary><span class="nav-folder-name">${escapeHtml(folder.label)}</span><span class="nav-folder-count">${folder.pages.length}</span></summary><ul class="nav-folder-list">`;
+    for (const page of folder.pages) {
+      html += renderNavPageItem(page, currentSlug, baseUrl);
+    }
+    html += '</ul></details></li>';
+  }
+
   html += '</ul></nav></aside>';
   return html;
+}
+
+function renderNavPageItem(page, currentSlug, baseUrl) {
+  const active = page.slug === currentSlug ? ' class="active"' : '';
+  return `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${escapeHtml(page.title)}</a></li>`;
+}
+
+function renderBreadcrumb({ baseUrl, slug, title }) {
+  const segments = (slug || '').split('/').filter(Boolean);
+  const folderSegments = segments.slice(0, -1);
+  const folderCrumbs = folderSegments.map(segment => `
+        <span class="sep auth-only">/</span>
+        <span class="breadcrumb-folder auth-only">${escapeHtml(segment)}</span>`).join('');
+
+  return `<nav class="breadcrumb">
+        <a href="${baseUrl}/" class="auth-only">Pages</a>
+        ${folderCrumbs}
+        <span class="sep auth-only">/</span>
+        <span class="current">${escapeHtml(title)}</span>
+      </nav>`;
 }
 
 function renderToc(items) {

@@ -6,6 +6,7 @@ import matter from 'gray-matter';
 import { indexTemplate } from '../templates/indexTemplate.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest } from '../lib/browser-base.js';
+import { buildPageTree } from '../utils/pageTree.js';
 
 /**
  * Route handler for GET / — lists all available pages.
@@ -25,7 +26,7 @@ export function indexRoute(config) {
         }
       }
 
-      const html = indexTemplate(pages, browserBaseFromRequest(req), todoBoards);
+      const html = indexTemplate(buildPageTree(pages), browserBaseFromRequest(req), todoBoards);
       const elapsed = Math.round(performance.now() - start);
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
