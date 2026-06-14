@@ -1,8 +1,19 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import express from 'express';
-import { hashPassword, setupAuth } from '../src/security/auth.js';
+
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-test-'));
+process.env.PAGES_DATA_DIR = tmpDir;
+
+const { setupAuth, hashPassword } = await import('../src/security/auth.js');
+const express = (await import('express')).default;
+
+test.after(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 
 function makeServer() {
   const app = express();
@@ -116,6 +127,75 @@ test('login next target cannot escape forwarded prefix with dot segments', async
     });
     assert.equal(response.status, 302);
     assert.equal(response.headers.get('location'), '/pages/');
+  } finally {
+    server.close();
+  }
+});
+
+test('remember-me login sets 30-day cookie', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const response = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: 'secret', remember: 'on' }),
+    });
+    assert.equal(response.status, 302);
+    const cookie = response.headers.get('set-cookie');
+    assert.match(cookie, /Max-Age=2592000/);
+  } finally {
+    server.close();
+  }
+});
+
+test('regular login sets 24-hour cookie', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const response = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: 'secret' }),
+    });
+    assert.equal(response.status, 302);
+    const cookie = response.headers.get('set-cookie');
+    assert.match(cookie, /Max-Age=86400/);
+  } finally {
+    server.close();
+  }
+});
+
+test('session persists in SQLite (survives validation after store reinit)', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const loginRes = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: 'secret', remember: 'on' }),
+    });
+    const cookie = loginRes.headers.get('set-cookie');
+    const tokenMatch = cookie.match(/__Host-zylos_pages_session=([^;]+)/);
+    assert.ok(tokenMatch, 'session cookie should be set');
+
+    const authedRes = await fetch(`${origin}/`, {
+      redirect: 'manual',
+      headers: { Cookie: `__Host-zylos_pages_session=${tokenMatch[1]}` },
+    });
+    assert.equal(authedRes.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('login page shows remember-me checkbox', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const res = await fetch(`${origin}/login`);
+    const body = await res.text();
+    assert.match(body, /type="checkbox".*name="remember"/);
+    assert.match(body, /Remember me/);
   } finally {
     server.close();
   }

@@ -9,7 +9,7 @@ import fs from 'fs';
 import path from 'path';
 
 const HOME = process.env.HOME;
-export const DATA_DIR = path.join(HOME, 'zylos/components/pages');
+export const DATA_DIR = process.env.PAGES_DATA_DIR || path.join(HOME, 'zylos/components/pages');
 export const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 
 // Default configuration
