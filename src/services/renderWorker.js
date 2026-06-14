@@ -7,6 +7,7 @@ import { markedHighlight } from 'marked-highlight';
 import { createHighlighter } from 'shiki';
 import matter from 'gray-matter';
 import sanitizeHtml from 'sanitize-html';
+import { postProcessMermaid } from '../markdown/mermaid.js';
 
 const { filePath, config } = workerData;
 
@@ -65,6 +66,7 @@ async function render() {
     markedHighlight({
       highlight(code, lang) {
         try {
+          if (lang === 'mermaid') return code;
           const validLang = highlighter.getLoadedLanguages().includes(lang) ? lang : 'text';
           return highlighter.codeToHtml(code, { lang: validLang, theme: codeTheme });
         } catch {
@@ -74,6 +76,11 @@ async function render() {
     })
   );
   marked.setOptions({ gfm: true, breaks: false });
+
+  const origParse = marked.parse.bind(marked);
+  marked.parse = function(src, opts) {
+    return postProcessMermaid(origParse(src, opts));
+  };
 
   // Render markdown
   let bodyHtml = await marked.parse(markdown);

@@ -2,6 +2,7 @@
 
 import { Marked } from 'marked';
 import { markedHighlight } from 'marked-highlight';
+import { postProcessMermaid } from './mermaid.js';
 
 let highlighterInstance = null;
 
@@ -18,6 +19,7 @@ export function createParser(highlighter, options = {}) {
     markedHighlight({
       highlight(code, lang) {
         try {
+          if (lang === 'mermaid') return code;
           if (!highlighterInstance) {
             return code;
           }
@@ -38,6 +40,11 @@ export function createParser(highlighter, options = {}) {
     gfm: true,
     breaks: false,
   });
+
+  const origParse = marked.parse.bind(marked);
+  marked.parse = function(src, opts) {
+    return postProcessMermaid(origParse(src, opts));
+  };
 
   return marked;
 }
