@@ -15,7 +15,7 @@ Add a generic key-value state API to zylos-pages so HTML artifacts can persist i
 - Input validation and size limits
 
 **Out of scope:**
-- Share viewer access to state API (Phase 1: authenticated-only; share viewers get 403 on all state endpoints)
+- Share viewer access to state API (Phase 1: authenticated-only; share-token API requests hit normal auth wall and redirect to login / get 401, same as existing raw-api behavior)
 - Migration of `renovation-checklist.html` (follow-up after API ships; artifact lives outside this repo)
 - Versioning / history of state changes
 - Real-time sync (WebSocket push)
@@ -42,7 +42,7 @@ Add a generic key-value state API to zylos-pages so HTML artifacts can persist i
 
 ### PUT body
 - Shape: `{ "value": <any JSON value> }`
-- Max raw body size: 64KB (enforced at body parser level)
+- Max raw body size: 65KB (enforced at body parser level; slightly above value limit to accommodate `{"value":...}` wrapper)
 - Missing `value` key → 400
 - Body not valid JSON → 400
 
@@ -65,7 +65,7 @@ Add a generic key-value state API to zylos-pages so HTML artifacts can persist i
 - [ ] Create `src/state/state-store.js` — state storage layer
   - `initStateStore()` — CREATE TABLE IF NOT EXISTS `artifact_state`
   - `getArtifactState(artifact)` — return all key-value pairs as object
-  - `getStateValue(artifact, key)` — return parsed value or null
+  - `getStateValue(artifact, key)` — return `{ found: true, value }` or `{ found: false }` (explicit presence signal; `null` is a valid stored value)
   - `setStateValue(artifact, key, value)` — INSERT OR REPLACE, value stored as `JSON.stringify(value)`
   - `deleteStateValue(artifact, key)` — DELETE row
   - Called with validated inputs only (validation in route layer)
@@ -76,9 +76,9 @@ Add a generic key-value state API to zylos-pages so HTML artifacts can persist i
   - `DELETE /api/state/:artifact/:key` — remove key (CSRF required)
   - CSRF check on PUT/DELETE using same `csrfCheck` pattern as todo-api
   - GET does not require CSRF
-  - All endpoints require authentication (share viewers get 403)
+  - All endpoints require authentication (no auth middleware changes needed; share-token API requests fall through to normal session validation → redirect/401, consistent with existing raw-api behavior)
   - Validate artifact ID and key against contracts above
-  - Parse body with size limit (reuse `parseJsonBody` pattern, 64KB cap)
+  - Parse body with size limit (reuse `parseJsonBody` pattern, 65KB raw body cap)
 - [ ] Wire up in `src/index.js`
   - Import and call `setupStateApi(app)`
   - Place after auth middleware, before catch-all page route
@@ -87,7 +87,8 @@ Add a generic key-value state API to zylos-pages so HTML artifacts can persist i
 ## Test Checklist
 
 ### State store unit tests
-- [ ] `setStateValue` + `getStateValue` round-trip for: boolean, number, string, null, object, array
+- [ ] `setStateValue` + `getStateValue` round-trip for: boolean, number, string, null, object, array (verify `found: true` and correct value)
+- [ ] `getStateValue` for non-existent key returns `{ found: false }` (not null)
 - [ ] `getArtifactState` returns all keys for artifact, empty object for unknown artifact
 - [ ] `deleteStateValue` removes key; no error for non-existent key
 - [ ] `setStateValue` overwrites existing key (upsert)
@@ -110,15 +111,18 @@ Add a generic key-value state API to zylos-pages so HTML artifacts can persist i
 
 ### Auth tests
 - [ ] Unauthenticated request to GET `/api/state/...` → redirect to login or 401
-- [ ] Share token viewer request to state API → 403
+- [ ] Share-token request to `/api/state/...` → redirect to login or 401 (same as raw-api; no special 403)
 
 ### Validation tests
 - [ ] Invalid artifact ID (uppercase, special chars, >100 chars) → 400
 - [ ] Invalid key (special chars outside allowed set, empty, >100 chars) → 400
-- [ ] Body >64KB → 413
+- [ ] Body >65KB → 413
+- [ ] Value exactly 64KB (JSON.stringify) → accepted
+- [ ] Value over 64KB (JSON.stringify) → 400
 - [ ] Body not valid JSON → 400
 - [ ] Body missing `value` field → 400
 - [ ] Null value accepted, stored, and retrievable
+- [ ] GET single key with stored `null` value → 200 `{ ok: true, key: "...", value: null }` (not 404)
 
 ### Regression
 - [ ] Existing todo-api tests pass
