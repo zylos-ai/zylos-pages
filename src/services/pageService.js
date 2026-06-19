@@ -1,11 +1,12 @@
 // Page service: orchestrates path resolution, cache, and rendering (P0 core)
 
-import { stat } from 'node:fs/promises';
-import { resolveSafePath } from '../security/pathGuard.js';
+import { readFile, stat } from 'node:fs/promises';
+import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { getCachedPage, setCachedPage, invalidatePage } from '../cache/pageCache.js';
 import { singleflight } from '../cache/singleflight.js';
 import { renderPage } from './renderService.js';
 import { normalizeSlug } from '../utils/slug.js';
+import { generateEtag } from '../utils/etag.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -20,7 +21,7 @@ import { logger } from '../utils/logger.js';
 export async function getPage(rawSlug, config, browserBase = '') {
   const slug = normalizeSlug(rawSlug);
   const cacheKey = `${browserBase || '/'}:${slug}`;
-  const filePath = resolveSafePath(slug, config.contentDir);
+  const descriptor = await resolvePageDescriptor(slug, config.contentDir);
 
   // Check cache — with mtime validation as safety net.
   // fs.watch on Linux can miss events from editors that use write-to-temp-then-rename
@@ -28,37 +29,70 @@ export async function getPage(rawSlug, config, browserBase = '') {
   const cached = getCachedPage(cacheKey);
   if (cached) {
     try {
-      const st = await stat(filePath);
-      const fileMtime = st.mtimeMs;
-      if (cached.cachedAt && fileMtime > cached.cachedAt) {
+      if (cached.type !== descriptor.type || cached.filePath !== descriptor.filePath) {
         invalidatePage(cacheKey);
-        logger.info('cache stale (mtime)', { path: slug });
-        // Fall through to re-render
+        logger.info('cache stale (descriptor)', { path: slug, oldType: cached.type, newType: descriptor.type });
       } else {
-        return { ...cached, cacheHit: true, singleflightShared: false };
+        const st = await stat(descriptor.filePath);
+        const fileMtime = st.mtimeMs;
+        if (cached.cachedAt && fileMtime > cached.cachedAt) {
+          invalidatePage(cacheKey);
+          logger.info('cache stale (mtime)', { path: slug });
+          // Fall through to re-render
+        } else {
+          return { ...cached, cacheHit: true, singleflightShared: false };
+        }
       }
     } catch {
-      // File gone — fall through, will 404 during render
+      // File gone — fall through, will 404 during render/read
     }
   }
 
-  // Singleflight: only one render per slug at a time
+  // Singleflight: only one render/read per slug at a time
   const { result, shared } = await singleflight(cacheKey, async () => {
-    const rendered = await renderPage(filePath, {
-      allowRawHtml: config.security?.allowRawHtml ?? false,
-      maxFileSizeBytes: config.security?.maxFileSizeBytes ?? 1048576,
-      tocMinHeadings: config.toc?.minHeadings ?? 3,
-      codeTheme: config.theme?.codeTheme ?? 'github-dark',
-      renderTimeoutMs: config.security?.renderTimeoutMs ?? 5000,
-      baseUrl: browserBase,
-      slug,
-    });
-    // Store in cache with timestamp for mtime validation
+    const current = await resolvePageDescriptor(slug, config.contentDir);
+    let rendered;
+    let st;
+
+    if (current.type === 'html') {
+      st = await stat(current.filePath);
+      const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
+      if (st.size > maxFileSizeBytes) {
+        const err = new Error(`File too large: ${st.size} bytes (max ${maxFileSizeBytes})`);
+        err.statusCode = 413;
+        throw err;
+      }
+      const html = await readFile(current.filePath, 'utf8');
+      rendered = {
+        html,
+        etag: generateEtag(html),
+        meta: {},
+        type: 'html',
+        companionPath: current.companionPath,
+      };
+    } else {
+      rendered = await renderPage(current.filePath, {
+        allowRawHtml: config.security?.allowRawHtml ?? false,
+        maxFileSizeBytes: config.security?.maxFileSizeBytes ?? 1048576,
+        tocMinHeadings: config.toc?.minHeadings ?? 3,
+        codeTheme: config.theme?.codeTheme ?? 'github-dark',
+        renderTimeoutMs: config.security?.renderTimeoutMs ?? 5000,
+        baseUrl: browserBase,
+        slug,
+      });
+      rendered.type = 'markdown';
+      st = await stat(current.filePath);
+    }
+
     setCachedPage(cacheKey, {
       html: rendered.html,
       etag: rendered.etag,
       meta: rendered.meta,
+      type: current.type,
+      filePath: current.filePath,
+      companionPath: current.companionPath,
       cachedAt: Date.now(),
+      fileMtime: st.mtimeMs,
     });
     return rendered;
   });
