@@ -7,6 +7,14 @@ import { injectShareViewer, injectNavSidebar } from '../templates/pageTemplate.j
 import { scanPages } from './index.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
+import { HTML_ARTIFACT_CSP } from '../security/headers.js';
+
+function redirectCleanExtension(req, res, browserBase, rawSlug, extension) {
+  const clean = rawSlug.replace(new RegExp(`\\.${extension}$`, 'i'), '');
+  const queryIndex = req.url.indexOf('?');
+  const query = queryIndex === -1 ? '' : req.url.slice(queryIndex);
+  return res.redirect(301, `${browserPath(browserBase, clean)}${query}`);
+}
 
 /**
  * Route handler for GET /:slug(*)
@@ -17,10 +25,12 @@ export function pageRoute(config) {
     const browserBase = browserBaseFromRequest(req);
     const rawSlug = req.params.slug || req.params[0] || req.path.slice(1) || '';
 
-    // Redirect .md URLs to clean URLs
-    if (rawSlug.endsWith('.md')) {
-      const clean = rawSlug.replace(/\.md$/i, '');
-      return res.redirect(301, browserPath(browserBase, clean));
+    // Redirect explicit extension URLs to clean URLs.
+    if (/\.md$/i.test(rawSlug)) {
+      return redirectCleanExtension(req, res, browserBase, rawSlug, 'md');
+    }
+    if (/\.html$/i.test(rawSlug)) {
+      return redirectCleanExtension(req, res, browserBase, rawSlug, 'html');
     }
 
     const slug = normalizeSlug(rawSlug);
@@ -46,6 +56,12 @@ export function pageRoute(config) {
       res.setHeader('ETag', result.etag);
       res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+      if (result.type === 'html') {
+        res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
+        logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
+        return res.send(result.html);
+      }
 
       // For share viewers: inject data-viewer attribute to hide auth-only elements
       // For auth viewers: inject pages nav sidebar for quick article switching

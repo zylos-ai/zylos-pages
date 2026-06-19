@@ -13,19 +13,19 @@ const debounceTimers = new Map();
  * Convert a watcher filename to a cache key.
  */
 function filenameToCacheKey(filename) {
-  if (!filename || !filename.endsWith('.md')) return null;
-  const withoutExt = filename.replace(/\.md$/i, '');
+  if (!filename || !/\.(md|html)$/i.test(filename)) return null;
+  const withoutExt = filename.replace(/\.(md|html)$/i, '');
   return normalizeSlug(withoutExt);
 }
 
 /**
- * Start watching the content directory for .md file changes.
+ * Start watching the content directory for page file changes.
  * Uses native fs.watch with recursive option.
  */
 export function startWatcher(contentRoot) {
   try {
     watcher = watch(contentRoot, { recursive: true }, (eventType, filename) => {
-      if (!filename || !filename.endsWith('.md')) return;
+      if (!filename || !/\.(md|html)$/i.test(filename)) return;
 
       const key = filenameToCacheKey(filename);
       if (!key) return;

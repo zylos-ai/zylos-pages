@@ -7,6 +7,7 @@ import { indexTemplate } from '../templates/indexTemplate.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest } from '../lib/browser-base.js';
 import { buildPageTree } from '../utils/pageTree.js';
+import { resolvePageDescriptor } from '../security/pathGuard.js';
 
 /**
  * Route handler for GET / — lists all available pages.
@@ -42,18 +43,18 @@ export function indexRoute(config) {
 }
 
 /**
- * Recursively scan the content directory for .md files.
+ * Recursively scan the content directory for page files.
  * Hides files starting with _ or .
  */
 export async function scanPages(contentDir, subdir = '') {
-  const pages = [];
+  const pagesBySlug = new Map();
   const dirPath = path.join(contentDir, subdir);
 
   let entries;
   try {
     entries = await readdir(dirPath, { withFileTypes: true });
   } catch {
-    return pages;
+    return [];
   }
 
   for (const entry of entries) {
@@ -64,31 +65,55 @@ export async function scanPages(contentDir, subdir = '') {
 
     if (entry.isDirectory()) {
       const subPages = await scanPages(contentDir, relativePath);
-      pages.push(...subPages);
-    } else if (entry.name.endsWith('.md')) {
+      for (const page of subPages) {
+        pagesBySlug.set(page.slug, page);
+      }
+    } else if (/\.(md|html)$/i.test(entry.name)) {
       try {
         const filePath = path.join(contentDir, relativePath);
+        const slug = relativePath.replace(/\.(md|html)$/i, '');
+        const descriptor = await resolvePageDescriptor(slug, contentDir);
+
+        // Same-slug dedup: only the selected descriptor should appear.
+        if (descriptor.filePath !== filePath) continue;
+
         const content = await readFile(filePath, 'utf-8');
-        const { data } = matter(content);
         const stats = await stat(filePath);
+        let page;
 
-        // Skip drafts
-        if (data.draft === true) continue;
+        if (descriptor.type === 'html') {
+          page = {
+            slug,
+            title: inferTitleFromHtml(content) || slug,
+            description: '',
+            date: stats.mtime.toISOString().split('T')[0],
+            tags: [],
+            type: 'html',
+          };
+        } else {
+          const { data } = matter(content);
 
-        const slug = relativePath.replace(/\.md$/i, '');
-        pages.push({
-          slug,
-          title: data.title || inferTitleFromContent(content) || slug,
-          description: data.description || '',
-          date: data.date instanceof Date ? data.date.toISOString().split('T')[0] : (data.date || stats.mtime.toISOString().split('T')[0]),
-          tags: data.tags || [],
-        });
+          // Skip drafts
+          if (data.draft === true) continue;
+
+          page = {
+            slug,
+            title: data.title || inferTitleFromContent(content) || slug,
+            description: data.description || '',
+            date: data.date instanceof Date ? data.date.toISOString().split('T')[0] : (data.date || stats.mtime.toISOString().split('T')[0]),
+            tags: data.tags || [],
+            type: 'markdown',
+          };
+        }
+
+        pagesBySlug.set(slug, page);
       } catch {
         // Skip files that can't be read
       }
     }
   }
 
+  const pages = [...pagesBySlug.values()];
   // Sort by date (newest first)
   pages.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   return pages;
@@ -97,4 +122,9 @@ export async function scanPages(contentDir, subdir = '') {
 function inferTitleFromContent(content) {
   const match = content.match(/^#\s+(.+)$/m);
   return match ? match[1].trim() : null;
+}
+
+function inferTitleFromHtml(content) {
+  const match = content.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? match[1].replace(/\s+/g, ' ').trim() : null;
 }
