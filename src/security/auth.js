@@ -481,6 +481,19 @@ export function setupAuth(app, authConfig) {
       logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
+    if (req.query.token && req.path.startsWith('/api/state/')) {
+      const artifact = req.path.split('/')[3];
+      const result = artifact ? verifyShare(req.query.token, artifact) : { valid: false };
+      if (result.valid) {
+        res.locals.viewerType = 'share';
+        res.locals.authenticated = false;
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        return next();
+      }
+      logger.info('state api share token invalid', { path: req.path, ip: getClientIp(req) });
+    }
+
     if (validateSession(getSessionCookie(req))) {
       res.locals.authenticated = true;
       const origSetHeader = res.setHeader.bind(res);
