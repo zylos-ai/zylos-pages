@@ -7,8 +7,16 @@ import fs from 'node:fs';
 import { getPagesDb } from '../db/pages-db.js';
 import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
-import { verifyShare } from '../sharing/share-manager.js';
+import {
+  SHARE_SCOPE_COOKIE_NAME,
+  clearShareScopeCookieHeader,
+  createShareScopeCookie,
+  verifyShare,
+  verifyShareScopeCookie,
+} from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
+import { isAssetExtension } from '../utils/mime.js';
+import path from 'node:path';
 
 const SCRYPT_KEYLEN = 64;
 const COOKIE_NAME = '__Host-zylos_pages_session';
@@ -166,17 +174,42 @@ function getSessionCookie(req) {
   return cookies[COOKIE_NAME] || null;
 }
 
+function getShareScopeCookie(req) {
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies[SHARE_SCOPE_COOKIE_NAME] || null;
+}
+
+function appendSetCookie(res, cookie) {
+  const current = res.getHeader('Set-Cookie');
+  if (!current) {
+    res.setHeader('Set-Cookie', cookie);
+  } else if (Array.isArray(current)) {
+    res.setHeader('Set-Cookie', [...current, cookie]);
+  } else {
+    res.setHeader('Set-Cookie', [current, cookie]);
+  }
+}
+
 function setSessionCookie(res, token, remember = false) {
   const maxAge = remember ? 30 * 86400 : 86400;
-  res.setHeader('Set-Cookie',
+  appendSetCookie(res,
     `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`
   );
 }
 
 function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie',
+  appendSetCookie(res,
     `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
   );
+}
+
+function clearShareScopeCookie(res) {
+  appendSetCookie(res, clearShareScopeCookieHeader());
+}
+
+function setShareScopeCookie(res, slug, tokenExpiresAt) {
+  const cookie = createShareScopeCookie(slug, tokenExpiresAt);
+  appendSetCookie(res, cookie.header);
 }
 
 // --- Brute-force protection ---
@@ -188,6 +221,10 @@ function getClientIp(req) {
     if (xff) return xff.split(',')[0].trim();
   }
   return remoteIp;
+}
+
+function isAssetPath(requestPath) {
+  return isAssetExtension(path.extname(requestPath).toLowerCase());
 }
 
 function isLockedOut(ip) {
@@ -413,6 +450,7 @@ export function setupAuth(app, authConfig) {
     const remember = req.body?.remember === 'on';
     const token = createSession(remember);
     setSessionCookie(res, token, remember);
+    clearShareScopeCookie(res);
 
     const next = req.body?.next;
     const redirectTo = (next && isSafeRedirect(next, browserBase)) ? next : browserRoot(browserBase);
@@ -474,6 +512,7 @@ export function setupAuth(app, authConfig) {
       if (result.valid) {
         res.locals.viewerType = 'share';
         res.locals.authenticated = false;
+        setShareScopeCookie(res, result.slug, result.expiresAt);
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Referrer-Policy', 'no-referrer');
         return next();
@@ -495,6 +534,18 @@ export function setupAuth(app, authConfig) {
         return next();
       }
       logger.info('state api share token invalid', { path: req.path, ip: getClientIp(req) });
+    }
+
+    if ((req.method === 'GET' || req.method === 'HEAD') && isAssetPath(req.path)) {
+      const result = verifyShareScopeCookie(getShareScopeCookie(req), req.path.slice(1));
+      if (result.valid) {
+        res.locals.viewerType = 'share';
+        res.locals.authenticated = false;
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        return next();
+      }
+      logger.info('asset share-scope cookie invalid', { path: req.path, ip: getClientIp(req) });
     }
 
     if (validateSession(getSessionCookie(req))) {

@@ -11,6 +11,8 @@ import { logger } from '../utils/logger.js';
 const SHARES_PATH = path.join(DATA_DIR, 'shares.json');
 const SECRET_BYTES = 32;
 const TOKEN_ID_BYTES = 16;
+export const SHARE_SCOPE_COOKIE_NAME = '__Host-share_scope';
+const SHARE_SCOPE_MAX_AGE_SECONDS = 3600;
 
 // Duration presets → milliseconds
 const DURATION_MAP = {
@@ -100,6 +102,25 @@ function decodeToken(token) {
   }
 }
 
+function directoryScope(slug) {
+  const normalized = normalizeSlug(slug);
+  const index = normalized.lastIndexOf('/');
+  return index === -1 ? '' : normalized.slice(0, index);
+}
+
+function computeShareScopeHmac(directory, expiresAt, secret) {
+  return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
+    .update(`${directory}:${expiresAt}`)
+    .digest('hex');
+}
+
+function isAssetWithinScope(assetPath, directory) {
+  const normalizedAsset = normalizeSlug(assetPath);
+  const assetDir = directoryScope(normalizedAsset);
+  if (!directory) return assetDir === '';
+  return assetDir === directory || assetDir.startsWith(`${directory}/`);
+}
+
 // --- Public API ---
 
 /**
@@ -184,7 +205,56 @@ export function verifyShare(token, requestSlug) {
   // Note: if record is missing (e.g. never existed), the HMAC is still valid.
   // This is the "stateless" path — only revocation requires the record.
 
-  return { valid: true, slug: normalizedToken, viewerType: 'share' };
+  return { valid: true, slug: normalizedToken, expiresAt: decoded.expiresAt, viewerType: 'share' };
+}
+
+export function createShareScopeCookie(slug, tokenExpiresAt) {
+  const s = loadState();
+  const now = Date.now();
+  const tokenRemainingMs = tokenExpiresAt === 0
+    ? SHARE_SCOPE_MAX_AGE_SECONDS * 1000
+    : Math.max(0, tokenExpiresAt - now);
+  const maxAge = Math.max(0, Math.min(SHARE_SCOPE_MAX_AGE_SECONDS, Math.floor(tokenRemainingMs / 1000)));
+  const expiresAt = now + maxAge * 1000;
+  const directory = directoryScope(slug);
+  const hmac = computeShareScopeHmac(directory, expiresAt, s.secret);
+  const value = `${directory}:${expiresAt}:${hmac}`;
+  return {
+    value,
+    maxAge,
+    header: `${SHARE_SCOPE_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`,
+  };
+}
+
+export function clearShareScopeCookieHeader() {
+  return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
+}
+
+export function verifyShareScopeCookie(cookieValue, assetPath) {
+  const s = loadState();
+  if (!cookieValue || typeof cookieValue !== 'string') return { valid: false };
+
+  const parts = cookieValue.split(':');
+  if (parts.length < 3) return { valid: false };
+  const hmac = parts.pop();
+  const expiresAtRaw = parts.pop();
+  const directory = parts.join(':');
+  const expiresAt = Number(expiresAtRaw);
+  if (!Number.isFinite(expiresAt) || !hmac) return { valid: false };
+  if (Date.now() > expiresAt) return { valid: false };
+
+  const expected = computeShareScopeHmac(directory, expiresAt, s.secret);
+  const actualBuffer = Buffer.from(hmac, 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  if (actualBuffer.length !== expectedBuffer.length) return { valid: false };
+  if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return { valid: false };
+  try {
+    if (!isAssetWithinScope(assetPath, directory)) return { valid: false };
+  } catch {
+    return { valid: false };
+  }
+
+  return { valid: true, directory, viewerType: 'share' };
 }
 
 /**

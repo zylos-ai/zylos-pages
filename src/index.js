@@ -24,6 +24,7 @@ import { setupStateApi } from './routes/state-api.js';
 import { setupTodoApi } from './routes/todo-api.js';
 import { todoRoute } from './routes/todo-page.js';
 import { cleanupShares } from './sharing/share-manager.js';
+import { setupAssetRoute } from './routes/asset.js';
 import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
 import { logger } from './utils/logger.js';
@@ -106,12 +107,16 @@ async function main() {
 
   // Routes
   app.get('/', indexRoute(config));
+  setupAssetRoute(app, config);
   app.get('/:slug(*)', pageRoute(config));
 
   // Error handler
   app.use((err, req, res, _next) => {
-    logger.error('unhandled error', { err: err.message, path: req.path });
-    res.status(500).send('Internal Server Error');
+    const status = err.statusCode || err.status || 500;
+    const safeStatus = status >= 400 && status < 500 ? status : 500;
+    const message = safeStatus === 500 ? 'Internal Server Error' : (err.message || 'Bad Request');
+    logger[safeStatus === 500 ? 'error' : 'warn']('unhandled error', { err: err.message, path: req.path, status: safeStatus });
+    res.status(safeStatus).send(message);
   });
 
   // Start server

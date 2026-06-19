@@ -40,7 +40,7 @@ When a shared page at `/pages/renovation-checklist?token=abc` contains `<img src
 
 - Cookie name: `__Host-share_scope` (host-prefixed for security)
 - Value: `<directory>:<expiresAt>:<hmac>` — where directory is the asset scope (e.g. empty string for root, `docs` for nested), expiresAt is Unix ms, hmac is HMAC-SHA256 of `directory:expiresAt` signed with the share secret
-- Set when: a share token successfully accesses a page (in auth middleware page share-bypass block) or state API
+- Set when: a share token successfully accesses a page (in auth middleware page share-bypass block)
 - TTL: matches the share token's remaining lifetime, capped at 1 hour
 - Attributes: `HttpOnly; Secure; SameSite=Strict; Path=/`
 - Cleared when: the user logs in with a real session (avoids scope leakage)
