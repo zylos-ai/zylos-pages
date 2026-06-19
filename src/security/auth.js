@@ -207,8 +207,8 @@ function clearShareScopeCookie(res) {
   appendSetCookie(res, clearShareScopeCookieHeader());
 }
 
-function setShareScopeCookie(res, slug, tokenExpiresAt) {
-  const cookie = createShareScopeCookie(slug, tokenExpiresAt);
+function setShareScopeCookie(res, slug, tokenId, tokenExpiresAt) {
+  const cookie = createShareScopeCookie(slug, tokenId, tokenExpiresAt);
   appendSetCookie(res, cookie.header);
 }
 
@@ -506,13 +506,14 @@ export function setupAuth(app, authConfig) {
     // Share token bypass
     if ((req.method === 'GET' || req.method === 'HEAD') && req.query.token
         && !req.path.startsWith('/api/')
+        && !isAssetPath(req.path)
         && req.path !== '/') {
       const slug = req.path.slice(1);
       const result = verifyShare(req.query.token, slug);
       if (result.valid) {
         res.locals.viewerType = 'share';
         res.locals.authenticated = false;
-        setShareScopeCookie(res, result.slug, result.expiresAt);
+        setShareScopeCookie(res, result.slug, result.tokenId, result.expiresAt);
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Referrer-Policy', 'no-referrer');
         return next();

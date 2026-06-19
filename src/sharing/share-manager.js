@@ -108,9 +108,9 @@ function directoryScope(slug) {
   return index === -1 ? '' : normalized.slice(0, index);
 }
 
-function computeShareScopeHmac(directory, expiresAt, secret) {
+function computeShareScopeHmac(directory, tokenId, expiresAt, secret) {
   return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
-    .update(`${directory}:${expiresAt}`)
+    .update(`${directory}:${tokenId}:${expiresAt}`)
     .digest('hex');
 }
 
@@ -205,10 +205,10 @@ export function verifyShare(token, requestSlug) {
   // Note: if record is missing (e.g. never existed), the HMAC is still valid.
   // This is the "stateless" path — only revocation requires the record.
 
-  return { valid: true, slug: normalizedToken, expiresAt: decoded.expiresAt, viewerType: 'share' };
+  return { valid: true, slug: normalizedToken, tokenId: decoded.tokenId, expiresAt: decoded.expiresAt, viewerType: 'share' };
 }
 
-export function createShareScopeCookie(slug, tokenExpiresAt) {
+export function createShareScopeCookie(slug, tokenId, tokenExpiresAt) {
   const s = loadState();
   const now = Date.now();
   const tokenRemainingMs = tokenExpiresAt === 0
@@ -217,8 +217,8 @@ export function createShareScopeCookie(slug, tokenExpiresAt) {
   const maxAge = Math.max(0, Math.min(SHARE_SCOPE_MAX_AGE_SECONDS, Math.floor(tokenRemainingMs / 1000)));
   const expiresAt = now + maxAge * 1000;
   const directory = directoryScope(slug);
-  const hmac = computeShareScopeHmac(directory, expiresAt, s.secret);
-  const value = `${directory}:${expiresAt}:${hmac}`;
+  const hmac = computeShareScopeHmac(directory, tokenId, expiresAt, s.secret);
+  const value = `${directory}:${tokenId}:${expiresAt}:${hmac}`;
   return {
     value,
     maxAge,
@@ -235,19 +235,26 @@ export function verifyShareScopeCookie(cookieValue, assetPath) {
   if (!cookieValue || typeof cookieValue !== 'string') return { valid: false };
 
   const parts = cookieValue.split(':');
-  if (parts.length < 3) return { valid: false };
+  if (parts.length < 4) return { valid: false };
   const hmac = parts.pop();
   const expiresAtRaw = parts.pop();
+  const tokenId = parts.pop();
   const directory = parts.join(':');
   const expiresAt = Number(expiresAtRaw);
-  if (!Number.isFinite(expiresAt) || !hmac) return { valid: false };
+  if (!tokenId || !Number.isFinite(expiresAt) || !hmac) return { valid: false };
   if (Date.now() > expiresAt) return { valid: false };
 
-  const expected = computeShareScopeHmac(directory, expiresAt, s.secret);
+  const expected = computeShareScopeHmac(directory, tokenId, expiresAt, s.secret);
   const actualBuffer = Buffer.from(hmac, 'hex');
   const expectedBuffer = Buffer.from(expected, 'hex');
   if (actualBuffer.length !== expectedBuffer.length) return { valid: false };
   if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return { valid: false };
+
+  const record = s.shares[tokenId];
+  if (!record || record.revoked) return { valid: false };
+  if (record.expiresAt !== 0 && Date.now() > record.expiresAt) return { valid: false };
+  if (directoryScope(record.slug) !== directory) return { valid: false };
+
   try {
     if (!isAssetWithinScope(assetPath, directory)) return { valid: false };
   } catch {

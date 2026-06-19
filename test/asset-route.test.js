@@ -19,6 +19,7 @@ const {
   SHARE_SCOPE_COOKIE_NAME,
   createShare,
   createShareScopeCookie,
+  revokeShare,
 } = await import('../src/sharing/share-manager.js');
 
 test.after(async () => {
@@ -186,9 +187,11 @@ test('share page access sets scoped cookie and asset request uses cookie without
   try {
     await writeFile(path.join(contentDir, 'renovation-checklist.html'), '<!doctype html><img src="kitchen-ref.jpg">');
     await writeFile(path.join(contentDir, 'kitchen-ref.jpg'), 'kitchen image');
+    await writeFile(path.join(contentDir, 'direct-token.jpg'), 'direct token image');
     await mkdir(path.join(contentDir, 'docs'));
     await writeFile(path.join(contentDir, 'docs', 'nested.jpg'), 'nested image');
     const token = createShare('renovation-checklist', '24h', { allowPermanent: false }).token;
+    const assetToken = createShare('direct-token.jpg', '24h', { allowPermanent: false }).token;
 
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
       const page = await fetch(`${origin}/renovation-checklist?token=${encodeURIComponent(token)}`);
@@ -208,6 +211,9 @@ test('share page access sets scoped cookie and asset request uses cookie without
       assert.equal(res.headers.get('cache-control'), 'no-store');
 
       res = await fetch(`${origin}/kitchen-ref.jpg?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+      expectLoginRedirect(res);
+
+      res = await fetch(`${origin}/direct-token.jpg?token=${encodeURIComponent(assetToken)}`, { redirect: 'manual' });
       expectLoginRedirect(res);
 
       res = await fetch(`${origin}/docs/nested.jpg`, {
@@ -255,8 +261,10 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'image.jpg'), 'image');
-    const expired = createShareScopeCookie('page', Date.now() - 1000).value;
-    const valid = createShareScopeCookie('page', Date.now() + 3600_000).value;
+    const expiredShare = createShare('page', '24h', { allowPermanent: false });
+    const validShare = createShare('page', '24h', { allowPermanent: false });
+    const expired = createShareScopeCookie('page', expiredShare.tokenId, Date.now() - 1000).value;
+    const valid = createShareScopeCookie('page', validShare.tokenId, Date.now() + 3600_000).value;
     const tampered = valid.replace(/[0-9a-f]$/, (char) => char === '0' ? '1' : '0');
 
     await new Promise(resolve => setTimeout(resolve, 5));
@@ -278,10 +286,38 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
   }
 });
 
+test('revoked share invalidates existing share-scope asset cookie', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><img src="asset.jpg">');
+    await writeFile(path.join(contentDir, 'asset.jpg'), 'asset');
+    const share = createShare('shared', '24h', { allowPermanent: false });
+
+    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
+      const page = await fetch(`${origin}/shared?token=${encodeURIComponent(share.token)}`);
+      assert.equal(page.status, 200);
+      const cookie = shareScopeCookie(page.headers.get('set-cookie'));
+
+      let res = await fetch(`${origin}/asset.jpg`, { headers: { Cookie: cookie } });
+      assert.equal(res.status, 200);
+
+      assert.equal(revokeShare(share.tokenId), true);
+      res = await fetch(`${origin}/asset.jpg`, {
+        redirect: 'manual',
+        headers: { Cookie: cookie },
+      });
+      expectLoginRedirect(res);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('asset route rejects traversal, null byte, and double-encoded traversal', async () => {
   const contentDir = await makeContentDir();
   try {
-    const cookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('page', Date.now() + 3600_000).value}`;
+    const share = createShare('page', '24h', { allowPermanent: false });
+    const cookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('page', share.tokenId, Date.now() + 3600_000).value}`;
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       let res = await rawGet(origin, '/%2e%2e/secret.jpg');
       assert.equal(res.statusCode, 400);
