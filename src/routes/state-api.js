@@ -172,6 +172,9 @@ export function setupStateApi(app) {
 
     try {
       const body = await parseJsonBody(req);
+      if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+        return res.status(400).json({ error: 'Body must be a JSON object' });
+      }
       if (!Object.prototype.hasOwnProperty.call(body, 'value')) {
         return res.status(400).json({ error: 'Missing value' });
       }

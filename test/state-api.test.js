@@ -277,6 +277,27 @@ test('state API validates request body shape and JSON', async () => {
       body: JSON.stringify({ other: true }),
     });
     assert.equal(res.status, 400);
+
+    res = await fetch(`${origin}/api/state/body/key`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: 'null',
+    });
+    assert.equal(res.status, 400);
+
+    res = await fetch(`${origin}/api/state/body/key`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: '"string"',
+    });
+    assert.equal(res.status, 400);
+
+    res = await fetch(`${origin}/api/state/body/key`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: '[1,2,3]',
+    });
+    assert.equal(res.status, 400);
   });
 });
 
