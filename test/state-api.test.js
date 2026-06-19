@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import crypto from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,7 +11,10 @@ process.env.PAGES_DATA_DIR = dataDir;
 
 const express = (await import('express')).default;
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
+const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupStateApi, RAW_BODY_LIMIT_BYTES, VALUE_JSON_LIMIT_BYTES } = await import('../src/routes/state-api.js');
+const { setupTodoApi } = await import('../src/routes/todo-api.js');
+const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const {
   deleteStateValue,
   getArtifactState,
@@ -22,12 +26,7 @@ test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-async function withServer(authConfig, fn) {
-  const app = express();
-  setupAuth(app, authConfig || { enabled: false, password: null });
-  setupStateApi(app);
-  app.get('/', (_req, res) => res.send('root'));
-
+async function withApp(app, fn) {
   const server = await new Promise((resolve) => {
     const s = http.createServer(app);
     s.listen(0, '127.0.0.1', () => resolve(s));
@@ -41,6 +40,14 @@ async function withServer(authConfig, fn) {
       server.close((err) => err ? reject(err) : resolve());
     });
   }
+}
+
+async function withServer(authConfig, fn) {
+  const app = express();
+  setupAuth(app, authConfig || { enabled: false, password: null });
+  setupStateApi(app);
+  app.get('/', (_req, res) => res.send('root'));
+  await withApp(app, fn);
 }
 
 async function login(origin) {
@@ -67,6 +74,22 @@ function sameOriginHeaders(origin, extra = {}) {
     'Content-Type': 'application/json',
     ...extra,
   };
+}
+
+async function createExpiredShareToken(slug) {
+  const share = createShare(slug, '24h', { allowPermanent: false });
+  const state = JSON.parse(await readFile(path.join(dataDir, 'shares.json'), 'utf8'));
+  const expiresAt = Date.now() - 1000;
+  const payload = `${slug}:${expiresAt}:${share.tokenId}`;
+  const hmac = crypto.createHmac('sha256', Buffer.from(state.secret, 'hex'))
+    .update(payload)
+    .digest('hex');
+  return Buffer.from(`${payload}:${hmac}`).toString('base64url');
+}
+
+function expectLoginRedirect(response) {
+  assert.equal(response.status, 302);
+  assert.match(response.headers.get('location'), /^\/login\?/);
 }
 
 test('state store round-trips JSON value types and explicit presence results', () => {
@@ -217,19 +240,156 @@ test('state API CSRF checks mutating requests only', async () => {
   });
 });
 
-test('state API auth wall redirects unauthenticated and share-token API requests', async () => {
+test('state API allows share-token CRUD for the matching artifact', async () => {
+  const token = createShare('shared-state', '24h', { allowPermanent: false }).token;
+
+  await withServer(authConfig(), async ({ origin }) => {
+    let res = await fetch(`${origin}/api/state/shared-state?token=${encodeURIComponent(token)}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
+    assert.deepEqual(await res.json(), { ok: true, state: {} });
+
+    res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: JSON.stringify({ value: { done: true } }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
+
+    res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
+
+    res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+      headers: { Origin: origin },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true });
+
+    res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`);
+    assert.equal(res.status, 404);
+  });
+});
+
+test('state API share-token scope mismatch falls through to auth wall', async () => {
+  const token = createShare('scope-source', '24h', { allowPermanent: false }).token;
+
+  await withServer(authConfig(), async ({ origin }) => {
+    let res = await fetch(`${origin}/api/state/other-artifact?token=${encodeURIComponent(token)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/state/other-artifact/key?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      redirect: 'manual',
+      headers: sameOriginHeaders(origin),
+      body: JSON.stringify({ value: true }),
+    });
+    expectLoginRedirect(res);
+  });
+});
+
+test('state API still enforces CSRF for share-token mutating requests', async () => {
+  const token = createShare('share-csrf', '24h', { allowPermanent: false }).token;
+
+  await withServer(authConfig(), async ({ origin }) => {
+    let res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: true }),
+    });
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: 'CSRF validation failed: missing Origin/Referer' });
+
+    res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: JSON.stringify({ value: true }),
+    });
+    assert.equal(res.status, 200);
+
+    res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
+      method: 'DELETE',
+    });
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { error: 'CSRF validation failed: missing Origin/Referer' });
+  });
+});
+
+test('state API invalid share tokens fall through to auth wall', async () => {
+  const revoked = createShare('revoked-state', '24h', { allowPermanent: false });
+  revokeShare(revoked.tokenId);
+  const expiredToken = await createExpiredShareToken('expired-state');
+
+  await withServer(authConfig(), async ({ origin }) => {
+    let res = await fetch(`${origin}/api/state/revoked-state?token=${encodeURIComponent(revoked.token)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/state/expired-state?token=${encodeURIComponent(expiredToken)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/state/malformed-state?token=not-a-valid-share-token`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/state/missing-token`, { redirect: 'manual' });
+    expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/state/%E0%A4%A?token=not-a-valid-share-token`, {
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.ok(res.headers.get('location').startsWith('/login'));
+  });
+});
+
+test('state API auth wall redirects unauthenticated and malformed-token API requests', async () => {
   await withServer(authConfig(), async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/auth-wall`, { redirect: 'manual' });
-    assert.equal(res.status, 302);
-    assert.match(res.headers.get('location'), /^\/login\?/);
+    expectLoginRedirect(res);
 
-    res = await fetch(`${origin}/api/state/auth-wall?token=not-used-on-api`, { redirect: 'manual' });
-    assert.equal(res.status, 302);
-    assert.match(res.headers.get('location'), /^\/login\?/);
+    res = await fetch(`${origin}/api/state/auth-wall?token=not-a-valid-share-token`, { redirect: 'manual' });
+    expectLoginRedirect(res);
 
     const cookie = await login(origin);
     res = await fetch(`${origin}/api/state/auth-wall`, { headers: { Cookie: cookie } });
     assert.equal(res.status, 200);
+  });
+});
+
+test('share tokens do not grant access to other APIs and page share bypass still works', async () => {
+  const token = createShare('shared-page', '24h', { allowPermanent: false }).token;
+  const app = express();
+  setupAuth(app, authConfig());
+  setupRawApi(app, { contentDir: dataDir });
+  setupTodoApi(app, { todo: { enabled: true, boards: { main: path.join(dataDir, 'todo.md') } } });
+  app.get('/shared-page', (req, res) => {
+    res.status(200).send(res.locals.viewerType === 'share' ? 'share-viewer' : 'auth-viewer');
+  });
+
+  await withApp(app, async ({ origin }) => {
+    let res = await fetch(`${origin}/shared-page?token=${encodeURIComponent(token)}`);
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'share-viewer');
+
+    res = await fetch(`${origin}/api/raw/shared-page?token=${encodeURIComponent(token)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/todo/main?token=${encodeURIComponent(token)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
   });
 });
 
