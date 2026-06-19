@@ -45,7 +45,7 @@ function validateSlug(slug) {
   }
 }
 
-function resolveCandidate(slug, contentRoot, extension, allowedExtensions) {
+function resolveCandidate(slug, contentRoot, extension) {
   const candidate = resolve(contentRoot, slug + extension);
   // Ensure resolved path is within content root
   const rel = relative(contentRoot, candidate);
@@ -53,8 +53,8 @@ function resolveCandidate(slug, contentRoot, extension, allowedExtensions) {
     throw new PathViolationError('Invalid path: outside content root');
   }
 
-  if (!allowedExtensions.includes(extname(candidate))) {
-    throw new PathViolationError(`Invalid path: only ${allowedExtensions.join(', ')} files allowed`);
+  if (extname(candidate) !== extension) {
+    throw new PathViolationError(`Invalid path: only ${extension} files allowed`);
   }
 
   return candidate;
@@ -76,8 +76,8 @@ async function exists(filePath) {
  */
 export async function resolvePageDescriptor(slug, contentRoot) {
   validateSlug(slug);
-  const htmlPath = resolveCandidate(slug, contentRoot, '.html', ['.html', '.md']);
-  const markdownPath = resolveCandidate(slug, contentRoot, '.md', ['.html', '.md']);
+  const htmlPath = resolveCandidate(slug, contentRoot, '.html');
+  const markdownPath = resolveCandidate(slug, contentRoot, '.md');
 
   if (await exists(htmlPath)) {
     const descriptor = {
@@ -110,5 +110,5 @@ export async function resolvePageDescriptor(slug, contentRoot) {
  */
 export function resolveSafePath(slug, contentRoot) {
   validateSlug(slug);
-  return resolveCandidate(slug, contentRoot, '.md', ['.md']);
+  return resolveCandidate(slug, contentRoot, '.md');
 }

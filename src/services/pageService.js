@@ -52,9 +52,10 @@ export async function getPage(rawSlug, config, browserBase = '') {
   const { result, shared } = await singleflight(cacheKey, async () => {
     const current = await resolvePageDescriptor(slug, config.contentDir);
     let rendered;
+    let st;
 
     if (current.type === 'html') {
-      const st = await stat(current.filePath);
+      st = await stat(current.filePath);
       const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
       if (st.size > maxFileSizeBytes) {
         const err = new Error(`File too large: ${st.size} bytes (max ${maxFileSizeBytes})`);
@@ -80,9 +81,9 @@ export async function getPage(rawSlug, config, browserBase = '') {
         slug,
       });
       rendered.type = 'markdown';
+      st = await stat(current.filePath);
     }
 
-    const st = await stat(current.filePath);
     setCachedPage(cacheKey, {
       html: rendered.html,
       etag: rendered.etag,

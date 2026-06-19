@@ -128,9 +128,17 @@ test('page route serves markdown, html, and html priority with scoped CSP', asyn
       const html = await fetch(`${origin}/artifact`);
       assert.equal(html.status, 200);
       assert.equal(html.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+      const artifactEtag = html.headers.get('etag');
       const htmlBody = await html.text();
       assert.match(htmlBody, /<script>window\.ok=true<\/script>/);
       assert.doesNotMatch(htmlBody, /NAV_SIDEBAR/);
+
+      const notModified = await fetch(`${origin}/artifact`, {
+        redirect: 'manual',
+        headers: { 'If-None-Match': artifactEtag },
+      });
+      assert.equal(notModified.status, 304);
+      assert.equal(notModified.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
 
       const both = await fetch(`${origin}/both`);
       assert.equal(both.status, 200);

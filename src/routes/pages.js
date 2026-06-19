@@ -45,11 +45,16 @@ export function pageRoute(config) {
     try {
       const result = await getPage(slug, config, browserBase);
       const elapsed = Math.round(performance.now() - start);
+      const isHtmlArtifact = result.type === 'html';
+
+      if (isHtmlArtifact) {
+        res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
+      }
 
       // ETag / 304 handling
       const clientEtag = req.headers['if-none-match'];
       if (clientEtag && clientEtag === result.etag) {
-        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth' });
+        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
         return res.status(304).end();
       }
 
@@ -57,8 +62,7 @@ export function pageRoute(config) {
       res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
-      if (result.type === 'html') {
-        res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
+      if (isHtmlArtifact) {
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
         return res.send(result.html);
       }
