@@ -343,6 +343,12 @@ test('state API invalid share tokens fall through to auth wall', async () => {
 
     res = await fetch(`${origin}/api/state/missing-token`, { redirect: 'manual' });
     expectLoginRedirect(res);
+
+    res = await fetch(`${origin}/api/state/%E0%A4%A?token=not-a-valid-share-token`, {
+      redirect: 'manual',
+    });
+    assert.equal(res.status, 302);
+    assert.ok(res.headers.get('location').startsWith('/login'));
   });
 });
 
