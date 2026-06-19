@@ -64,7 +64,9 @@ export function pageRoute(config) {
 
       if (isHtmlArtifact) {
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
-        return res.send(result.html);
+        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};</script>`;
+        const injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+        return res.send(injected !== result.html ? injected : baseTag + result.html);
       }
 
       // For share viewers: inject data-viewer attribute to hide auth-only elements
