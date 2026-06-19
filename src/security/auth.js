@@ -4,9 +4,8 @@
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
-import Database from 'better-sqlite3';
-import { CONFIG_PATH, DATA_DIR } from '../lib/config.js';
+import { getPagesDb } from '../db/pages-db.js';
+import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 import { verifyShare } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
@@ -21,8 +20,6 @@ const CLEANUP_INTERVAL_MS = 300_000;          // 5 minutes
 
 // --- SQLite session store ---
 
-const DB_PATH = path.join(DATA_DIR, 'pages.db');
-
 let db;
 let _insertSession;
 let _getSession;
@@ -31,9 +28,7 @@ let _deleteSession;
 let _cleanExpired;
 
 function initSessionStore() {
-  fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
+  db = getPagesDb();
   db.exec(`
     CREATE TABLE IF NOT EXISTS auth_sessions (
       token_hash TEXT PRIMARY KEY,
@@ -51,7 +46,7 @@ function initSessionStore() {
   _cleanExpired = db.prepare(
     'DELETE FROM auth_sessions WHERE (remember = 0 AND (created_at < ? OR last_activity_at < ?)) OR (remember = 1 AND (created_at < ? OR last_activity_at < ?))'
   );
-  logger.info('session store initialized', { path: DB_PATH });
+  logger.info('session store initialized');
 }
 
 // Brute-force protection (in-memory — transient by design)
