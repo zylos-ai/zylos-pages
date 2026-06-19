@@ -18,7 +18,7 @@ Add HTML file serving alongside existing markdown rendering. When a slug resolve
 
 **Out of scope:**
 - Theme/nav injection into HTML pages (agent controls layout)
-- Bundled JS libraries (agent brings own via CDN or inline)
+- Bundled JS libraries (Phase 1: agent uses inline JS or self-hosted assets under `/_assets/`; external CDN `<script src="https://...">` blocked by `script-src 'self'` — CDN allowlist is a future explicit configuration, not default-open)
 - Share viewer access to companion `.md` raw source
 - Runtime source link injection (Phase 1: authoring convention only)
 - markdown-it plugin enhancements
@@ -27,7 +27,7 @@ Add HTML file serving alongside existing markdown rendering. When a slug resolve
 
 Phase 1 does NOT inject a "View source (Markdown)" link at runtime. The contract:
 - Agent-authored HTML that has a companion `.md` should include the link itself (authoring convention)
-- Link target: `/api/raw/{slug}` — authenticated viewers only
+- Link target: use a relative path from the current page, e.g. `api/raw/{slug}` (relative to browserBase), or the full browser-visible path `{browserBase}/api/raw/{slug}` (e.g. `/pages/api/raw/foo` when mounted under `/pages`). Absolute `/api/raw/foo` will break behind reverse-proxy prefixes — authenticated viewers only
 - Share viewers cannot access raw markdown source (existing `raw-api.js` share-viewer block preserved)
 - No runtime DOM injection by Pages
 
