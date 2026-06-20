@@ -41,6 +41,7 @@ let _getShareSession;
 let _touchShareSession;
 let _deleteShareSession;
 let _deleteExpiredShareSessions;
+let _updateShareAttachmentPermission;
 
 function sha256(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -115,6 +116,13 @@ function initShareStore() {
   _touchShareSession = db.prepare('UPDATE share_sessions SET last_activity_at = ? WHERE token_hash = ?');
   _deleteShareSession = db.prepare('DELETE FROM share_sessions WHERE token_hash = ?');
   _deleteExpiredShareSessions = db.prepare('DELETE FROM share_sessions WHERE expires_at <= ?');
+  _updateShareAttachmentPermission = db.prepare(`
+    UPDATE shares
+    SET can_write_attachments = ?
+    WHERE token_id = ?
+      AND revoked = 0
+      AND (expires_at = 0 OR expires_at > ?)
+  `);
 
   importLegacySharesJson();
   initialized = true;
@@ -445,6 +453,22 @@ export function revokeAllForSlug(slug) {
     logger.info('shares revoked for slug', { slug: normalizedSlug, count: result.changes });
   }
   return result.changes;
+}
+
+export function updateShareAttachmentPermission(tokenId, canWriteAttachments) {
+  if (!isTokenId(tokenId)) return null;
+  initShareStore();
+  const result = _updateShareAttachmentPermission.run(canWriteAttachments ? 1 : 0, tokenId, nowMs());
+  if (result.changes === 0) return null;
+  const updated = activeShareRecord(tokenId);
+  if (updated) {
+    logger.info('share attachment permission updated', {
+      tokenId,
+      slug: updated.slug,
+      canWriteAttachments: updated.canWriteAttachments,
+    });
+  }
+  return updated;
 }
 
 export function listSharesForSlug(slug) {

@@ -876,6 +876,7 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding: 8px 0;
   border-bottom: 1px solid var(--color-border);
 }
@@ -890,9 +891,22 @@ body {
   color: var(--color-text-secondary);
 }
 
+.share-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .share-item-permission {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--color-text);
   font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
 .share-revoke-btn {
@@ -931,4 +945,15 @@ body {
 @media (max-width: 768px) {
   .share-modal-content { width: 95vw; }
   .share-duration-options { flex-direction: column; gap: 8px; }
+  .share-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .share-item-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+  .share-item-permission {
+    white-space: normal;
+  }
 }

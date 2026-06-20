@@ -1,5 +1,6 @@
 // Share API route handlers
 // POST /api/share — create share (requires login + CSRF)
+// PATCH /api/share/:tokenId — update share permissions (requires login + CSRF)
 // DELETE /api/share/:tokenId — revoke share (requires login + CSRF)
 // GET /api/shares/:slug(*) — list active shares for slug (requires login)
 // DELETE /api/shares/:slug(*) — revoke all shares for slug (requires login + CSRF)
@@ -12,6 +13,7 @@ import {
   revokeShare,
   revokeAllForSlug,
   listSharesForSlug,
+  updateShareAttachmentPermission,
 } from '../sharing/share-manager.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
@@ -148,6 +150,44 @@ export function setupShareApi(app, sharingConfig) {
     } catch (err) {
       const status = err.statusCode || 500;
       logger.warn('share create failed', { err: err.message });
+      res.status(status).json({ error: err.message });
+    }
+  });
+
+  // PATCH /api/share/:tokenId — update attachment write permission
+  app.patch('/api/share/:tokenId', async (req, res) => {
+    if (!csrfCheck(req, res)) return;
+
+    if (res.locals.viewerType === 'share') {
+      return res.status(403).json({ error: 'Share viewers cannot update shares' });
+    }
+
+    const { tokenId } = req.params;
+    if (!tokenId || typeof tokenId !== 'string' || tokenId.length !== 32) {
+      return res.status(400).json({ error: 'Invalid tokenId' });
+    }
+
+    try {
+      const body = await parseJsonBody(req);
+      if (typeof body.canWriteAttachments !== 'boolean') {
+        return res.status(400).json({ error: 'Invalid canWriteAttachments' });
+      }
+
+      const updated = updateShareAttachmentPermission(tokenId, body.canWriteAttachments);
+      if (!updated) {
+        return res.status(404).json({ error: 'Share not found' });
+      }
+
+      res.json({
+        ok: true,
+        tokenId: updated.tokenId,
+        expiresAt: updated.expiresAt,
+        createdAt: updated.createdAt,
+        canWriteAttachments: updated.canWriteAttachments,
+      });
+    } catch (err) {
+      const status = err.statusCode || 500;
+      logger.warn('share update failed', { err: err.message });
       res.status(status).json({ error: err.message });
     }
   });
