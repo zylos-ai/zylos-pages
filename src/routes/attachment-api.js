@@ -59,8 +59,13 @@ function csrfCheck(req, res) {
   return true;
 }
 
-function requireAuthenticatedMutation(req, res) {
+function requireAttachmentMutation(req, res, artifact) {
   if (res.locals.authenticated === true) return true;
+  if (res.locals.viewerType === 'share'
+      && res.locals.shareCanWriteAttachments === true
+      && res.locals.shareSlug === artifact) {
+    return true;
+  }
   logger.info('attachment mutation rejected', { path: req.path, viewer: res.locals.viewerType || 'none' });
   res.status(403).json({ error: 'Authentication required for attachment mutation' });
   return false;
@@ -326,7 +331,7 @@ export function setupAttachmentApi(app, config, options = {}) {
 
   app.post('/api/attachments/:artifact/:key', async (req, res) => {
     if (!csrfCheck(req, res)) return;
-    if (!requireAuthenticatedMutation(req, res)) return;
+    if (!requireAttachmentMutation(req, res, req.params.artifact)) return;
 
     try {
       const record = await createAttachment({ req, config, hooks });
@@ -340,7 +345,7 @@ export function setupAttachmentApi(app, config, options = {}) {
 
   app.delete('/api/attachments/:artifact/:attachmentId', async (req, res) => {
     if (!csrfCheck(req, res)) return;
-    if (!requireAuthenticatedMutation(req, res)) return;
+    if (!requireAttachmentMutation(req, res, req.params.artifact)) return;
     if (rejectInvalidFileParams(req, res)) return;
 
     try {

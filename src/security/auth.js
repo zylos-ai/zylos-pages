@@ -233,6 +233,8 @@ function setShareAccessCookie(res, slug, tokenId, tokenExpiresAt) {
 function acceptShareViewer(res, result, options = {}) {
   res.locals.viewerType = 'share';
   res.locals.authenticated = false;
+  res.locals.shareSlug = result.slug;
+  res.locals.shareCanWriteAttachments = result.canWriteAttachments === true;
   if (options.refreshAccessCookie) {
     setShareAccessCookie(res, result.slug, result.tokenId, result.expiresAt);
   }

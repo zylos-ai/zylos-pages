@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { scanPages } from '../src/routes/index.js';
 import { indexTemplate } from '../src/templates/indexTemplate.js';
-import { injectNavSidebar, pageTemplate } from '../src/templates/pageTemplate.js';
+import { injectNavSidebar, injectShareViewer, pageTemplate } from '../src/templates/pageTemplate.js';
 import { buildPageTree } from '../src/utils/pageTree.js';
 
 test('buildPageTree returns empty groups for empty input', () => {
@@ -92,6 +92,18 @@ test('injectNavSidebar expands active folder and escapes folder labels', () => {
   assert.match(html, /<li class="active"><a href="\/pages\/daily-digest\/a">Daily A<\/a><\/li>/);
   assert.match(html, /safe \/ &lt;script&gt;/);
   assert.doesNotMatch(html, /<span class="nav-folder-name">safe \/ <script>/);
+});
+
+test('injectShareViewer marks share pages and exposes attachment edit flag', () => {
+  const readOnly = injectShareViewer('<html lang="en"><head></head><body></body></html>');
+  assert.match(readOnly, /<html lang="en" data-viewer="share">/);
+  assert.match(readOnly, /window\.__PAGES_VIEWER="share"/);
+  assert.match(readOnly, /window\.__PAGES_SHARE_EDITABLE=false/);
+
+  const editable = injectShareViewer('<html lang="en"><head></head><body></body></html>', {
+    canWriteAttachments: true,
+  });
+  assert.match(editable, /window\.__PAGES_SHARE_EDITABLE=true/);
 });
 
 test('pageTemplate renders nested and top-level breadcrumbs with escaped folder segments', () => {

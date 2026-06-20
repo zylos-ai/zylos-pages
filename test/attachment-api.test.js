@@ -105,8 +105,8 @@ async function upload(origin, artifact, key, cookie, buffer = JPEG, type = 'imag
   });
 }
 
-async function createExpiredShareToken(slug) {
-  const share = createShare(slug, '24h', { allowPermanent: false });
+async function createExpiredShareToken(slug, options = {}) {
+  const share = createShare(slug, '24h', { allowPermanent: false }, options);
   const expiresAt = Date.now() - 1000;
   const db = getPagesDb();
   const secret = db.prepare('SELECT value FROM share_meta WHERE key = ?').get('secret').value;
@@ -297,6 +297,135 @@ test('share viewers can list and read matching artifact attachments but cannot m
 
       res = await fetch(`${origin}${legacyList.attachments[0].fileUrl}`, { redirect: 'manual' });
       assert.equal(res.status, 200);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('editable share viewers can upload and delete matching artifact attachments only', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const share = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      let res = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+      assert.equal(res.status, 302);
+      const shareCookies = cookieHeader(res.headers.get('set-cookie'));
+
+      res = await upload(origin, 'renovation-checklist', 'editable-log', shareCookies);
+      assert.equal(res.status, 201);
+      const attachment = (await res.json()).attachment;
+
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/editable-log`, {
+        headers: { Cookie: shareCookies },
+      });
+      assert.equal(res.status, 200);
+      assert.equal((await res.json()).attachments.length, 1);
+
+      res = await fetch(`${origin}/api/attachments/notes/wrong-artifact`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Origin: origin, Cookie: shareCookies },
+        body: formData(JPEG),
+      });
+      expectLoginRedirect(res);
+
+      const authCookie = await login(origin);
+      res = await upload(origin, 'notes', 'auth-log', authCookie);
+      assert.equal(res.status, 201);
+      const otherAttachment = (await res.json()).attachment;
+
+      res = await fetch(`${origin}/api/attachments/notes/${otherAttachment.attachmentId}`, {
+        method: 'DELETE',
+        redirect: 'manual',
+        headers: { Origin: origin, Cookie: shareCookies },
+      });
+      expectLoginRedirect(res);
+
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/${attachment.attachmentId}`, {
+        method: 'DELETE',
+        headers: { Origin: origin, Cookie: shareCookies },
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true });
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('legacy editable tokens can upload and delete matching artifact attachments only', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
+    const editable = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
+
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      let res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-readonly?token=${encodeURIComponent(readOnly.token)}`, {
+        method: 'POST',
+        headers: { Origin: origin },
+        body: formData(JPEG),
+      });
+      assert.equal(res.status, 403);
+
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-editable?token=${encodeURIComponent(editable.token)}`, {
+        method: 'POST',
+        headers: { Origin: origin },
+        body: formData(JPEG),
+      });
+      assert.equal(res.status, 201);
+      const attachment = (await res.json()).attachment;
+
+      res = await fetch(`${origin}/api/attachments/notes/legacy-wrong?token=${encodeURIComponent(editable.token)}`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Origin: origin },
+        body: formData(JPEG),
+      });
+      expectLoginRedirect(res);
+
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/${attachment.attachmentId}?token=${encodeURIComponent(readOnly.token)}`, {
+        method: 'DELETE',
+        headers: { Origin: origin },
+      });
+      assert.equal(res.status, 403);
+
+      res = await fetch(`${origin}/api/attachments/notes/${attachment.attachmentId}?token=${encodeURIComponent(editable.token)}`, {
+        method: 'DELETE',
+        redirect: 'manual',
+        headers: { Origin: origin },
+      });
+      expectLoginRedirect(res);
+
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/${attachment.attachmentId}?token=${encodeURIComponent(editable.token)}`, {
+        method: 'DELETE',
+        headers: { Origin: origin },
+      });
+      assert.equal(res.status, 200);
+      assert.deepEqual(await res.json(), { ok: true });
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('revoked and expired editable shares cannot mutate attachments', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const share = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
+    revokeShare(share.tokenId);
+    const expiredToken = await createExpiredShareToken('renovation-checklist', { canWriteAttachments: true });
+
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      for (const token of [share.token, expiredToken]) {
+        const res = await fetch(`${origin}/api/attachments/renovation-checklist/revoked-log?token=${encodeURIComponent(token)}`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { Origin: origin },
+          body: formData(JPEG),
+        });
+        expectLoginRedirect(res);
+      }
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

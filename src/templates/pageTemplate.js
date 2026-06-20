@@ -94,6 +94,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
             <label><input type="radio" name="share-duration" value="30d"> 30 days</label>
             <label><input type="radio" name="share-duration" value="permanent"> Permanent</label>
           </div>
+          <label class="share-editable-option"><input type="checkbox" class="share-editable-input"> Allow photo upload/delete</label>
           <button class="share-generate-btn">Generate Link</button>
         </div>
         <div class="share-result" hidden>
@@ -183,6 +184,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
             <label><input type="radio" name="share-duration" value="30d"> 30 days</label>
             <label><input type="radio" name="share-duration" value="permanent"> Permanent</label>
           </div>
+          <label class="share-editable-option"><input type="checkbox" class="share-editable-input"> Allow photo upload/delete</label>
           <button class="share-generate-btn">Generate Link</button>
         </div>
         <div class="share-result" hidden>
@@ -206,8 +208,12 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
 </html>`;
 }
 
-export function injectShareViewer(html) {
-  return html.replace('<html lang="en">', '<html lang="en" data-viewer="share">');
+export function injectShareViewer(html, options = {}) {
+  const editable = options.canWriteAttachments === true;
+  const viewerScript = `<script>window.__PAGES_VIEWER="share";window.__PAGES_SHARE_EDITABLE=${editable ? 'true' : 'false'};</script>`;
+  let injected = html.replace('<html lang="en">', '<html lang="en" data-viewer="share">');
+  injected = injected.replace(/<head([^>]*)>/i, `<head$1>${viewerScript}`);
+  return injected !== html ? injected : viewerScript + html;
 }
 
 /**

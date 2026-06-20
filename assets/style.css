@@ -787,6 +787,15 @@ body {
   cursor: pointer;
 }
 
+.share-create .share-editable-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
 .share-generate-btn {
   width: 100%;
   padding: 8px;
@@ -879,6 +888,11 @@ body {
   gap: 2px;
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.share-item-permission {
+  color: var(--color-text);
+  font-weight: 600;
 }
 
 .share-revoke-btn {

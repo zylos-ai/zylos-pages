@@ -20,6 +20,7 @@
   var linkInput = modal.querySelector('.share-link-input');
   var copyBtn = modal.querySelector('.share-copy-btn');
   var listItems = modal.querySelector('.share-list-items');
+  var editableInput = modal.querySelector('.share-editable-input');
 
   // Open modal
   shareBtn.addEventListener('click', function () {
@@ -48,7 +49,11 @@
     fetch(baseUrl + '/api/share', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: slug, duration: duration.value }),
+      body: JSON.stringify({
+        slug: slug,
+        duration: duration.value,
+        canWriteAttachments: editableInput ? editableInput.checked === true : false,
+      }),
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -106,6 +111,9 @@
           html += '<div class="share-item-info">';
           html += '<span class="share-item-created">Created: ' + created + '</span>';
           html += '<span class="share-item-expires">Expires: ' + expires + '</span>';
+          if (s.canWriteAttachments) {
+            html += '<span class="share-item-permission">Photo upload/delete enabled</span>';
+          }
           html += '</div>';
           html += '<button class="share-revoke-btn" data-token-id="' + s.tokenId + '">Revoke</button>';
           html += '</div>';
