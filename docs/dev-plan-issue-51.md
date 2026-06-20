@@ -32,6 +32,9 @@ Add a way for authenticated users to toggle an existing share link between attac
 - [ ] Unit/API test: revoked, expired, malformed, or unknown token IDs cannot be updated.
 - [ ] Attachment integration test: an existing share session created while read-only becomes able to upload after the authenticated toggle upgrades it.
 - [ ] Attachment integration test: an existing share session created while editable loses upload/delete permission after the authenticated toggle downgrades it.
+- [ ] Legacy-token integration test: create a read-only share, keep its existing legacy `?token=`, PATCH it editable, then matching-artifact POST/DELETE with that same token succeeds.
+- [ ] Legacy-token integration test: create an editable share, keep its existing legacy `?token=`, PATCH it read-only, then matching-artifact POST/DELETE with that same token is blocked.
+- [ ] Legacy-token integration test: wrong-artifact attachment mutation remains blocked after both upgrade and downgrade directions.
 - [ ] Frontend/manual test: Active shares list shows the toggle and preserves the same URL after permission changes.
 - [ ] Full `npm test`.
 
@@ -45,6 +48,7 @@ Add a way for authenticated users to toggle an existing share link between attac
 ## Acceptance Checklist
 - [ ] Existing read-only share URL remains the same after upgrade and can upload/delete photos for its artifact.
 - [ ] Existing editable share URL remains the same after downgrade and can no longer upload/delete photos.
+- [ ] Existing legacy long token reflects the toggled permission without generating a new token.
 - [ ] Ordinary shares still default to read-only unless the create checkbox is checked.
 - [ ] Editable shares still cannot mutate a different artifact.
 - [ ] Share viewers cannot see or use share-management controls.
