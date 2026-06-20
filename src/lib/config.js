@@ -50,6 +50,9 @@ export const DEFAULT_CONFIG = {
     enabled: true,
     allowPermanent: false,
   },
+  attachments: {
+    maxFileSizeBytes: 5 * 1024 * 1024,
+  },
   externalFiles: {
     enabled: true,
     allowedSources: {

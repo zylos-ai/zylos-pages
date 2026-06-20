@@ -61,7 +61,7 @@ export function pageRoute(config) {
         res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
-        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};</script>`;
+        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};window.__PAGES_VIEWER=${JSON.stringify(isShareViewer ? 'share' : 'auth')};</script>`;
         const injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
         return res.send(injected !== result.html ? injected : baseTag + result.html);
       }
