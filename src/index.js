@@ -73,6 +73,7 @@ async function main() {
 
   // Create Express app
   const app = express();
+  app.set('trust proxy', config.proxy?.trust ?? 'loopback');
 
   // Security headers
   app.use(securityHeaders());
