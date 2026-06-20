@@ -68,6 +68,10 @@ function requireAuthenticatedMutation(req, res) {
 
 function attachmentResponse(req, record) {
   const browserBase = browserBaseFromRequest(req);
+  let fileUrl = browserPath(browserBase, `api/attachments/${encodeURIComponent(record.artifact)}/${record.attachmentId}/file`);
+  if (typeof req.query.token === 'string' && req.query.token) {
+    fileUrl = `${fileUrl}?${new URLSearchParams({ token: req.query.token }).toString()}`;
+  }
   return {
     attachmentId: record.attachmentId,
     artifact: record.artifact,
@@ -76,8 +80,19 @@ function attachmentResponse(req, record) {
     mimeType: record.mimeType,
     sizeBytes: record.sizeBytes,
     createdAt: record.createdAt,
-    fileUrl: browserPath(browserBase, `api/attachments/${encodeURIComponent(record.artifact)}/${record.attachmentId}/file`),
+    fileUrl,
   };
+}
+
+function encodeRFC5987Value(value) {
+  return encodeURIComponent(value)
+    .replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+function contentDispositionForAttachment(record) {
+  const extension = record.storedFilename.match(/\.(jpg|png|webp)$/)?.[0] || '.jpg';
+  const fallback = `attachment${extension}`;
+  return `inline; filename="${fallback}"; filename*=UTF-8''${encodeRFC5987Value(record.originalFilename)}`;
 }
 
 function rejectInvalidListParams(req, res) {
@@ -282,7 +297,7 @@ export function setupAttachmentApi(app, config, options = {}) {
       const filePath = resolveFinalPath(record.artifact, record.storedFilename);
       res.setHeader('Content-Type', record.mimeType);
       res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Disposition', `inline; filename="${record.originalFilename.replace(/["\\]/g, '_')}"`);
+      res.setHeader('Content-Disposition', contentDispositionForAttachment(record));
       return res.sendFile(filePath, (err) => {
         if (!err) return;
         if (!res.headersSent) {

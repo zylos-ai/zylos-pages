@@ -225,6 +225,35 @@ test('auth-disabled mode rejects upload and delete mutations by default', async 
   }
 });
 
+test('uploaded original filenames cannot break attachment file response headers', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const cookie = await login(origin);
+      for (const filename of ['装修.jpg', 'line\nbreak.jpg']) {
+        const uploadRes = await upload(origin, 'renovation-checklist', 'filename-log', cookie, JPEG, 'image/jpeg', filename);
+        assert.equal(uploadRes.status, 201);
+      }
+
+      const listRes = await fetch(`${origin}/api/attachments/renovation-checklist/filename-log`, {
+        headers: { Cookie: cookie },
+      });
+      assert.equal(listRes.status, 200);
+      const listed = await listRes.json();
+      assert.equal(listed.attachments.length, 2);
+
+      for (const attachment of listed.attachments) {
+        const fileRes = await fetch(`${origin}${attachment.fileUrl}`, { headers: { Cookie: cookie } });
+        assert.equal(fileRes.status, 200);
+        const disposition = fileRes.headers.get('content-disposition');
+        assert.match(disposition, /^inline; filename="attachment\.jpg"; filename\*=UTF-8''/);
+      }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('share viewers can list and read matching artifact attachments but cannot mutate', async () => {
   const contentDir = await makeContentDir();
   try {
@@ -262,6 +291,11 @@ test('share viewers can list and read matching artifact attachments but cannot m
       assert.equal(res.status, 403);
 
       res = await fetch(`${origin}/api/attachments/renovation-checklist/share-log?token=${encodeURIComponent(share.token)}`);
+      assert.equal(res.status, 200);
+      const legacyList = await res.json();
+      assert.match(legacyList.attachments[0].fileUrl, /\?token=/);
+
+      res = await fetch(`${origin}${legacyList.attachments[0].fileUrl}`, { redirect: 'manual' });
       assert.equal(res.status, 200);
     });
   } finally {
