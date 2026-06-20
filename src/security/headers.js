@@ -14,7 +14,7 @@ export const HTML_ARTIFACT_CSP = "default-src 'self'; " +
   "img-src 'self' data: https:; " +
   "connect-src 'self'; " +
   "object-src 'none'; " +
-  "frame-ancestors 'none'; " +
+  "frame-ancestors 'self'; " +
   "base-uri 'self'";
 
 export function securityHeaders() {

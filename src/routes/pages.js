@@ -50,6 +50,7 @@ export function pageRoute(config) {
       // Raw mode: serve HTML artifact directly (used as iframe src)
       if (isHtmlArtifact && req.query.raw === '1') {
         res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
+        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
         const clientEtag = req.headers['if-none-match'];
         if (clientEtag && clientEtag === result.etag) {
           logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
@@ -79,7 +80,8 @@ export function pageRoute(config) {
       if (isHtmlArtifact) {
         const titleMatch = result.html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
         const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : slug;
-        const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1`;
+        const tokenParam = isShareViewer && req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
+        const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1${tokenParam}`;
         let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug, iframeSrc });
         if (isShareViewer) {
           html = injectShareViewer(html);

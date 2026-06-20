@@ -163,7 +163,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
   <div class="nav-overlay" hidden></div>
 
   <div class="html-artifact-container">
-    <iframe class="html-artifact-frame" src="${escapeHtml(iframeSrc)}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+    <iframe class="html-artifact-frame" src="${escapeHtml(iframeSrc)}"></iframe>
   </div>
 
   <!-- Share Modal (hidden for share viewers via CSS) -->

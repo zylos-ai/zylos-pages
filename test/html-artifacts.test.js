@@ -193,9 +193,17 @@ test('html extension redirect preserves query string for share tokens', async ()
       assert.match(sharedBody, /html-artifact-frame/);
       assert.match(sharedBody, /data-viewer="share"/);
 
-      const sharedRaw = await fetch(`${origin}/shared?raw=1&token=${encodeURIComponent(token)}`);
-      assert.equal(sharedRaw.status, 200);
-      assert.match(await sharedRaw.text(), /Shared HTML/);
+      // iframe src must include token so share viewer can load raw content
+      const iframeSrcMatch = sharedBody.match(/<iframe[^>]+src="([^"]+)"/);
+      assert.ok(iframeSrcMatch, 'iframe src must be present');
+      assert.match(iframeSrcMatch[1], /raw=1/);
+      assert.match(iframeSrcMatch[1], /token=/);
+
+      // Fetch the actual iframe src — must return 200 with artifact content
+      const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
+      const iframeFetch = await fetch(`${origin}${iframeUrl}`);
+      assert.equal(iframeFetch.status, 200);
+      assert.match(await iframeFetch.text(), /Shared HTML/);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
