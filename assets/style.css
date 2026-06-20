@@ -304,6 +304,19 @@ body {
 
 .toc a:hover { color: var(--color-link); }
 
+/* HTML artifact iframe container */
+.html-artifact-container {
+  height: calc(100vh - 57px);
+  overflow: hidden;
+}
+
+.html-artifact-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
 /* Page content */
 .page-content {
   min-width: 0;

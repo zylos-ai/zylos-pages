@@ -111,7 +111,7 @@ test('resolvePageDescriptor rejects html traversal and null byte slugs', async (
   }
 });
 
-test('page route serves markdown, html, and html priority with scoped CSP', async () => {
+test('page route serves markdown with default CSP and html artifacts wrapped with iframe', async () => {
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'foo.md'), '# Foo Markdown\n');
@@ -125,25 +125,44 @@ test('page route serves markdown, html, and html priority with scoped CSP', asyn
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
       assert.match(await markdown.text(), /Foo Markdown/);
 
+      // Default HTML artifact response: wrapper template with iframe
       const html = await fetch(`${origin}/artifact`);
       assert.equal(html.status, 200);
-      assert.equal(html.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
-      const artifactEtag = html.headers.get('etag');
-      const htmlBody = await html.text();
-      assert.match(htmlBody, /<script>window\.ok=true<\/script>/);
-      assert.doesNotMatch(htmlBody, /NAV_SIDEBAR/);
+      assert.equal(html.headers.get('content-security-policy'), DEFAULT_CSP);
+      const wrapperEtag = html.headers.get('etag');
+      const wrapperBody = await html.text();
+      assert.match(wrapperBody, /html-artifact-frame/);
+      assert.match(wrapperBody, /artifact\?raw=1/);
+      assert.match(wrapperBody, /Artifact/);
 
+      // 304 for wrapper
       const notModified = await fetch(`${origin}/artifact`, {
         redirect: 'manual',
-        headers: { 'If-None-Match': artifactEtag },
+        headers: { 'If-None-Match': wrapperEtag },
       });
       assert.equal(notModified.status, 304);
-      assert.equal(notModified.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
 
+      // Raw mode: serves raw HTML with artifact CSP
+      const raw = await fetch(`${origin}/artifact?raw=1`);
+      assert.equal(raw.status, 200);
+      assert.equal(raw.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+      const rawBody = await raw.text();
+      assert.match(rawBody, /<script>window\.ok=true<\/script>/);
+      assert.match(rawBody, /__PAGES_BASE/);
+
+      // 304 for raw
+      const rawEtag = raw.headers.get('etag');
+      const rawNotModified = await fetch(`${origin}/artifact?raw=1`, {
+        redirect: 'manual',
+        headers: { 'If-None-Match': rawEtag },
+      });
+      assert.equal(rawNotModified.status, 304);
+      assert.equal(rawNotModified.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+
+      // Both: html priority → wrapper
       const both = await fetch(`${origin}/both`);
       assert.equal(both.status, 200);
-      assert.equal(both.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
-      assert.match(await both.text(), /Both HTML/);
+      assert.match(await both.text(), /both\?raw=1/);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -170,7 +189,21 @@ test('html extension redirect preserves query string for share tokens', async ()
 
       const shared = await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
       assert.equal(shared.status, 200);
-      assert.match(await shared.text(), /Shared HTML/);
+      const sharedBody = await shared.text();
+      assert.match(sharedBody, /html-artifact-frame/);
+      assert.match(sharedBody, /data-viewer="share"/);
+
+      // iframe src must include token so share viewer can load raw content
+      const iframeSrcMatch = sharedBody.match(/<iframe[^>]+src="([^"]+)"/);
+      assert.ok(iframeSrcMatch, 'iframe src must be present');
+      assert.match(iframeSrcMatch[1], /raw=1/);
+      assert.match(iframeSrcMatch[1], /token=/);
+
+      // Fetch the actual iframe src — must return 200 with artifact content
+      const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
+      const iframeFetch = await fetch(`${origin}${iframeUrl}`);
+      assert.equal(iframeFetch.status, 200);
+      assert.match(await iframeFetch.text(), /Shared HTML/);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
