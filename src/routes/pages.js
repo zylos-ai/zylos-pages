@@ -9,6 +9,8 @@ import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { HTML_ARTIFACT_CSP } from '../security/headers.js';
 
+const ASSET_VERSION = Date.now();
+
 function redirectCleanExtension(req, res, browserBase, rawSlug, extension) {
   const clean = rawSlug.replace(new RegExp(`\\.${extension}$`, 'i'), '');
   const queryIndex = req.url.indexOf('?');
@@ -53,30 +55,43 @@ export function pageRoute(config) {
       if (isHtmlArtifact && (req.query.raw === '1' || isShareViewer)) {
         res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
         res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-        const clientEtag = req.headers['if-none-match'];
-        if (clientEtag && clientEtag === result.etag) {
-          logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
-          return res.status(304).end();
+        if (!isShareViewer) {
+          const clientEtag = req.headers['if-none-match'];
+          if (clientEtag && clientEtag === result.etag) {
+            logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: 'auth', type: 'html-raw' });
+            return res.status(304).end();
+          }
+          res.setHeader('ETag', result.etag);
+          res.setHeader('Cache-Control', 'public, max-age=60');
+        } else {
+          res.setHeader('Cache-Control', 'no-store');
         }
-        res.setHeader('ETag', result.etag);
-        res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
         const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};window.__PAGES_VIEWER=${JSON.stringify(isShareViewer ? 'share' : 'auth')};window.__PAGES_SHARE_EDITABLE=${shareCanWriteAttachments ? 'true' : 'false'};</script>`;
-        const injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
-        return res.send(injected !== result.html ? injected : baseTag + result.html);
+        let injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+        if (injected === result.html) injected = baseTag + result.html;
+        const viewerAttr = isShareViewer ? ` data-viewer="share"` : '';
+        const editableAttr = shareCanWriteAttachments ? ` data-share-editable="true"` : '';
+        injected = injected.replace(/<html([^>]*)>/i, `<html$1${viewerAttr}${editableAttr}>`);
+        injected = injected.replace(/src="([^"?]*_assets\/[^"?]+)"/g, `src="$1?v=${ASSET_VERSION}"`);
+        return res.send(injected);
       }
 
-      // ETag / 304 handling
+      // ETag / 304 handling — skip for share viewers because post-cache
+      // injections (editable flag, viewer attr) are not reflected in the ETag.
       const wrapperEtag = isHtmlArtifact ? `"${result.etag.replace(/"/g, '')}-wrapped"` : result.etag;
-      const clientEtag = req.headers['if-none-match'];
-      if (clientEtag && clientEtag === wrapperEtag) {
-        logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
-        return res.status(304).end();
+      if (!isShareViewer) {
+        const clientEtag = req.headers['if-none-match'];
+        if (clientEtag && clientEtag === wrapperEtag) {
+          logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: 'auth', type: result.type });
+          return res.status(304).end();
+        }
+        res.setHeader('ETag', wrapperEtag);
+        res.setHeader('Cache-Control', 'public, max-age=60');
+      } else {
+        res.setHeader('Cache-Control', 'no-store');
       }
-
-      res.setHeader('ETag', wrapperEtag);
-      res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
       if (isHtmlArtifact) {
