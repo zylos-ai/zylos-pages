@@ -43,6 +43,9 @@ export const DEFAULT_CONFIG = {
     windowMs: 60000,
     max: 60,
   },
+  proxy: {
+    trust: 'loopback',
+  },
   sharing: {
     enabled: true,
     allowPermanent: false,
