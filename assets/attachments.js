@@ -54,6 +54,11 @@
       || document.body.dataset.viewer === 'share';
   }
 
+  function canEditAttachments() {
+    if (!isShareView()) return true;
+    return window.__PAGES_SHARE_EDITABLE === true;
+  }
+
   function attachmentUrl(fileUrl) {
     if (!fileUrl) return '';
     if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) return fileUrl;
@@ -65,7 +70,7 @@
   function setupContainer(container) {
     const artifact = container.dataset.artifact || 'renovation-checklist';
     const itemKey = container.dataset.itemKey || 'photo-log';
-    const readOnly = isShareView() || container.dataset.readonly === 'true';
+    const readOnly = !canEditAttachments() || container.dataset.readonly === 'true';
     container.classList.add('pages-attachments');
 
     const status = createElement('div', {

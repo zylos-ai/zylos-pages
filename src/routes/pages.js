@@ -41,6 +41,7 @@ export function pageRoute(config) {
     }
 
     const isShareViewer = res.locals.viewerType === 'share';
+    const shareCanWriteAttachments = res.locals.shareCanWriteAttachments === true;
 
     try {
       const result = await getPage(slug, config, browserBase);
@@ -61,7 +62,7 @@ export function pageRoute(config) {
         res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
-        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};window.__PAGES_VIEWER=${JSON.stringify(isShareViewer ? 'share' : 'auth')};</script>`;
+        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};window.__PAGES_VIEWER=${JSON.stringify(isShareViewer ? 'share' : 'auth')};window.__PAGES_SHARE_EDITABLE=${shareCanWriteAttachments ? 'true' : 'false'};</script>`;
         const injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
         return res.send(injected !== result.html ? injected : baseTag + result.html);
       }
@@ -84,7 +85,7 @@ export function pageRoute(config) {
         const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1`;
         let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug, iframeSrc });
         if (isShareViewer) {
-          html = injectShareViewer(html);
+          html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         } else {
           const pages = await scanPages(config.contentDir);
           html = injectNavSidebar(html, pages, slug, browserBase);
@@ -97,7 +98,7 @@ export function pageRoute(config) {
       // For auth viewers: inject pages nav sidebar for quick article switching
       let html = result.html;
       if (isShareViewer) {
-        html = injectShareViewer(html);
+        html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
       } else {
         const pages = await scanPages(config.contentDir);
         html = injectNavSidebar(html, pages, slug, browserBase);

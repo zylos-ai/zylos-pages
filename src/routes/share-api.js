@@ -123,6 +123,7 @@ export function setupShareApi(app, sharingConfig) {
     try {
       const body = await parseJsonBody(req);
       const { slug, duration } = body;
+      const canWriteAttachments = body.canWriteAttachments === true;
 
       if (!slug || typeof slug !== 'string') {
         return res.status(400).json({ error: 'Missing slug' });
@@ -131,7 +132,7 @@ export function setupShareApi(app, sharingConfig) {
         return res.status(400).json({ error: 'Missing duration' });
       }
 
-      const result = createShare(slug, duration, sharingConfig);
+      const result = createShare(slug, duration, sharingConfig, { canWriteAttachments });
 
       const browserBase = browserBaseFromRequest(req);
       const shortUrl = absoluteUrl(req, browserPath(browserBase, `s/${result.tokenId}`));
@@ -140,6 +141,7 @@ export function setupShareApi(app, sharingConfig) {
         ok: true,
         tokenId: result.tokenId,
         expiresAt: result.expiresAt,
+        canWriteAttachments: result.canWriteAttachments,
         url: shortUrl,
         shortUrl,
       });

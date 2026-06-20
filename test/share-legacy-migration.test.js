@@ -52,6 +52,7 @@ test('legacy shares.json imports into DB and is no longer active write storage',
     slug: legacySlug,
     expiresAt: legacyExpiresAt,
     createdAt: legacyCreatedAt,
+    canWriteAttachments: false,
   });
 
   const token = legacyToken(legacySlug, legacyExpiresAt, legacyTokenId, legacySecret);
@@ -61,6 +62,7 @@ test('legacy shares.json imports into DB and is no longer active write storage',
     tokenId: legacyTokenId,
     expiresAt: legacyExpiresAt,
     viewerType: 'share',
+    canWriteAttachments: false,
   });
 
   createShare('new/page', '24h', { allowPermanent: false });

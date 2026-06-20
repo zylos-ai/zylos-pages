@@ -67,6 +67,7 @@ function initShareStore() {
       slug TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
+      can_write_attachments INTEGER NOT NULL DEFAULT 0,
       revoked INTEGER NOT NULL DEFAULT 0,
       revoked_at INTEGER
     );
@@ -82,18 +83,19 @@ function initShareStore() {
     );
     CREATE INDEX IF NOT EXISTS idx_share_sessions_token_id ON share_sessions(token_id);
   `);
+  ensureSharePermissionColumn();
 
   _getMeta = db.prepare('SELECT value FROM share_meta WHERE key = ?');
   _setMeta = db.prepare('INSERT OR REPLACE INTO share_meta (key, value) VALUES (?, ?)');
   _insertShare = db.prepare(`
-    INSERT OR IGNORE INTO shares (token_id, slug, expires_at, created_at, revoked, revoked_at)
-    VALUES (@tokenId, @slug, @expiresAt, @createdAt, @revoked, @revokedAt)
+    INSERT OR IGNORE INTO shares (token_id, slug, expires_at, created_at, can_write_attachments, revoked, revoked_at)
+    VALUES (@tokenId, @slug, @expiresAt, @createdAt, @canWriteAttachments, @revoked, @revokedAt)
   `);
   _getShare = db.prepare('SELECT * FROM shares WHERE token_id = ?');
   _revokeShare = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE token_id = ? AND revoked = 0');
   _revokeAllForSlug = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE slug = ? AND revoked = 0');
   _listSharesForSlug = db.prepare(`
-    SELECT token_id, expires_at, created_at
+    SELECT token_id, expires_at, created_at, can_write_attachments
     FROM shares
     WHERE slug = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
@@ -105,6 +107,7 @@ function initShareStore() {
   `);
   _getShareSession = db.prepare(`
     SELECT share_sessions.*, shares.expires_at AS share_expires_at, shares.revoked AS share_revoked
+         , shares.can_write_attachments AS can_write_attachments
     FROM share_sessions
     JOIN shares ON shares.token_id = share_sessions.token_id
     WHERE share_sessions.token_hash = ?
@@ -115,6 +118,13 @@ function initShareStore() {
 
   importLegacySharesJson();
   initialized = true;
+}
+
+function ensureSharePermissionColumn() {
+  const columns = db.prepare('PRAGMA table_info(shares)').all().map(column => column.name);
+  if (!columns.includes('can_write_attachments')) {
+    db.exec('ALTER TABLE shares ADD COLUMN can_write_attachments INTEGER NOT NULL DEFAULT 0');
+  }
 }
 
 function readLegacyState() {
@@ -150,6 +160,7 @@ function importLegacySharesJson() {
           slug: normalizeSlug(record.slug),
           expiresAt: Number(record.expiresAt) || 0,
           createdAt: Number(record.createdAt) || nowMs(),
+          canWriteAttachments: 0,
           revoked: record.revoked ? 1 : 0,
           revokedAt: record.revokedAt ? Number(record.revokedAt) : null,
         });
@@ -185,6 +196,7 @@ function activeShareRecord(tokenId) {
     slug: record.slug,
     expiresAt: record.expires_at,
     createdAt: record.created_at,
+    canWriteAttachments: record.can_write_attachments === 1,
   };
 }
 
@@ -246,9 +258,10 @@ function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
   return Math.max(0, Math.min(maxAgeSeconds, remaining));
 }
 
-export function createShare(slug, duration, sharingConfig = {}) {
+export function createShare(slug, duration, sharingConfig = {}, options = {}) {
   initShareStore();
   const normalizedSlug = normalizeSlug(slug);
+  const canWriteAttachments = options.canWriteAttachments === true;
 
   if (duration === 'permanent' && !sharingConfig.allowPermanent) {
     throw Object.assign(new Error('Permanent shares are disabled'), { statusCode: 403 });
@@ -262,19 +275,20 @@ export function createShare(slug, duration, sharingConfig = {}) {
   const tokenId = crypto.randomBytes(TOKEN_ID_BYTES).toString('hex');
   const createdAt = nowMs();
   const expiresAt = durationMs === 0 ? 0 : createdAt + durationMs;
-  const record = { tokenId, slug: normalizedSlug, expiresAt, createdAt };
+  const record = { tokenId, slug: normalizedSlug, expiresAt, createdAt, canWriteAttachments };
 
   _insertShare.run({
     tokenId,
     slug: normalizedSlug,
     expiresAt,
     createdAt,
+    canWriteAttachments: canWriteAttachments ? 1 : 0,
     revoked: 0,
     revokedAt: null,
   });
 
-  logger.info('share created', { slug: normalizedSlug, tokenId, duration, expiresAt });
-  return { token: legacyTokenFor(record), tokenId, expiresAt };
+  logger.info('share created', { slug: normalizedSlug, tokenId, duration, expiresAt, canWriteAttachments });
+  return { token: legacyTokenFor(record), tokenId, expiresAt, canWriteAttachments };
 }
 
 export function getActiveShare(tokenId) {
@@ -330,6 +344,7 @@ export function verifyShareAccessCookie(cookieValue, requestSlug) {
     tokenId: session.token_id,
     expiresAt: session.share_expires_at,
     viewerType: 'share',
+    canWriteAttachments: session.can_write_attachments === 1,
   };
 }
 
@@ -357,6 +372,7 @@ export function verifyShare(token, requestSlug) {
     tokenId: decoded.tokenId,
     expiresAt: decoded.expiresAt,
     viewerType: 'share',
+    canWriteAttachments: record.canWriteAttachments === true,
   };
 }
 
@@ -438,6 +454,7 @@ export function listSharesForSlug(slug) {
     tokenId: record.token_id,
     expiresAt: record.expires_at,
     createdAt: record.created_at,
+    canWriteAttachments: record.can_write_attachments === 1,
   }));
 }
 
