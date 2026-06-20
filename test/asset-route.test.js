@@ -375,6 +375,10 @@ test('markdown, html artifact, extension redirects, and state API still work wit
 
       res = await fetch(`${origin}/artifact`);
       assert.equal(res.status, 200);
+      assert.match(await res.text(), /html-artifact-frame/);
+
+      res = await fetch(`${origin}/artifact?raw=1`);
+      assert.equal(res.status, 200);
       assert.match(await res.text(), /window\.__PAGES_BASE/);
 
       res = await fetch(`${origin}/foo.md`, { redirect: 'manual' });

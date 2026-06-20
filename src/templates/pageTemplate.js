@@ -125,6 +125,87 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
  * This activates CSS rules that hide auth-only elements.
  * Called post-cache in the page route.
  */
+export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
+  <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${ASSET_VERSION}" media="print">
+  <script src="${baseUrl}/_assets/theme.js?v=${ASSET_VERSION}"></script>
+  <script src="${baseUrl}/_assets/raw.js?v=${ASSET_VERSION}" defer></script>
+</head>
+<body class="html-artifact-page">
+  <header class="page-header">
+    <div class="header-left">
+      <button class="nav-toggle auth-only" aria-label="Toggle pages list">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M2 4h14v1.5H2zm0 4.25h14v1.5H2zm0 4.25h14v1.5H2z"/></svg>
+      </button>
+      ${renderBreadcrumb({ baseUrl, slug, title })}
+    </div>
+    <div class="header-actions">
+      <button class="share-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/></svg>
+        Share
+      </button>
+      <button class="theme-toggle" aria-label="Toggle dark mode">
+        <span class="theme-icon"></span>
+      </button>
+      <form method="POST" action="${baseUrl}/logout" class="logout-form auth-only">
+        <button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button>
+      </form>
+    </div>
+  </header>
+
+  <!-- NAV_SIDEBAR -->
+  <div class="nav-overlay" hidden></div>
+
+  <div class="html-artifact-container">
+    <iframe class="html-artifact-frame" src="${escapeHtml(iframeSrc)}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
+  </div>
+
+  <!-- Share Modal (hidden for share viewers via CSS) -->
+  <div id="share-modal" class="share-modal auth-only" hidden>
+    <div class="share-modal-backdrop"></div>
+    <div class="share-modal-content">
+      <div class="share-modal-header">
+        <h3>Share "${escapeHtml(title)}"</h3>
+        <button class="share-modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="share-modal-body">
+        <div class="share-create">
+          <label>Link expires in:</label>
+          <div class="share-duration-options">
+            <label><input type="radio" name="share-duration" value="24h" checked> 24 hours</label>
+            <label><input type="radio" name="share-duration" value="7d"> 7 days</label>
+            <label><input type="radio" name="share-duration" value="30d"> 30 days</label>
+            <label><input type="radio" name="share-duration" value="permanent"> Permanent</label>
+          </div>
+          <button class="share-generate-btn">Generate Link</button>
+        </div>
+        <div class="share-result" hidden>
+          <label>Share link:</label>
+          <div class="share-link-row">
+            <input type="text" class="share-link-input" readonly>
+            <button class="share-copy-btn">Copy</button>
+          </div>
+        </div>
+        <div class="share-list">
+          <h4>Active shares</h4>
+          <div class="share-list-items"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="${baseUrl}/_assets/share.js?v=${ASSET_VERSION}"></script>
+  <script src="${baseUrl}/_assets/nav.js?v=${ASSET_VERSION}"></script>
+
+</body>
+</html>`;
+}
+
 export function injectShareViewer(html) {
   return html.replace('<html lang="en">', '<html lang="en" data-viewer="share">');
 }

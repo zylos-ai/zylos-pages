@@ -3,7 +3,7 @@
 import { getPage } from '../services/pageService.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
-import { injectShareViewer, injectNavSidebar } from '../templates/pageTemplate.js';
+import { injectShareViewer, injectNavSidebar, htmlArtifactTemplate } from '../templates/pageTemplate.js';
 import { scanPages } from './index.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
@@ -47,26 +47,48 @@ export function pageRoute(config) {
       const elapsed = Math.round(performance.now() - start);
       const isHtmlArtifact = result.type === 'html';
 
-      if (isHtmlArtifact) {
+      // Raw mode: serve HTML artifact directly (used as iframe src)
+      if (isHtmlArtifact && req.query.raw === '1') {
         res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
+        const clientEtag = req.headers['if-none-match'];
+        if (clientEtag && clientEtag === result.etag) {
+          logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
+          return res.status(304).end();
+        }
+        res.setHeader('ETag', result.etag);
+        res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
+        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};</script>`;
+        const injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+        return res.send(injected !== result.html ? injected : baseTag + result.html);
       }
 
       // ETag / 304 handling
+      const wrapperEtag = isHtmlArtifact ? `"${result.etag.replace(/"/g, '')}-wrapped"` : result.etag;
       const clientEtag = req.headers['if-none-match'];
-      if (clientEtag && clientEtag === result.etag) {
+      if (clientEtag && clientEtag === wrapperEtag) {
         logger.info('page served', { path: slug, status: 304, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
         return res.status(304).end();
       }
 
-      res.setHeader('ETag', result.etag);
+      res.setHeader('ETag', wrapperEtag);
       res.setHeader('Cache-Control', isShareViewer ? 'no-store' : 'public, max-age=60');
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
 
       if (isHtmlArtifact) {
+        const titleMatch = result.html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+        const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : slug;
+        const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1`;
+        let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug, iframeSrc });
+        if (isShareViewer) {
+          html = injectShareViewer(html);
+        } else {
+          const pages = await scanPages(config.contentDir);
+          html = injectNavSidebar(html, pages, slug, browserBase);
+        }
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
-        const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};</script>`;
-        const injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
-        return res.send(injected !== result.html ? injected : baseTag + result.html);
+        return res.send(html);
       }
 
       // For share viewers: inject data-viewer attribute to hide auth-only elements
