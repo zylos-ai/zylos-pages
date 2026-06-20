@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,9 +12,11 @@ process.env.PAGES_DATA_DIR = dataDir;
 const express = (await import('express')).default;
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { setupRawApi } = await import('../src/routes/raw-api.js');
+const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi, RAW_BODY_LIMIT_BYTES, VALUE_JSON_LIMIT_BYTES } = await import('../src/routes/state-api.js');
 const { setupTodoApi } = await import('../src/routes/todo-api.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
+const { getPagesDb } = await import('../src/db/pages-db.js');
 const {
   deleteStateValue,
   getArtifactState,
@@ -45,6 +47,7 @@ async function withApp(app, fn) {
 async function withServer(authConfig, fn) {
   const app = express();
   setupAuth(app, authConfig || { enabled: false, password: null });
+  setupShareApi(app, { enabled: true, allowPermanent: false });
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
   await withApp(app, fn);
@@ -76,12 +79,21 @@ function sameOriginHeaders(origin, extra = {}) {
   };
 }
 
+function cookieHeader(setCookie) {
+  return setCookie
+    .split(/,\s*(?=__Host-)/)
+    .map(cookie => cookie.split(';', 1)[0])
+    .join('; ');
+}
+
 async function createExpiredShareToken(slug) {
   const share = createShare(slug, '24h', { allowPermanent: false });
-  const state = JSON.parse(await readFile(path.join(dataDir, 'shares.json'), 'utf8'));
   const expiresAt = Date.now() - 1000;
+  const db = getPagesDb();
+  const secret = db.prepare('SELECT value FROM share_meta WHERE key = ?').get('secret').value;
+  db.prepare('UPDATE shares SET expires_at = ? WHERE token_id = ?').run(expiresAt, share.tokenId);
   const payload = `${slug}:${expiresAt}:${share.tokenId}`;
-  const hmac = crypto.createHmac('sha256', Buffer.from(state.secret, 'hex'))
+  const hmac = crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
     .update(payload)
     .digest('hex');
   return Buffer.from(`${payload}:${hmac}`).toString('base64url');
@@ -271,6 +283,39 @@ test('state API allows share-token CRUD for the matching artifact', async () => 
 
     res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`);
     assert.equal(res.status, 404);
+  });
+});
+
+test('state API allows short-share cookie CRUD for the matching artifact', async () => {
+  const share = createShare('short-state', '24h', { allowPermanent: false });
+
+  await withServer(authConfig(), async ({ origin }) => {
+    const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+    assert.equal(redirect.status, 302);
+    assert.equal(redirect.headers.get('location'), '/short-state');
+    assert.doesNotMatch(redirect.headers.get('location'), /token=/);
+    const cookies = cookieHeader(redirect.headers.get('set-cookie'));
+
+    let res = await fetch(`${origin}/api/state/short-state`, {
+      headers: { Cookie: cookies },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await res.json(), { ok: true, state: {} });
+
+    res = await fetch(`${origin}/api/state/short-state/checklist`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin, { Cookie: cookies }),
+      body: JSON.stringify({ value: { done: true } }),
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
+
+    res = await fetch(`${origin}/api/state/short-state/checklist`, {
+      headers: { Cookie: cookies },
+    });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
   });
 });
 

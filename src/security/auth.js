@@ -8,10 +8,14 @@ import { getPagesDb } from '../db/pages-db.js';
 import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 import {
+  SHARE_ACCESS_COOKIE_NAME,
   SHARE_SCOPE_COOKIE_NAME,
+  clearShareAccessCookieHeader,
   clearShareScopeCookieHeader,
+  createShareAccessCookie,
   createShareScopeCookie,
   verifyShare,
+  verifyShareAccessCookie,
   verifyShareScopeCookie,
 } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
@@ -179,6 +183,11 @@ function getShareScopeCookie(req) {
   return cookies[SHARE_SCOPE_COOKIE_NAME] || null;
 }
 
+function getShareAccessCookie(req) {
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies[SHARE_ACCESS_COOKIE_NAME] || null;
+}
+
 function appendSetCookie(res, cookie) {
   const current = res.getHeader('Set-Cookie');
   if (!current) {
@@ -207,9 +216,31 @@ function clearShareScopeCookie(res) {
   appendSetCookie(res, clearShareScopeCookieHeader());
 }
 
+function clearShareAccessCookie(res) {
+  appendSetCookie(res, clearShareAccessCookieHeader());
+}
+
 function setShareScopeCookie(res, slug, tokenId, tokenExpiresAt) {
   const cookie = createShareScopeCookie(slug, tokenId, tokenExpiresAt);
   appendSetCookie(res, cookie.header);
+}
+
+function setShareAccessCookie(res, slug, tokenId, tokenExpiresAt) {
+  const cookie = createShareAccessCookie(slug, tokenId, tokenExpiresAt);
+  appendSetCookie(res, cookie.header);
+}
+
+function acceptShareViewer(res, result, options = {}) {
+  res.locals.viewerType = 'share';
+  res.locals.authenticated = false;
+  if (options.refreshAccessCookie) {
+    setShareAccessCookie(res, result.slug, result.tokenId, result.expiresAt);
+  }
+  if (options.refreshScopeCookie) {
+    setShareScopeCookie(res, result.slug, result.tokenId, result.expiresAt);
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
 // --- Brute-force protection ---
@@ -388,7 +419,7 @@ function loginPageHtml(baseUrl, error, next) {
  * Browser-visible paths are derived from X-Forwarded-Prefix when Caddy strips
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
-export function setupAuth(app, authConfig) {
+export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
   if (authConfig.enabled && authConfig.password) {
     initSessionStore();
   }
@@ -450,6 +481,7 @@ export function setupAuth(app, authConfig) {
     const remember = req.body?.remember === 'on';
     const token = createSession(remember);
     setSessionCookie(res, token, remember);
+    clearShareAccessCookie(res);
     clearShareScopeCookie(res);
 
     const next = req.body?.next;
@@ -487,6 +519,7 @@ export function setupAuth(app, authConfig) {
 
     destroySession(getSessionCookie(req));
     clearSessionCookie(res);
+    clearShareAccessCookie(res);
     const browserBase = browserBaseFromRequest(req);
     res.redirect(302, `${browserPath(browserBase, 'login')}?next=${encodeURIComponent(browserRoot(browserBase))}`);
   }
@@ -498,12 +531,28 @@ export function setupAuth(app, authConfig) {
     const browserBase = browserBaseFromRequest(req);
     if (!authConfig.enabled || !authConfig.password) return next();
 
+    const shortShareEnabled = sharingConfig?.enabled !== false;
     if (req.path.startsWith('/_assets')
+        || (shortShareEnabled && /^\/s\/[a-f0-9]{32}$/.test(req.path))
         || req.path === loginPath || req.path === logoutPath) {
       return next();
     }
 
-    // Share token bypass
+    // Share access session bypass for pages and raw HTML artifacts.
+    if ((req.method === 'GET' || req.method === 'HEAD')
+        && !req.path.startsWith('/api/')
+        && !isAssetPath(req.path)
+        && req.path !== '/') {
+      const slug = req.path.slice(1);
+      const result = verifyShareAccessCookie(getShareAccessCookie(req), slug);
+      if (result.valid) {
+        acceptShareViewer(res, result, { refreshScopeCookie: true });
+        return next();
+      }
+    }
+
+    // Legacy long-token bypass. This is retained only for old links; new share
+    // creation and short-link access no longer expose or require this URL shape.
     if ((req.method === 'GET' || req.method === 'HEAD') && req.query.token
         && !req.path.startsWith('/api/')
         && !isAssetPath(req.path)
@@ -511,14 +560,22 @@ export function setupAuth(app, authConfig) {
       const slug = req.path.slice(1);
       const result = verifyShare(req.query.token, slug);
       if (result.valid) {
-        res.locals.viewerType = 'share';
-        res.locals.authenticated = false;
-        setShareScopeCookie(res, result.slug, result.tokenId, result.expiresAt);
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Referrer-Policy', 'no-referrer');
+        acceptShareViewer(res, result, { refreshAccessCookie: true, refreshScopeCookie: true });
         return next();
       }
       logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
+    }
+
+    if (req.path.startsWith('/api/state/')) {
+      const artifact = req.path.split('/')[3];
+      let result = { valid: false };
+      try {
+        if (artifact) result = verifyShareAccessCookie(getShareAccessCookie(req), artifact);
+      } catch { /* malformed encoding — treat as invalid */ }
+      if (result.valid) {
+        acceptShareViewer(res, result);
+        return next();
+      }
     }
 
     if (req.query.token && req.path.startsWith('/api/state/')) {
@@ -528,10 +585,7 @@ export function setupAuth(app, authConfig) {
         if (artifact) result = verifyShare(req.query.token, artifact);
       } catch { /* malformed encoding — treat as invalid */ }
       if (result.valid) {
-        res.locals.viewerType = 'share';
-        res.locals.authenticated = false;
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Referrer-Policy', 'no-referrer');
+        acceptShareViewer(res, result);
         return next();
       }
       logger.info('state api share token invalid', { path: req.path, ip: getClientIp(req) });

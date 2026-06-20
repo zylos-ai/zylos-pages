@@ -1,9 +1,10 @@
-// Share token manager — HMAC-signed stateless tokens with shares.json persistence
-// Implements the agreed design: HMAC-SHA256(slug + expiresAt + tokenId, secret)
+// DB-backed share manager. Short links are the primary access model; legacy
+// long HMAC tokens are verified only for backwards compatibility.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { getPagesDb } from '../db/pages-db.js';
 import { DATA_DIR } from '../lib/config.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
@@ -11,10 +12,13 @@ import { logger } from '../utils/logger.js';
 const SHARES_PATH = path.join(DATA_DIR, 'shares.json');
 const SECRET_BYTES = 32;
 const TOKEN_ID_BYTES = 16;
-export const SHARE_SCOPE_COOKIE_NAME = '__Host-share_scope';
+const SHARE_ACCESS_BYTES = 32;
+const SHARE_SESSION_MAX_AGE_SECONDS = 3600;
 const SHARE_SCOPE_MAX_AGE_SECONDS = 3600;
 
-// Duration presets → milliseconds
+export const SHARE_ACCESS_COOKIE_NAME = '__Host-share_access';
+export const SHARE_SCOPE_COOKIE_NAME = '__Host-share_scope';
+
 const DURATION_MAP = {
   '24h': 24 * 60 * 60 * 1000,
   '7d': 7 * 24 * 60 * 60 * 1000,
@@ -22,56 +26,167 @@ const DURATION_MAP = {
   permanent: 0,
 };
 
-// In-memory state (loaded from disk)
-let state = null;
-let writeLock = false;
+let db;
+let initialized = false;
+let _getMeta;
+let _setMeta;
+let _insertShare;
+let _getShare;
+let _revokeShare;
+let _revokeAllForSlug;
+let _listSharesForSlug;
+let _deleteExpiredShares;
+let _insertShareSession;
+let _getShareSession;
+let _touchShareSession;
+let _deleteShareSession;
+let _deleteExpiredShareSessions;
 
-// --- Persistence ---
+function sha256(data) {
+  return crypto.createHash('sha256').update(data).digest('hex');
+}
 
-function loadState() {
-  if (state) return state;
+function nowMs() {
+  return Date.now();
+}
+
+function isTokenId(value) {
+  return /^[a-f0-9]{32}$/.test(value || '');
+}
+
+function initShareStore() {
+  if (initialized) return;
+  db = getPagesDb();
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS share_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS shares (
+      token_id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      revoked_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_shares_slug_created ON shares(slug, created_at DESC);
+    CREATE TABLE IF NOT EXISTS share_sessions (
+      token_hash TEXT PRIMARY KEY,
+      token_id TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_activity_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      FOREIGN KEY(token_id) REFERENCES shares(token_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_share_sessions_token_id ON share_sessions(token_id);
+  `);
+
+  _getMeta = db.prepare('SELECT value FROM share_meta WHERE key = ?');
+  _setMeta = db.prepare('INSERT OR REPLACE INTO share_meta (key, value) VALUES (?, ?)');
+  _insertShare = db.prepare(`
+    INSERT OR IGNORE INTO shares (token_id, slug, expires_at, created_at, revoked, revoked_at)
+    VALUES (@tokenId, @slug, @expiresAt, @createdAt, @revoked, @revokedAt)
+  `);
+  _getShare = db.prepare('SELECT * FROM shares WHERE token_id = ?');
+  _revokeShare = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE token_id = ? AND revoked = 0');
+  _revokeAllForSlug = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE slug = ? AND revoked = 0');
+  _listSharesForSlug = db.prepare(`
+    SELECT token_id, expires_at, created_at
+    FROM shares
+    WHERE slug = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)
+    ORDER BY created_at DESC
+  `);
+  _deleteExpiredShares = db.prepare('DELETE FROM shares WHERE expires_at != 0 AND expires_at <= ?');
+  _insertShareSession = db.prepare(`
+    INSERT OR REPLACE INTO share_sessions (token_hash, token_id, slug, created_at, last_activity_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  _getShareSession = db.prepare(`
+    SELECT share_sessions.*, shares.expires_at AS share_expires_at, shares.revoked AS share_revoked
+    FROM share_sessions
+    JOIN shares ON shares.token_id = share_sessions.token_id
+    WHERE share_sessions.token_hash = ?
+  `);
+  _touchShareSession = db.prepare('UPDATE share_sessions SET last_activity_at = ? WHERE token_hash = ?');
+  _deleteShareSession = db.prepare('DELETE FROM share_sessions WHERE token_hash = ?');
+  _deleteExpiredShareSessions = db.prepare('DELETE FROM share_sessions WHERE expires_at <= ?');
+
+  importLegacySharesJson();
+  initialized = true;
+}
+
+function readLegacyState() {
   try {
-    if (fs.existsSync(SHARES_PATH)) {
-      const raw = fs.readFileSync(SHARES_PATH, 'utf-8');
-      state = JSON.parse(raw);
-      // Ensure structure
-      if (!state.secret || !state.shares) throw new Error('invalid');
-    } else {
-      state = {
-        secret: crypto.randomBytes(SECRET_BYTES).toString('hex'),
-        shares: {},
-      };
-      saveState();
+    if (!fs.existsSync(SHARES_PATH)) return null;
+    const raw = fs.readFileSync(SHARES_PATH, 'utf-8');
+    const state = JSON.parse(raw);
+    if (!state || typeof state !== 'object' || !state.secret || !state.shares) return null;
+    return state;
+  } catch (err) {
+    logger.warn('legacy shares.json unreadable, skipping import', { err: err.message });
+    return null;
+  }
+}
+
+function importLegacySharesJson() {
+  const imported = _getMeta.get('legacy_shares_json_imported')?.value;
+  const legacy = readLegacyState();
+
+  if (!_getMeta.get('secret')?.value) {
+    const secret = legacy?.secret || crypto.randomBytes(SECRET_BYTES).toString('hex');
+    _setMeta.run('secret', secret);
+  }
+
+  if (imported || !legacy) return;
+
+  const insertMany = db.transaction((shares) => {
+    for (const [tokenId, record] of Object.entries(shares)) {
+      if (!isTokenId(tokenId) || !record || typeof record !== 'object') continue;
+      try {
+        _insertShare.run({
+          tokenId,
+          slug: normalizeSlug(record.slug),
+          expiresAt: Number(record.expiresAt) || 0,
+          createdAt: Number(record.createdAt) || nowMs(),
+          revoked: record.revoked ? 1 : 0,
+          revokedAt: record.revokedAt ? Number(record.revokedAt) : null,
+        });
+      } catch (err) {
+        logger.warn('legacy share skipped during import', { tokenId, err: err.message });
+      }
     }
-  } catch (err) {
-    logger.warn('shares.json corrupted, reinitializing', { err: err.message });
-    state = {
-      secret: crypto.randomBytes(SECRET_BYTES).toString('hex'),
-      shares: {},
-    };
-    saveState();
-  }
-  return state;
+    _setMeta.run('legacy_shares_json_imported', String(nowMs()));
+  });
+
+  insertMany(legacy.shares);
+  logger.info('legacy shares.json imported into DB', { count: Object.keys(legacy.shares).length });
 }
 
-function saveState() {
-  if (!state) return;
-  if (writeLock) return; // skip concurrent writes; next mutation will flush
-  writeLock = true;
-  try {
-    const tmp = SHARES_PATH + '.tmp.' + process.pid;
-    fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
-    fs.renameSync(tmp, SHARES_PATH);
-    // Ensure final file permissions
-    fs.chmodSync(SHARES_PATH, 0o600);
-  } catch (err) {
-    logger.error('failed to save shares.json', { err: err.message });
-  } finally {
-    writeLock = false;
+function getSecret() {
+  initShareStore();
+  let secret = _getMeta.get('secret')?.value;
+  if (!secret) {
+    secret = crypto.randomBytes(SECRET_BYTES).toString('hex');
+    _setMeta.run('secret', secret);
   }
+  return secret;
 }
 
-// --- HMAC Token ---
+function activeShareRecord(tokenId) {
+  if (!isTokenId(tokenId)) return null;
+  initShareStore();
+  const record = _getShare.get(tokenId);
+  if (!record || record.revoked) return null;
+  if (record.expires_at !== 0 && nowMs() > record.expires_at) return null;
+  return {
+    tokenId: record.token_id,
+    slug: record.slug,
+    expiresAt: record.expires_at,
+    createdAt: record.created_at,
+  };
+}
 
 function computeHmac(slug, expiresAt, tokenId, secret) {
   const payload = `${slug}:${expiresAt}:${tokenId}`;
@@ -90,7 +205,6 @@ function decodeToken(token) {
     const raw = Buffer.from(token, 'base64url').toString('utf-8');
     const parts = raw.split(':');
     if (parts.length < 4) return null;
-    // HMAC is the last part; slug may contain colons (unlikely but safe)
     const hmacHex = parts.pop();
     const tokenId = parts.pop();
     const expiresAt = parts.pop();
@@ -100,6 +214,11 @@ function decodeToken(token) {
   } catch {
     return null;
   }
+}
+
+function legacyTokenFor(record) {
+  const hmac = computeHmac(record.slug, record.expiresAt, record.tokenId, getSecret());
+  return encodeToken(record.slug, record.expiresAt, record.tokenId, hmac);
 }
 
 function directoryScope(slug) {
@@ -121,17 +240,14 @@ function isAssetWithinScope(assetPath, directory) {
   return assetDir === directory || assetDir.startsWith(`${directory}/`);
 }
 
-// --- Public API ---
+function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
+  if (tokenExpiresAt === 0) return maxAgeSeconds;
+  const remaining = Math.max(0, Math.floor((tokenExpiresAt - nowMs()) / 1000));
+  return Math.max(0, Math.min(maxAgeSeconds, remaining));
+}
 
-/**
- * Create a share token for a document.
- * @param {string} slug - Document slug (will be normalized)
- * @param {string} duration - '24h' | '7d' | '30d' | 'permanent'
- * @param {object} sharingConfig - { allowPermanent }
- * @returns {{ token: string, tokenId: string, expiresAt: number }}
- */
 export function createShare(slug, duration, sharingConfig = {}) {
-  const s = loadState();
+  initShareStore();
   const normalizedSlug = normalizeSlug(slug);
 
   if (duration === 'permanent' && !sharingConfig.allowPermanent) {
@@ -144,80 +260,111 @@ export function createShare(slug, duration, sharingConfig = {}) {
   }
 
   const tokenId = crypto.randomBytes(TOKEN_ID_BYTES).toString('hex');
-  const expiresAt = durationMs === 0 ? 0 : Date.now() + durationMs;
-  const hmac = computeHmac(normalizedSlug, expiresAt, tokenId, s.secret);
-  const token = encodeToken(normalizedSlug, expiresAt, tokenId, hmac);
+  const createdAt = nowMs();
+  const expiresAt = durationMs === 0 ? 0 : createdAt + durationMs;
+  const record = { tokenId, slug: normalizedSlug, expiresAt, createdAt };
 
-  // Store metadata (never store the full token)
-  s.shares[tokenId] = {
+  _insertShare.run({
+    tokenId,
     slug: normalizedSlug,
     expiresAt,
-    createdAt: Date.now(),
-    revoked: false,
-  };
-  saveState();
+    createdAt,
+    revoked: 0,
+    revokedAt: null,
+  });
 
   logger.info('share created', { slug: normalizedSlug, tokenId, duration, expiresAt });
-
-  return { token, tokenId, expiresAt };
+  return { token: legacyTokenFor(record), tokenId, expiresAt };
 }
 
-/**
- * Verify a share token.
- * @param {string} token - The share token from query string
- * @param {string} requestSlug - The slug being accessed (will be normalized)
- * @returns {{ valid: boolean, slug?: string, viewerType?: string }}
- */
+export function getActiveShare(tokenId) {
+  return activeShareRecord(tokenId);
+}
+
+export function getActiveShareToken(tokenId) {
+  const record = activeShareRecord(tokenId);
+  if (!record) return null;
+  return { ...record, token: legacyTokenFor(record) };
+}
+
+export function createShareAccessCookie(slug, tokenId, tokenExpiresAt) {
+  initShareStore();
+  const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SESSION_MAX_AGE_SECONDS);
+  const token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
+  const createdAt = nowMs();
+  const expiresAt = createdAt + maxAge * 1000;
+  _insertShareSession.run(sha256(token), tokenId, normalizeSlug(slug), createdAt, createdAt, expiresAt);
+  return {
+    value: token,
+    maxAge,
+    header: `${SHARE_ACCESS_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`,
+  };
+}
+
+export function clearShareAccessCookieHeader() {
+  return `${SHARE_ACCESS_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
+}
+
+export function verifyShareAccessCookie(cookieValue, requestSlug) {
+  initShareStore();
+  if (!cookieValue || typeof cookieValue !== 'string') return { valid: false };
+  const hash = sha256(cookieValue);
+  const session = _getShareSession.get(hash);
+  if (!session) return { valid: false };
+
+  const current = nowMs();
+  if (current > session.expires_at ||
+      session.share_revoked ||
+      (session.share_expires_at !== 0 && current > session.share_expires_at)) {
+    _deleteShareSession.run(hash);
+    return { valid: false };
+  }
+
+  const normalizedRequest = normalizeSlug(requestSlug);
+  if (normalizeSlug(session.slug) !== normalizedRequest) return { valid: false };
+
+  _touchShareSession.run(current, hash);
+  return {
+    valid: true,
+    slug: session.slug,
+    tokenId: session.token_id,
+    expiresAt: session.share_expires_at,
+    viewerType: 'share',
+  };
+}
+
 export function verifyShare(token, requestSlug) {
-  const s = loadState();
   const decoded = decodeToken(token);
   if (!decoded) return { valid: false };
 
   const normalizedRequest = normalizeSlug(requestSlug);
   const normalizedToken = normalizeSlug(decoded.slug);
+  if (normalizedToken !== normalizedRequest) return { valid: false };
+  if (decoded.expiresAt !== 0 && nowMs() > decoded.expiresAt) return { valid: false };
+  if (!isTokenId(decoded.tokenId)) return { valid: false };
 
-  // Slug must match
-  if (normalizedToken !== normalizedRequest) {
-    return { valid: false };
-  }
-
-  // Check expiration
-  if (decoded.expiresAt !== 0 && Date.now() > decoded.expiresAt) {
-    return { valid: false };
-  }
-
-  // Recompute HMAC and timing-safe compare
-  const expected = computeHmac(normalizedToken, decoded.expiresAt, decoded.tokenId, s.secret);
+  const expected = computeHmac(normalizedToken, decoded.expiresAt, decoded.tokenId, getSecret());
   if (expected.length !== decoded.hmac.length) return { valid: false };
-  if (!crypto.timingSafeEqual(expected, decoded.hmac)) {
-    return { valid: false };
-  }
+  if (!crypto.timingSafeEqual(expected, decoded.hmac)) return { valid: false };
 
-  // Check revocation and record consistency
-  const record = s.shares[decoded.tokenId];
-  if (record) {
-    if (record.revoked) return { valid: false };
-    // Cross-check: record fields must match token claims
-    if (record.slug !== normalizedToken || record.expiresAt !== decoded.expiresAt) {
-      return { valid: false };
-    }
-  }
-  // Note: if record is missing (e.g. never existed), the HMAC is still valid.
-  // This is the "stateless" path — only revocation requires the record.
+  const record = activeShareRecord(decoded.tokenId);
+  if (!record) return { valid: false };
+  if (record.slug !== normalizedToken || record.expiresAt !== decoded.expiresAt) return { valid: false };
 
-  return { valid: true, slug: normalizedToken, tokenId: decoded.tokenId, expiresAt: decoded.expiresAt, viewerType: 'share' };
+  return {
+    valid: true,
+    slug: normalizedToken,
+    tokenId: decoded.tokenId,
+    expiresAt: decoded.expiresAt,
+    viewerType: 'share',
+  };
 }
 
 export function createShareScopeCookie(slug, tokenId, tokenExpiresAt) {
-  const s = loadState();
-  const now = Date.now();
-  const tokenRemainingMs = tokenExpiresAt === 0
-    ? SHARE_SCOPE_MAX_AGE_SECONDS * 1000
-    : Math.max(0, tokenExpiresAt - now);
-  const maxAge = Math.max(0, Math.min(SHARE_SCOPE_MAX_AGE_SECONDS, Math.floor(tokenRemainingMs / 1000)));
-  const expiresAt = now + maxAge * 1000;
+  const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SCOPE_MAX_AGE_SECONDS);
+  const expiresAt = nowMs() + maxAge * 1000;
   const directory = directoryScope(slug);
-  const hmac = computeShareScopeHmac(directory, tokenId, expiresAt, s.secret);
+  const hmac = computeShareScopeHmac(directory, tokenId, expiresAt, getSecret());
   const value = `${directory}:${tokenId}:${expiresAt}:${hmac}`;
   return {
     value,
@@ -231,7 +378,6 @@ export function clearShareScopeCookieHeader() {
 }
 
 export function verifyShareScopeCookie(cookieValue, assetPath) {
-  const s = loadState();
   if (!cookieValue || typeof cookieValue !== 'string') return { valid: false };
 
   const parts = cookieValue.split(':');
@@ -241,18 +387,17 @@ export function verifyShareScopeCookie(cookieValue, assetPath) {
   const tokenId = parts.pop();
   const directory = parts.join(':');
   const expiresAt = Number(expiresAtRaw);
-  if (!tokenId || !Number.isFinite(expiresAt) || !hmac) return { valid: false };
-  if (Date.now() > expiresAt) return { valid: false };
+  if (!isTokenId(tokenId) || !Number.isFinite(expiresAt) || !hmac) return { valid: false };
+  if (nowMs() > expiresAt) return { valid: false };
 
-  const expected = computeShareScopeHmac(directory, tokenId, expiresAt, s.secret);
+  const expected = computeShareScopeHmac(directory, tokenId, expiresAt, getSecret());
   const actualBuffer = Buffer.from(hmac, 'hex');
   const expectedBuffer = Buffer.from(expected, 'hex');
   if (actualBuffer.length !== expectedBuffer.length) return { valid: false };
   if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return { valid: false };
 
-  const record = s.shares[tokenId];
-  if (!record || record.revoked) return { valid: false };
-  if (record.expiresAt !== 0 && Date.now() > record.expiresAt) return { valid: false };
+  const record = activeShareRecord(tokenId);
+  if (!record) return { valid: false };
   if (directoryScope(record.slug) !== directory) return { valid: false };
 
   try {
@@ -264,110 +409,48 @@ export function verifyShareScopeCookie(cookieValue, assetPath) {
   return { valid: true, directory, viewerType: 'share' };
 }
 
-/**
- * Revoke a specific share by tokenId.
- * @param {string} tokenId
- * @returns {boolean} true if found and revoked
- */
 export function revokeShare(tokenId) {
-  const s = loadState();
-  const record = s.shares[tokenId];
+  if (!isTokenId(tokenId)) return false;
+  initShareStore();
+  const record = _getShare.get(tokenId);
   if (!record) return false;
-  record.revoked = true;
-  record.revokedAt = Date.now();
-  saveState();
-  logger.info('share revoked', { tokenId, slug: record.slug });
-  return true;
+  const result = _revokeShare.run(nowMs(), tokenId);
+  if (result.changes > 0) {
+    logger.info('share revoked', { tokenId, slug: record.slug });
+  }
+  return result.changes > 0;
 }
 
-/**
- * Revoke all active shares for a slug.
- * @param {string} slug
- * @returns {number} count of revoked shares
- */
 export function revokeAllForSlug(slug) {
-  const s = loadState();
+  initShareStore();
   const normalizedSlug = normalizeSlug(slug);
-  let count = 0;
-  const now = Date.now();
-  for (const [id, record] of Object.entries(s.shares)) {
-    if (record.slug === normalizedSlug && !record.revoked) {
-      record.revoked = true;
-      record.revokedAt = now;
-      count++;
-    }
+  const result = _revokeAllForSlug.run(nowMs(), normalizedSlug);
+  if (result.changes > 0) {
+    logger.info('shares revoked for slug', { slug: normalizedSlug, count: result.changes });
   }
-  if (count > 0) {
-    saveState();
-    logger.info('shares revoked for slug', { slug: normalizedSlug, count });
-  }
-  return count;
+  return result.changes;
 }
 
-/**
- * List active (non-revoked, non-expired) shares for a slug.
- * Returns metadata only — never the full token.
- * @param {string} slug
- * @returns {Array<{ tokenId, expiresAt, createdAt }>}
- */
 export function listSharesForSlug(slug) {
-  const s = loadState();
+  initShareStore();
   const normalizedSlug = normalizeSlug(slug);
-  const now = Date.now();
-  const result = [];
-
-  for (const [tokenId, record] of Object.entries(s.shares)) {
-    if (record.slug !== normalizedSlug) continue;
-    if (record.revoked) continue;
-    if (record.expiresAt !== 0 && now > record.expiresAt) continue;
-    result.push({
-      tokenId,
-      expiresAt: record.expiresAt,
-      createdAt: record.createdAt,
-    });
-  }
-
-  // Sort newest first
-  result.sort((a, b) => b.createdAt - a.createdAt);
-  return result;
+  return _listSharesForSlug.all(normalizedSlug, nowMs()).map(record => ({
+    tokenId: record.token_id,
+    expiresAt: record.expires_at,
+    createdAt: record.created_at,
+  }));
 }
 
-/**
- * Clean up share records that are safe to remove.
- * Called periodically (hourly).
- *
- * IMPORTANT: Revoked records are tombstones — they MUST be kept until the
- * token's natural expiry to prevent "resurrection" (HMAC is still valid
- * without the tombstone). Only delete:
- * - Expired records (revoked or not) — token is naturally invalid
- * - Revoked permanent tokens: NEVER deleted (tombstone is permanent)
- */
 export function cleanupShares() {
-  const s = loadState();
-  const now = Date.now();
-  let removed = 0;
-
-  for (const [tokenId, record] of Object.entries(s.shares)) {
-    const expired = record.expiresAt !== 0 && now > record.expiresAt;
-
-    if (expired) {
-      // Token naturally expired — safe to remove regardless of revocation
-      delete s.shares[tokenId];
-      removed++;
-    }
-    // Revoked non-permanent tokens: keep tombstone until natural expiry
-    // Revoked permanent tokens (expiresAt=0): tombstone kept forever
-  }
-
-  if (removed > 0) {
-    saveState();
-    logger.info('shares cleanup', { removed });
+  initShareStore();
+  const current = nowMs();
+  const sessions = _deleteExpiredShareSessions.run(current).changes;
+  const shares = _deleteExpiredShares.run(current).changes;
+  if (sessions > 0 || shares > 0) {
+    logger.info('shares cleanup', { removedShares: shares, removedSessions: sessions });
   }
 }
 
-/**
- * Get the valid duration keys.
- */
 export function getValidDurations() {
   return Object.keys(DURATION_MAP);
 }

@@ -88,11 +88,13 @@ async function main() {
   };
   app.use('/_assets', express.static(assetsDir, staticOptions));
 
-  // Cookie-based session authentication
-  setupAuth(app, config.auth || {});
-
   // Share API routes (after auth — requires authenticated session)
   const sharingConfig = config.sharing || { enabled: true, allowPermanent: false };
+
+  // Cookie-based session authentication
+  setupAuth(app, config.auth || {}, sharingConfig);
+
+  // Share API routes (after auth — requires authenticated session)
   if (sharingConfig.enabled !== false) {
     setupShareApi(app, sharingConfig);
   }
