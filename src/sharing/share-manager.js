@@ -163,6 +163,25 @@ export function createShare(slug, duration, sharingConfig = {}) {
 }
 
 /**
+ * Rebuild an active share token from its persisted token id.
+ * Used by short links so shares.json still does not store full tokens.
+ * @param {string} tokenId
+ * @returns {{ token: string, tokenId: string, slug: string, expiresAt: number } | null}
+ */
+export function getActiveShareToken(tokenId) {
+  if (!/^[a-f0-9]{32}$/.test(tokenId || '')) return null;
+
+  const s = loadState();
+  const record = s.shares[tokenId];
+  if (!record || record.revoked) return null;
+  if (record.expiresAt !== 0 && Date.now() > record.expiresAt) return null;
+
+  const hmac = computeHmac(record.slug, record.expiresAt, tokenId, s.secret);
+  const token = encodeToken(record.slug, record.expiresAt, tokenId, hmac);
+  return { token, tokenId, slug: record.slug, expiresAt: record.expiresAt };
+}
+
+/**
  * Verify a share token.
  * @param {string} token - The share token from query string
  * @param {string} requestSlug - The slug being accessed (will be normalized)

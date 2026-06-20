@@ -388,7 +388,7 @@ function loginPageHtml(baseUrl, error, next) {
  * Browser-visible paths are derived from X-Forwarded-Prefix when Caddy strips
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
-export function setupAuth(app, authConfig) {
+export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
   if (authConfig.enabled && authConfig.password) {
     initSessionStore();
   }
@@ -498,7 +498,9 @@ export function setupAuth(app, authConfig) {
     const browserBase = browserBaseFromRequest(req);
     if (!authConfig.enabled || !authConfig.password) return next();
 
+    const shortShareEnabled = sharingConfig?.enabled !== false;
     if (req.path.startsWith('/_assets')
+        || (shortShareEnabled && /^\/s\/[a-f0-9]{32}$/.test(req.path))
         || req.path === loginPath || req.path === logoutPath) {
       return next();
     }

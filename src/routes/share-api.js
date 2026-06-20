@@ -4,7 +4,7 @@
 // GET /api/shares/:slug(*) — list active shares for slug (requires login)
 // DELETE /api/shares/:slug(*) — revoke all shares for slug (requires login + CSRF)
 
-import { createShare, revokeShare, revokeAllForSlug, listSharesForSlug } from '../sharing/share-manager.js';
+import { createShare, getActiveShareToken, revokeShare, revokeAllForSlug, listSharesForSlug } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
@@ -64,6 +64,16 @@ function parseJsonBody(req) {
   });
 }
 
+function absoluteUrl(req, path) {
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const host = req.headers.host;
+  return `${proto}://${host}${path}`;
+}
+
+function longSharePath(browserBase, slug, token) {
+  return `${browserPath(browserBase, slug)}?token=${encodeURIComponent(token)}`;
+}
+
 /**
  * Register share API routes on the Express app.
  * Must be called AFTER auth middleware so that only authenticated users reach these.
@@ -71,6 +81,18 @@ function parseJsonBody(req) {
  * @param {object} sharingConfig - { allowPermanent }
  */
 export function setupShareApi(app, sharingConfig) {
+  // GET /s/:tokenId — short share link redirect
+  app.get('/s/:tokenId', (req, res) => {
+    const share = getActiveShareToken(req.params.tokenId);
+    if (!share) {
+      return res.status(404).send('Share not found');
+    }
+
+    const browserBase = browserBaseFromRequest(req);
+    res.setHeader('Cache-Control', 'no-store');
+    res.redirect(302, longSharePath(browserBase, share.slug, share.token));
+  });
+
   // POST /api/share — create a share link
   app.post('/api/share', async (req, res) => {
     if (!csrfCheck(req, res)) return;
@@ -93,18 +115,18 @@ export function setupShareApi(app, sharingConfig) {
 
       const result = createShare(slug, duration, sharingConfig);
 
-      // Build the share URL
-      const proto = req.headers['x-forwarded-proto'] || 'https';
-      const host = req.headers.host;
       const normalizedSlug = normalizeSlug(slug);
       const browserBase = browserBaseFromRequest(req);
-      const shareUrl = `${proto}://${host}${browserPath(browserBase, normalizedSlug)}?token=${result.token}`;
+      const shortUrl = absoluteUrl(req, browserPath(browserBase, `s/${result.tokenId}`));
+      const longUrl = absoluteUrl(req, longSharePath(browserBase, normalizedSlug, result.token));
 
       res.json({
         ok: true,
         tokenId: result.tokenId,
         expiresAt: result.expiresAt,
-        url: shareUrl,
+        url: shortUrl,
+        shortUrl,
+        longUrl,
       });
     } catch (err) {
       const status = err.statusCode || 500;
