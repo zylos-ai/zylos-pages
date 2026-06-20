@@ -258,6 +258,14 @@ function isAssetPath(requestPath) {
   return isAssetExtension(path.extname(requestPath).toLowerCase());
 }
 
+function isAttachmentApi(req) {
+  return req.path.startsWith('/api/attachments/');
+}
+
+function artifactFromApiPath(requestPath) {
+  return requestPath.split('/')[3];
+}
+
 function isLockedOut(ip) {
   const record = failedAttempts.get(ip);
   if (!record) return false;
@@ -566,8 +574,8 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
-    if (req.path.startsWith('/api/state/')) {
-      const artifact = req.path.split('/')[3];
+    if (req.path.startsWith('/api/state/') || isAttachmentApi(req)) {
+      const artifact = artifactFromApiPath(req.path);
       let result = { valid: false };
       try {
         if (artifact) result = verifyShareAccessCookie(getShareAccessCookie(req), artifact);
@@ -578,8 +586,8 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       }
     }
 
-    if (req.query.token && req.path.startsWith('/api/state/')) {
-      const artifact = req.path.split('/')[3];
+    if (req.query.token && (req.path.startsWith('/api/state/') || isAttachmentApi(req))) {
+      const artifact = artifactFromApiPath(req.path);
       let result = { valid: false };
       try {
         if (artifact) result = verifyShare(req.query.token, artifact);
@@ -588,7 +596,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
         acceptShareViewer(res, result);
         return next();
       }
-      logger.info('state api share token invalid', { path: req.path, ip: getClientIp(req) });
+      logger.info('api share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
     if ((req.method === 'GET' || req.method === 'HEAD') && isAssetPath(req.path)) {
