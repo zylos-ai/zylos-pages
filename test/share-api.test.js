@@ -11,6 +11,8 @@ process.env.PAGES_DATA_DIR = tmpDir;
 const express = (await import('express')).default;
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
+const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
+const { getPagesDb } = await import('../src/db/pages-db.js');
 
 test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -23,13 +25,19 @@ function cookieHeader(setCookie) {
     .join('; ');
 }
 
-function makeServer({ auth = false, sharingEnabled = true } = {}) {
+function makeServer({ auth = false, sharingEnabled = true, shareViewer = false } = {}) {
   const app = express();
   if (auth) {
     setupAuth(app, {
       enabled: true,
       password: hashPassword('secret'),
     }, { enabled: sharingEnabled });
+  }
+  if (shareViewer) {
+    app.use((_req, res, next) => {
+      res.locals.viewerType = 'share';
+      next();
+    });
   }
   if (sharingEnabled) {
     setupShareApi(app, { enabled: true, allowPermanent: false });
@@ -53,6 +61,44 @@ function makeServer({ auth = false, sharingEnabled = true } = {}) {
       const { port } = server.address();
       resolve({ server, origin: `http://127.0.0.1:${port}` });
     });
+  });
+}
+
+async function login(origin) {
+  const response = await fetch(`${origin}/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ password: 'secret' }),
+  });
+  assert.equal(response.status, 302);
+  return response.headers.get('set-cookie');
+}
+
+async function createShareViaApi(origin, cookie, body = {}) {
+  const response = await fetch(`${origin}/api/share`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: origin,
+      'X-Forwarded-Proto': 'http',
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    body: JSON.stringify({ slug: 'docs/page', duration: '24h', ...body }),
+  });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+async function patchShare(origin, tokenId, canWriteAttachments, cookie) {
+  return fetch(`${origin}/api/share/${tokenId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Origin: origin,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    body: JSON.stringify({ canWriteAttachments }),
   });
 }
 
@@ -106,6 +152,91 @@ test('create and list editable attachment shares', async () => {
     const created = listed.shares.find(share => share.tokenId === body.tokenId);
     assert.ok(created);
     assert.equal(created.canWriteAttachments, true);
+  } finally {
+    server.close();
+  }
+});
+
+test('patch upgrades and downgrades existing share attachment permission', async () => {
+  const { server, origin } = await makeServer({ auth: true });
+  try {
+    const cookie = await login(origin);
+    const readOnly = await createShareViaApi(origin, cookie);
+
+    let response = await patchShare(origin, readOnly.tokenId, true, cookie);
+    assert.equal(response.status, 200);
+    let body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.tokenId, readOnly.tokenId);
+    assert.equal(body.canWriteAttachments, true);
+    assert.equal(body.expiresAt, readOnly.expiresAt);
+    assert.ok(body.createdAt);
+
+    let list = await fetch(`${origin}/api/shares/docs/page`, { headers: { Cookie: cookie } });
+    assert.equal(list.status, 200);
+    let listed = await list.json();
+    let updated = listed.shares.find(share => share.tokenId === readOnly.tokenId);
+    assert.ok(updated);
+    assert.equal(updated.canWriteAttachments, true);
+
+    const editable = await createShareViaApi(origin, cookie, { canWriteAttachments: true });
+    response = await patchShare(origin, editable.tokenId, false, cookie);
+    assert.equal(response.status, 200);
+    body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.tokenId, editable.tokenId);
+    assert.equal(body.canWriteAttachments, false);
+
+    list = await fetch(`${origin}/api/shares/docs/page`, { headers: { Cookie: cookie } });
+    assert.equal(list.status, 200);
+    listed = await list.json();
+    updated = listed.shares.find(share => share.tokenId === editable.tokenId);
+    assert.ok(updated);
+    assert.equal(updated.canWriteAttachments, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('share viewers cannot patch share attachment permission', async () => {
+  const share = createShare('docs/page', '24h', { allowPermanent: false });
+  const { server, origin } = await makeServer({ shareViewer: true });
+  try {
+    const response = await patchShare(origin, share.tokenId, true);
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: 'Share viewers cannot update shares' });
+  } finally {
+    server.close();
+  }
+});
+
+test('patch rejects revoked expired malformed unknown and invalid-body share updates', async () => {
+  const { server, origin } = await makeServer({ auth: true });
+  try {
+    const cookie = await login(origin);
+
+    const revoked = await createShareViaApi(origin, cookie);
+    revokeShare(revoked.tokenId);
+    let response = await patchShare(origin, revoked.tokenId, true, cookie);
+    assert.equal(response.status, 404);
+
+    const expired = await createShareViaApi(origin, cookie);
+    getPagesDb().prepare('UPDATE shares SET expires_at = ? WHERE token_id = ?').run(Date.now() - 1000, expired.tokenId);
+    response = await patchShare(origin, expired.tokenId, true, cookie);
+    assert.equal(response.status, 404);
+
+    response = await patchShare(origin, 'bad-token', true, cookie);
+    assert.equal(response.status, 400);
+
+    response = await patchShare(origin, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', true, cookie);
+    assert.equal(response.status, 404);
+
+    response = await fetch(`${origin}/api/share/${expired.tokenId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: cookie },
+      body: JSON.stringify({ canWriteAttachments: 'yes' }),
+    });
+    assert.equal(response.status, 400);
   } finally {
     server.close();
   }

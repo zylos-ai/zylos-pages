@@ -111,15 +111,25 @@
           html += '<div class="share-item-info">';
           html += '<span class="share-item-created">Created: ' + created + '</span>';
           html += '<span class="share-item-expires">Expires: ' + expires + '</span>';
-          if (s.canWriteAttachments) {
-            html += '<span class="share-item-permission">Photo upload/delete enabled</span>';
-          }
           html += '</div>';
+          html += '<div class="share-item-actions">';
+          html += '<label class="share-item-permission">';
+          html += '<input type="checkbox" class="share-permission-toggle" data-token-id="' + s.tokenId + '"' + (s.canWriteAttachments ? ' checked' : '') + '>';
+          html += '<span>Allow photo upload/delete</span>';
+          html += '</label>';
           html += '<button class="share-revoke-btn" data-token-id="' + s.tokenId + '">Revoke</button>';
+          html += '</div>';
           html += '</div>';
         }
         html += '<button class="share-revoke-all-btn">Revoke All</button>';
         listItems.innerHTML = html;
+
+        // Bind permission toggles
+        listItems.querySelectorAll('.share-permission-toggle').forEach(function (input) {
+          input.addEventListener('change', function () {
+            updateSharePermission(input, input.checked);
+          });
+        });
 
         // Bind revoke buttons
         listItems.querySelectorAll('.share-revoke-btn').forEach(function (btn) {
@@ -136,6 +146,35 @@
       })
       .catch(function () {
         listItems.innerHTML = '<p class="share-empty">Failed to load shares</p>';
+      });
+  }
+
+  // Update attachment write permission for an existing share
+  function updateSharePermission(input, canWriteAttachments) {
+    var previous = !canWriteAttachments;
+    input.disabled = true;
+
+    fetch(baseUrl + '/api/share/' + input.dataset.tokenId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canWriteAttachments: canWriteAttachments }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data.ok) {
+          loadShares();
+        } else {
+          input.checked = previous;
+          input.disabled = false;
+          loadShares();
+          alert(data.error || 'Failed to update share');
+        }
+      })
+      .catch(function () {
+        input.checked = previous;
+        input.disabled = false;
+        loadShares();
+        alert('Network error');
       });
   }
 
