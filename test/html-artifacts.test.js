@@ -178,43 +178,42 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
   }
 });
 
-test('html extension redirect preserves query string for share tokens', async () => {
+test('shared html artifacts render directly while shared markdown keeps page header', async () => {
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><title>Shared</title><h1>Shared HTML</h1>');
-    const token = createShare('shared', '24h', { allowPermanent: false }).token;
+    await writeFile(path.join(contentDir, 'shared-markdown.md'), '# Shared Markdown\n');
+    const htmlToken = createShare('shared', '24h', { allowPermanent: false }).token;
+    const markdownToken = createShare('shared-markdown', '24h', { allowPermanent: false }).token;
 
     await withServer({
       ...baseConfig(contentDir),
       auth: { enabled: true, password: hashPassword('secret') },
     }, async ({ origin }) => {
-      const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+      const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlToken)}`, { redirect: 'manual' });
       assert.equal(redirect.status, 301);
-      assert.equal(redirect.headers.get('location'), `/shared?token=${encodeURIComponent(token)}`);
+      assert.equal(redirect.headers.get('location'), `/shared?token=${encodeURIComponent(htmlToken)}`);
 
-      const uppercaseRedirect = await fetch(`${origin}/shared.HTML?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+      const uppercaseRedirect = await fetch(`${origin}/shared.HTML?token=${encodeURIComponent(htmlToken)}`, { redirect: 'manual' });
       assert.equal(uppercaseRedirect.status, 301);
-      assert.equal(uppercaseRedirect.headers.get('location'), `/shared?token=${encodeURIComponent(token)}`);
+      assert.equal(uppercaseRedirect.headers.get('location'), `/shared?token=${encodeURIComponent(htmlToken)}`);
 
-      const shared = await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
+      const shared = await fetch(`${origin}/shared?token=${encodeURIComponent(htmlToken)}`);
       assert.equal(shared.status, 200);
+      assert.equal(shared.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
       const sharedBody = await shared.text();
-      assert.match(sharedBody, /html-artifact-frame/);
-      assert.match(sharedBody, /data-viewer="share"/);
+      assert.match(sharedBody, /Shared HTML/);
+      assert.doesNotMatch(sharedBody, /page-header/);
+      assert.doesNotMatch(sharedBody, /html-artifact-frame/);
+      assert.doesNotMatch(sharedBody, /theme-toggle/);
 
-      // iframe src uses the share access cookie, not a long token URL.
-      const iframeSrcMatch = sharedBody.match(/<iframe[^>]+src="([^"]+)"/);
-      assert.ok(iframeSrcMatch, 'iframe src must be present');
-      assert.match(iframeSrcMatch[1], /raw=1/);
-      assert.doesNotMatch(iframeSrcMatch[1], /token=/);
-
-      // Fetch the actual iframe src — must return 200 with artifact content
-      const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
-      const iframeFetch = await fetch(`${origin}${iframeUrl}`, {
-        headers: { Cookie: cookieHeader(shared.headers.get('set-cookie')) },
-      });
-      assert.equal(iframeFetch.status, 200);
-      assert.match(await iframeFetch.text(), /Shared HTML/);
+      const markdown = await fetch(`${origin}/shared-markdown?token=${encodeURIComponent(markdownToken)}`);
+      assert.equal(markdown.status, 200);
+      assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
+      const markdownBody = await markdown.text();
+      assert.match(markdownBody, /Shared Markdown/);
+      assert.match(markdownBody, /page-header/);
+      assert.match(markdownBody, /theme-toggle/);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

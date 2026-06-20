@@ -47,8 +47,9 @@ export function pageRoute(config) {
       const elapsed = Math.round(performance.now() - start);
       const isHtmlArtifact = result.type === 'html';
 
-      // Raw mode: serve HTML artifact directly (used as iframe src)
-      if (isHtmlArtifact && req.query.raw === '1') {
+      // Raw mode serves the HTML artifact directly. Share viewers also receive
+      // the artifact directly because shared HTML is a complete page design.
+      if (isHtmlArtifact && (req.query.raw === '1' || isShareViewer)) {
         res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
         res.setHeader('X-Frame-Options', 'SAMEORIGIN');
         const clientEtag = req.headers['if-none-match'];
