@@ -101,6 +101,10 @@ function expectLoginRedirect(response) {
   assert.match(response.headers.get('location'), /^\/login\?/);
 }
 
+function expectAssetDenied(response) {
+  assert.equal(response.status, 403);
+}
+
 async function rawGet(origin, requestPath) {
   const url = new URL(origin);
   return new Promise((resolve, reject) => {
@@ -167,7 +171,7 @@ test('asset route follows auth wall, session auth, and method boundaries', async
 
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
       let res = await fetch(`${origin}/private.jpg`, { redirect: 'manual' });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
 
       const cookie = sessionCookie(await login(origin));
       res = await fetch(`${origin}/private.jpg`, { headers: { Cookie: cookie } });
@@ -175,7 +179,7 @@ test('asset route follows auth wall, session auth, and method boundaries', async
       assert.equal(await res.text(), 'private');
 
       res = await fetch(`${origin}/private.jpg`, { method: 'PUT', redirect: 'manual' });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -211,16 +215,16 @@ test('share page access sets scoped cookie and asset request uses cookie without
       assert.equal(res.headers.get('cache-control'), 'no-store');
 
       res = await fetch(`${origin}/kitchen-ref.jpg?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
 
       res = await fetch(`${origin}/direct-token.jpg?token=${encodeURIComponent(assetToken)}`, { redirect: 'manual' });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
 
       res = await fetch(`${origin}/docs/nested.jpg`, {
         redirect: 'manual',
         headers: { Cookie: cookie },
       });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -247,10 +251,10 @@ test('nested share-scope cookie isolates root and sibling directory assets', asy
       assert.equal(res.status, 200);
 
       res = await fetch(`${origin}/root.png`, { redirect: 'manual', headers: { Cookie: cookie } });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
 
       res = await fetch(`${origin}/other/secret.png`, { redirect: 'manual', headers: { Cookie: cookie } });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -273,13 +277,13 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
         redirect: 'manual',
         headers: { Cookie: `${SHARE_SCOPE_COOKIE_NAME}=${expired}` },
       });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
 
       res = await fetch(`${origin}/image.jpg`, {
         redirect: 'manual',
         headers: { Cookie: `${SHARE_SCOPE_COOKIE_NAME}=${tampered}` },
       });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -306,7 +310,7 @@ test('revoked share invalidates existing share-scope asset cookie', async () => 
         redirect: 'manual',
         headers: { Cookie: cookie },
       });
-      expectLoginRedirect(res);
+      expectAssetDenied(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

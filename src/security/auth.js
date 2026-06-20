@@ -562,6 +562,10 @@ export function setupAuth(app, authConfig) {
       return next();
     }
 
+    if (isAssetPath(req.path)) {
+      return res.status(403).end();
+    }
+
     const rawNext = req.originalUrl || req.url;
     const nextUrl = rawNext === '/' ? browserRoot(browserBase) : `${browserBase}${rawNext}`;
     const safeNext = isSafeRedirect(nextUrl, browserBase) ? `?next=${encodeURIComponent(nextUrl)}` : '';
