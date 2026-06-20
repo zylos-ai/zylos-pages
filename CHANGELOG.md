@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0] - 2026-06-21
+
+### Added
+- **HTML artifact support** (#28, #29): Serve `.html` files as full-page artifacts with pages chrome (header, sidebar, share controls). HTML artifacts get their own CSP policy allowing inline scripts.
+- **Server-side state API for HTML artifacts** (#31, #33): JSON state persistence per artifact with share-token access, enabling interactive HTML pages (checklists, forms) that save state server-side.
+- **Static asset serving under auth** (#36): Images and files referenced by pages are served under the same auth/share-token model. Share-scope cookies provide directory-level isolation with HMAC binding.
+- **Short share links** (#39): Cookie-native short share URLs (`/s/:tokenId`) replacing long query-string tokens. Automatic cookie refresh on page visit.
+- **Artifact attachment uploads** (#48): Server-backed photo/file uploads for HTML artifacts with thumbnail grid, preview dialog, and delete. Uploads scoped per artifact/item key.
+- **Editable attachment share links** (#50): Share links can optionally allow photo upload/delete for collaborators without login.
+- **Share attachment permission toggle** (#52): In-place toggle to change an existing share link's attachment edit permission without regenerating the URL.
+
+### Fixed
+- **HTML artifacts render without pages chrome for share viewers**: Shared HTML artifacts served directly without wrapper iframe for cleaner mobile experience.
+- **Trust loopback proxy for rate limiting** (#46): Rate limiter now respects `X-Forwarded-For` behind reverse proxy.
+- **Inject `window.__PAGES_BASE` into HTML artifacts** (#34): Browser-base-aware script injection for correct asset resolution under proxied paths.
+- **Return 403 for unauthenticated asset requests** (#37): Assets behind auth return 403 instead of redirect loop.
+- **Share editable flag in WeChat WebView** (#53): Fixed three compounding issues — ETag 304 returning stale cached HTML, `attachments.js` cached without `data-share-editable` fallback, and missing attribute in `injectShareViewer`. Server now rewrites `_assets/` URLs with version query for cache busting.
+
 ## [0.2.0] - 2026-06-14
 
 ### Added
