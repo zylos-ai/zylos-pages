@@ -80,8 +80,7 @@ export function pageRoute(config) {
       if (isHtmlArtifact) {
         const titleMatch = result.html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
         const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : slug;
-        const tokenParam = isShareViewer && req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : '';
-        const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1${tokenParam}`;
+        const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1`;
         let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug, iframeSrc });
         if (isShareViewer) {
           html = injectShareViewer(html);

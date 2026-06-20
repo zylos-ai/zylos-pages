@@ -16,6 +16,13 @@ test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+function cookieHeader(setCookie) {
+  return setCookie
+    .split(/,\s*(?=__Host-)/)
+    .map(cookie => cookie.split(';', 1)[0])
+    .join('; ');
+}
+
 function makeServer({ auth = false, sharingEnabled = true } = {}) {
   const app = express();
   if (auth) {
@@ -43,7 +50,7 @@ function makeServer({ auth = false, sharingEnabled = true } = {}) {
   });
 }
 
-test('create share returns short URL by default and preserves long URL', async () => {
+test('create share returns short URL only', async () => {
   const { server, origin } = await makeServer();
   try {
     const response = await fetch(`${origin}/api/share`, {
@@ -62,13 +69,13 @@ test('create share returns short URL by default and preserves long URL', async (
     assert.match(body.tokenId, /^[a-f0-9]{32}$/);
     assert.equal(body.url, `${origin}/s/${body.tokenId}`);
     assert.equal(body.shortUrl, body.url);
-    assert.match(body.longUrl, new RegExp(`^${origin}/docs/page\\?token=`));
+    assert.equal(Object.prototype.hasOwnProperty.call(body, 'longUrl'), false);
   } finally {
     server.close();
   }
 });
 
-test('short share URL redirects to token URL', async () => {
+test('short share URL sets share cookies and redirects to clean page URL', async () => {
   const { server, origin } = await makeServer();
   try {
     const create = await fetch(`${origin}/api/share`, {
@@ -84,13 +91,17 @@ test('short share URL redirects to token URL', async () => {
 
     const redirect = await fetch(share.url, { redirect: 'manual' });
     assert.equal(redirect.status, 302);
-    assert.match(redirect.headers.get('location'), /^\/docs\/page\?token=/);
+    assert.equal(redirect.headers.get('location'), '/docs/page');
+    const setCookie = redirect.headers.get('set-cookie');
+    assert.match(setCookie, /__Host-share_access=/);
+    assert.match(setCookie, /__Host-share_scope=/);
+    assert.doesNotMatch(redirect.headers.get('location'), /token=/);
   } finally {
     server.close();
   }
 });
 
-test('auth middleware allows short share URLs through to redirect route', async () => {
+test('auth middleware allows short share URL cookies to access target page', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const login = await fetch(`${origin}/login`, {
@@ -118,7 +129,15 @@ test('auth middleware allows short share URLs through to redirect route', async 
     const redirect = await fetch(share.url, { redirect: 'manual' });
     assert.equal(redirect.status, 302);
     assert.doesNotMatch(redirect.headers.get('location'), /login/);
-    assert.match(redirect.headers.get('location'), /^\/docs\/page\?token=/);
+    assert.equal(redirect.headers.get('location'), '/docs/page');
+    const cookies = cookieHeader(redirect.headers.get('set-cookie'));
+
+    const page = await fetch(`${origin}/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: cookies },
+    });
+    assert.equal(page.status, 200);
+    assert.equal(await page.text(), 'plain');
   } finally {
     server.close();
   }

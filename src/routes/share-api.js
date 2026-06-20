@@ -4,8 +4,15 @@
 // GET /api/shares/:slug(*) — list active shares for slug (requires login)
 // DELETE /api/shares/:slug(*) — revoke all shares for slug (requires login + CSRF)
 
-import { createShare, getActiveShareToken, revokeShare, revokeAllForSlug, listSharesForSlug } from '../sharing/share-manager.js';
-import { normalizeSlug } from '../utils/slug.js';
+import {
+  createShare,
+  createShareAccessCookie,
+  createShareScopeCookie,
+  getActiveShare,
+  revokeShare,
+  revokeAllForSlug,
+  listSharesForSlug,
+} from '../sharing/share-manager.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 
@@ -70,8 +77,15 @@ function absoluteUrl(req, path) {
   return `${proto}://${host}${path}`;
 }
 
-function longSharePath(browserBase, slug, token) {
-  return `${browserPath(browserBase, slug)}?token=${encodeURIComponent(token)}`;
+function appendSetCookie(res, cookie) {
+  const current = res.getHeader('Set-Cookie');
+  if (!current) {
+    res.setHeader('Set-Cookie', cookie);
+  } else if (Array.isArray(current)) {
+    res.setHeader('Set-Cookie', [...current, cookie]);
+  } else {
+    res.setHeader('Set-Cookie', [current, cookie]);
+  }
 }
 
 /**
@@ -83,14 +97,18 @@ function longSharePath(browserBase, slug, token) {
 export function setupShareApi(app, sharingConfig) {
   // GET /s/:tokenId — short share link redirect
   app.get('/s/:tokenId', (req, res) => {
-    const share = getActiveShareToken(req.params.tokenId);
+    const share = getActiveShare(req.params.tokenId);
     if (!share) {
       return res.status(404).send('Share not found');
     }
 
     const browserBase = browserBaseFromRequest(req);
+    const accessCookie = createShareAccessCookie(share.slug, share.tokenId, share.expiresAt);
+    const scopeCookie = createShareScopeCookie(share.slug, share.tokenId, share.expiresAt);
+    appendSetCookie(res, accessCookie.header);
+    appendSetCookie(res, scopeCookie.header);
     res.setHeader('Cache-Control', 'no-store');
-    res.redirect(302, longSharePath(browserBase, share.slug, share.token));
+    res.redirect(302, browserPath(browserBase, share.slug));
   });
 
   // POST /api/share — create a share link
@@ -115,10 +133,8 @@ export function setupShareApi(app, sharingConfig) {
 
       const result = createShare(slug, duration, sharingConfig);
 
-      const normalizedSlug = normalizeSlug(slug);
       const browserBase = browserBaseFromRequest(req);
       const shortUrl = absoluteUrl(req, browserPath(browserBase, `s/${result.tokenId}`));
-      const longUrl = absoluteUrl(req, longSharePath(browserBase, normalizedSlug, result.token));
 
       res.json({
         ok: true,
@@ -126,7 +142,6 @@ export function setupShareApi(app, sharingConfig) {
         expiresAt: result.expiresAt,
         url: shortUrl,
         shortUrl,
-        longUrl,
       });
     } catch (err) {
       const status = err.statusCode || 500;

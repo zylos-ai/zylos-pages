@@ -12,6 +12,7 @@ const express = (await import('express')).default;
 const { initCache } = await import('../src/cache/pageCache.js');
 const { setupAssetRoute } = await import('../src/routes/asset.js');
 const { pageRoute } = await import('../src/routes/pages.js');
+const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi } = await import('../src/routes/state-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { securityHeaders } = await import('../src/security/headers.js');
@@ -49,6 +50,7 @@ async function withServer(config, fn) {
   const app = express();
   app.use(securityHeaders());
   setupAuth(app, config.auth || { enabled: false, password: null });
+  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false });
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
   setupAssetRoute(app, config);
@@ -94,6 +96,13 @@ function shareScopeCookie(setCookieHeader) {
   const match = setCookieHeader.match(/__Host-share_scope=([^;,]+)/);
   assert.ok(match, 'share-scope cookie should be present');
   return `${SHARE_SCOPE_COOKIE_NAME}=${match[1]}`;
+}
+
+function cookieHeader(setCookieHeader) {
+  return setCookieHeader
+    .split(/,\s*(?=__Host-)/)
+    .map(cookie => cookie.split(';', 1)[0])
+    .join('; ');
 }
 
 function expectLoginRedirect(response) {
@@ -194,13 +203,20 @@ test('share page access sets scoped cookie and asset request uses cookie without
     await writeFile(path.join(contentDir, 'direct-token.jpg'), 'direct token image');
     await mkdir(path.join(contentDir, 'docs'));
     await writeFile(path.join(contentDir, 'docs', 'nested.jpg'), 'nested image');
-    const token = createShare('renovation-checklist', '24h', { allowPermanent: false }).token;
+    const share = createShare('renovation-checklist', '24h', { allowPermanent: false });
     const assetToken = createShare('direct-token.jpg', '24h', { allowPermanent: false }).token;
 
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
-      const page = await fetch(`${origin}/renovation-checklist?token=${encodeURIComponent(token)}`);
+      const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+      assert.equal(redirect.status, 302);
+      assert.equal(redirect.headers.get('location'), '/renovation-checklist');
+      assert.doesNotMatch(redirect.headers.get('location'), /token=/);
+
+      const page = await fetch(`${origin}/renovation-checklist`, {
+        headers: { Cookie: cookieHeader(redirect.headers.get('set-cookie')) },
+      });
       assert.equal(page.status, 200);
-      const setCookie = page.headers.get('set-cookie');
+      const setCookie = redirect.headers.get('set-cookie');
       assert.match(setCookie, /__Host-share_scope=/);
       assert.match(setCookie, /HttpOnly/);
       assert.match(setCookie, /Secure/);
@@ -214,7 +230,7 @@ test('share page access sets scoped cookie and asset request uses cookie without
       assert.equal(await res.text(), 'kitchen image');
       assert.equal(res.headers.get('cache-control'), 'no-store');
 
-      res = await fetch(`${origin}/kitchen-ref.jpg?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
+      res = await fetch(`${origin}/kitchen-ref.jpg?token=${encodeURIComponent(share.token)}`, { redirect: 'manual' });
       expectAssetDenied(res);
 
       res = await fetch(`${origin}/direct-token.jpg?token=${encodeURIComponent(assetToken)}`, { redirect: 'manual' });

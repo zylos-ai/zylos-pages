@@ -14,6 +14,7 @@ const { getPage } = await import('../src/services/pageService.js');
 const { indexRoute, scanPages } = await import('../src/routes/index.js');
 const { pageRoute } = await import('../src/routes/pages.js');
 const { setupRawApi } = await import('../src/routes/raw-api.js');
+const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { DEFAULT_CSP, HTML_ARTIFACT_CSP, securityHeaders } = await import('../src/security/headers.js');
 const { resolvePageDescriptor, resolveSafePath } = await import('../src/security/pathGuard.js');
@@ -38,6 +39,13 @@ function baseConfig(contentDir) {
   };
 }
 
+function cookieHeader(setCookie) {
+  return setCookie
+    .split(/,\s*(?=__Host-)/)
+    .map(cookie => cookie.split(';', 1)[0])
+    .join('; ');
+}
+
 async function makeContentDir() {
   return mkdtemp(path.join(os.tmpdir(), 'zylos-pages-html-content-'));
 }
@@ -47,6 +55,7 @@ async function withServer(config, fn) {
   const app = express();
   app.use(securityHeaders());
   setupAuth(app, config.auth || { enabled: false, password: null });
+  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false });
   setupRawApi(app, config);
   app.get('/', indexRoute(config));
   app.get('/:slug(*)', pageRoute(config));
@@ -193,15 +202,17 @@ test('html extension redirect preserves query string for share tokens', async ()
       assert.match(sharedBody, /html-artifact-frame/);
       assert.match(sharedBody, /data-viewer="share"/);
 
-      // iframe src must include token so share viewer can load raw content
+      // iframe src uses the share access cookie, not a long token URL.
       const iframeSrcMatch = sharedBody.match(/<iframe[^>]+src="([^"]+)"/);
       assert.ok(iframeSrcMatch, 'iframe src must be present');
       assert.match(iframeSrcMatch[1], /raw=1/);
-      assert.match(iframeSrcMatch[1], /token=/);
+      assert.doesNotMatch(iframeSrcMatch[1], /token=/);
 
       // Fetch the actual iframe src — must return 200 with artifact content
       const iframeUrl = iframeSrcMatch[1].replace(/&amp;/g, '&');
-      const iframeFetch = await fetch(`${origin}${iframeUrl}`);
+      const iframeFetch = await fetch(`${origin}${iframeUrl}`, {
+        headers: { Cookie: cookieHeader(shared.headers.get('set-cookie')) },
+      });
       assert.equal(iframeFetch.status, 200);
       assert.match(await iframeFetch.text(), /Shared HTML/);
     });
