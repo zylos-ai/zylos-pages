@@ -47,7 +47,7 @@ The file extension is stripped from the URL. A `.html` file and a `.md` file wit
 HTML files are rendered differently from Markdown:
 
 1. **Iframe isolation**: The HTML content loads inside an iframe. This gives the author full CSS control without conflicting with Pages' own styles.
-2. **CSP**: HTML artifacts have a separate Content-Security-Policy (`HTML_ARTIFACT_CSP`) — inline styles are allowed, inline scripts are not.
+2. **CSP**: HTML artifacts have a separate Content-Security-Policy (`HTML_ARTIFACT_CSP`). Current runtime policy allows inline styles and inline scripts, but only loads scripts/styles/fonts from the same origin.
 3. **Raw mode**: Append `?raw=1` to serve the HTML directly without the iframe wrapper.
 4. **Sharing**: Shared HTML artifacts are served directly (no iframe) since they are complete page designs.
 
@@ -78,8 +78,8 @@ HTML files are rendered differently from Markdown:
 - **Set `<title>`**: Pages extracts it for the navigation sidebar and browser tab.
 - **Include viewport meta**: Ensures responsive behavior on mobile.
 - **Use `lang` attribute**: Set `zh-CN` for Chinese content, `en` for English, to get correct CJK line-breaking and hyphenation.
-- **No inline `<script>` tags**: CSP blocks them. Use `<style>` for CSS (allowed) or reference external scripts via `_assets/`.
-- **Self-contained CSS**: Put all styles in a `<style>` block. No external CSS dependencies except Google Fonts.
+- **Prefer no inline `<script>` tags**: The current HTML artifact CSP allows inline scripts, but external JS under `_assets/` is easier to review and reuse. Avoid remote scripts.
+- **Self-contained CSS**: Put all styles in a `<style>` block. Do not depend on external CSS or font hosts; the current CSP does not allow Google Fonts.
 - **Dark mode support**: Use `prefers-color-scheme` media query or CSS custom properties with a toggle.
 
 ### Dark mode pattern
