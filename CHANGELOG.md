@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] - 2026-06-24
+
+### Added
+- **SKILL.md references for HTML templates** (#57): Added References table and HTML Report Templates section so agents can discover `references/html-rendering.md` and the 4 HTML report templates.
+- **SVG data visualization in HTML templates** (#58): Upgraded all 4 HTML report templates with inline SVG chart placeholders — bar charts, pie charts, radar charts, architecture diagrams, and Gantt timelines. Added a Data Visualization section to `references/html-rendering.md` with copy-paste SVG snippets for 5 chart types, dark mode tips, and responsive guidelines.
+
 ## [0.3.0] - 2026-06-21
 
 ### Added
