@@ -124,6 +124,24 @@
     }
     .verdict h2 { color: var(--accent-text); margin-top: 0; margin-bottom: var(--space-3); }
 
+    /* -- Radar chart section -- */
+    .radar-section {
+      text-align: center;
+      margin-bottom: var(--space-8);
+    }
+    .radar-section h2 {
+      font-size: var(--font-size-xl); margin-bottom: var(--space-4);
+      padding-bottom: var(--space-2); border-bottom: 1px solid var(--border);
+    }
+    .radar-wrapper {
+      display: flex;
+      justify-content: center;
+    }
+    .radar-wrapper svg {
+      max-width: 100%;
+      height: auto;
+    }
+
     .comparison-footer {
       margin-top: var(--space-12); padding-top: var(--space-6);
       border-top: 1px solid var(--border);
@@ -159,6 +177,82 @@
       <div class="vs-option vs-option-b">{{OPTION_B}}</div>
     </div>
 
+    <!-- == Radar Chart == -->
+    <section class="radar-section">
+      <h2>{{RADAR_TITLE}}</h2>
+      <div class="radar-wrapper">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+          <!-- Background grid pentagons -->
+          <!-- 20% ring -->
+          <polygon points="250,204 284.2,228.9 271.2,269.1 228.8,269.1 215.8,228.9"
+            fill="none" stroke="var(--border)" stroke-width="0.5" />
+          <!-- 40% ring -->
+          <polygon points="250,168 318.5,217.8 292.3,298.2 207.7,298.2 181.5,217.8"
+            fill="none" stroke="var(--border)" stroke-width="0.5" />
+          <!-- 60% ring -->
+          <polygon points="250,132 352.7,206.6 313.5,327.4 186.5,327.4 147.3,206.6"
+            fill="none" stroke="var(--border)" stroke-width="0.5" />
+          <!-- 80% ring -->
+          <polygon points="250,96 387,195.5 334.6,356.5 165.4,356.5 113,195.5"
+            fill="none" stroke="var(--border)" stroke-width="0.8" />
+          <!-- 100% ring (outer boundary) -->
+          <polygon points="250,60 421.2,184.4 355.8,385.6 144.2,385.6 78.8,184.4"
+            fill="none" stroke="var(--border-strong)" stroke-width="1" />
+
+          <!-- Axis lines from center to each vertex -->
+          <line x1="250" y1="240" x2="250" y2="60" stroke="var(--border)" stroke-width="0.5" />
+          <line x1="250" y1="240" x2="421.2" y2="184.4" stroke="var(--border)" stroke-width="0.5" />
+          <line x1="250" y1="240" x2="355.8" y2="385.6" stroke="var(--border)" stroke-width="0.5" />
+          <line x1="250" y1="240" x2="144.2" y2="385.6" stroke="var(--border)" stroke-width="0.5" />
+          <line x1="250" y1="240" x2="78.8" y2="184.4" stroke="var(--border)" stroke-width="0.5" />
+
+          <!-- Option A polygon -->
+          <polygon points="{{RADAR_A_POINTS}}"
+            fill="var(--option-a)" fill-opacity="0.2"
+            stroke="var(--option-a)" stroke-width="2" />
+          <!-- Option A data points -->
+          <circle cx="{{RADAR_A_1_X}}" cy="{{RADAR_A_1_Y}}" r="4" fill="var(--option-a)" />
+          <circle cx="{{RADAR_A_2_X}}" cy="{{RADAR_A_2_Y}}" r="4" fill="var(--option-a)" />
+          <circle cx="{{RADAR_A_3_X}}" cy="{{RADAR_A_3_Y}}" r="4" fill="var(--option-a)" />
+          <circle cx="{{RADAR_A_4_X}}" cy="{{RADAR_A_4_Y}}" r="4" fill="var(--option-a)" />
+          <circle cx="{{RADAR_A_5_X}}" cy="{{RADAR_A_5_Y}}" r="4" fill="var(--option-a)" />
+
+          <!-- Option B polygon -->
+          <polygon points="{{RADAR_B_POINTS}}"
+            fill="var(--option-b)" fill-opacity="0.2"
+            stroke="var(--option-b)" stroke-width="2" />
+          <!-- Option B data points -->
+          <circle cx="{{RADAR_B_1_X}}" cy="{{RADAR_B_1_Y}}" r="4" fill="var(--option-b)" />
+          <circle cx="{{RADAR_B_2_X}}" cy="{{RADAR_B_2_Y}}" r="4" fill="var(--option-b)" />
+          <circle cx="{{RADAR_B_3_X}}" cy="{{RADAR_B_3_Y}}" r="4" fill="var(--option-b)" />
+          <circle cx="{{RADAR_B_4_X}}" cy="{{RADAR_B_4_Y}}" r="4" fill="var(--option-b)" />
+          <circle cx="{{RADAR_B_5_X}}" cy="{{RADAR_B_5_Y}}" r="4" fill="var(--option-b)" />
+
+          <!-- Dimension labels -->
+          <text x="250" y="40" text-anchor="middle" fill="var(--text)" font-size="13" font-family="var(--font-sans)">{{RADAR_DIM_1}}</text>
+          <text x="250" y="54" text-anchor="middle" fill="var(--text-muted)" font-size="10" font-family="var(--font-sans)">{{RADAR_A_1}} / {{RADAR_B_1}}</text>
+
+          <text x="438" y="180" text-anchor="start" fill="var(--text)" font-size="13" font-family="var(--font-sans)">{{RADAR_DIM_2}}</text>
+          <text x="438" y="194" text-anchor="start" fill="var(--text-muted)" font-size="10" font-family="var(--font-sans)">{{RADAR_A_2}} / {{RADAR_B_2}}</text>
+
+          <text x="373" y="404" text-anchor="start" fill="var(--text)" font-size="13" font-family="var(--font-sans)">{{RADAR_DIM_3}}</text>
+          <text x="373" y="418" text-anchor="start" fill="var(--text-muted)" font-size="10" font-family="var(--font-sans)">{{RADAR_A_3}} / {{RADAR_B_3}}</text>
+
+          <text x="127" y="404" text-anchor="end" fill="var(--text)" font-size="13" font-family="var(--font-sans)">{{RADAR_DIM_4}}</text>
+          <text x="127" y="418" text-anchor="end" fill="var(--text-muted)" font-size="10" font-family="var(--font-sans)">{{RADAR_A_4}} / {{RADAR_B_4}}</text>
+
+          <text x="62" y="180" text-anchor="end" fill="var(--text)" font-size="13" font-family="var(--font-sans)">{{RADAR_DIM_5}}</text>
+          <text x="62" y="194" text-anchor="end" fill="var(--text-muted)" font-size="10" font-family="var(--font-sans)">{{RADAR_A_5}} / {{RADAR_B_5}}</text>
+
+          <!-- Legend -->
+          <rect x="160" y="460" width="14" height="14" rx="2" fill="var(--option-a)" fill-opacity="0.7" />
+          <text x="180" y="472" fill="var(--text)" font-size="12" font-family="var(--font-sans)">{{OPTION_A}}</text>
+          <rect x="280" y="460" width="14" height="14" rx="2" fill="var(--option-b)" fill-opacity="0.7" />
+          <text x="300" y="472" fill="var(--text)" font-size="12" font-family="var(--font-sans)">{{OPTION_B}}</text>
+        </svg>
+      </div>
+    </section>
+
     <section class="dimension-section">
       <h2>Overall Scores</h2>
       <div class="score-row">
@@ -174,6 +268,27 @@
         <span class="score-value">{{SCORE_A2}}</span>
         <div class="score-bar-track"><div class="score-bar b" style="width: {{SCORE_B2}}%"></div></div>
         <span class="score-value">{{SCORE_B2}}</span>
+      </div>
+      <div class="score-row">
+        <span class="score-label">{{DIMENSION_3}}</span>
+        <div class="score-bar-track"><div class="score-bar a" style="width: {{SCORE_A3}}%"></div></div>
+        <span class="score-value">{{SCORE_A3}}</span>
+        <div class="score-bar-track"><div class="score-bar b" style="width: {{SCORE_B3}}%"></div></div>
+        <span class="score-value">{{SCORE_B3}}</span>
+      </div>
+      <div class="score-row">
+        <span class="score-label">{{DIMENSION_4}}</span>
+        <div class="score-bar-track"><div class="score-bar a" style="width: {{SCORE_A4}}%"></div></div>
+        <span class="score-value">{{SCORE_A4}}</span>
+        <div class="score-bar-track"><div class="score-bar b" style="width: {{SCORE_B4}}%"></div></div>
+        <span class="score-value">{{SCORE_B4}}</span>
+      </div>
+      <div class="score-row">
+        <span class="score-label">{{DIMENSION_5}}</span>
+        <div class="score-bar-track"><div class="score-bar a" style="width: {{SCORE_A5}}%"></div></div>
+        <span class="score-value">{{SCORE_A5}}</span>
+        <div class="score-bar-track"><div class="score-bar b" style="width: {{SCORE_B5}}%"></div></div>
+        <span class="score-value">{{SCORE_B5}}</span>
       </div>
     </section>
 
