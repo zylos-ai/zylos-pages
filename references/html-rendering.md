@@ -159,7 +159,7 @@ Examples of HTML artifacts already in use:
 
 ## Data Visualization
 
-Pages CSP blocks inline `<script>`, so JavaScript charting libraries (Chart.js, D3, etc.) cannot run. All charts must be **pure SVG + CSS** -- no JS required.
+Remote charting libraries (Chart.js, D3 via CDN, etc.) are blocked by the current CSP — only same-origin scripts are allowed. Inline scripts are permitted but not recommended for templates: pure SVG + CSS is easier to review, more portable, and has no JS dependency.
 
 The HTML templates in `templates/html/` include ready-to-use SVG chart placeholders. When generating reports, replace the `{{PLACEHOLDER}}` markers with computed values.
 
