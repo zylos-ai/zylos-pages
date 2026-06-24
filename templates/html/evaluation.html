@@ -25,6 +25,10 @@
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
       --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
       --content-width: 860px;
+      --radar-accent: #0d9488;
+      --radar-accent-fill: rgba(13, 148, 136, 0.25);
+      --radar-grid: #d1d5db;
+      --radar-axis: #9ca3af;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -36,6 +40,10 @@
         --warning: #fbbf24; --warning-light: #451a03;
         --error: #f87171; --error-light: #450a0a;
         --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+        --radar-accent: #2dd4bf;
+        --radar-accent-fill: rgba(45, 212, 191, 0.25);
+        --radar-grid: #475569;
+        --radar-axis: #64748b;
       }
     }
     html { font-size: 16px; }
@@ -120,6 +128,58 @@
     }
     .next-steps h3 { margin-top: 0; margin-bottom: var(--space-4); }
 
+    /* -- Radar chart -- */
+    .radar-container {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: var(--space-6);
+      margin-bottom: var(--space-6); box-shadow: var(--shadow-sm);
+      text-align: center;
+    }
+    .radar-container h3 {
+      font-size: var(--font-size-lg); margin-bottom: var(--space-4); margin-top: 0;
+    }
+    .radar-container svg {
+      max-width: 400px; width: 100%; height: auto;
+    }
+
+    /* -- Progress bars -- */
+    .progress-container {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: var(--space-6);
+      margin-bottom: var(--space-8); box-shadow: var(--shadow-sm);
+    }
+    .progress-container h3 {
+      font-size: var(--font-size-lg); margin-bottom: var(--space-6); margin-top: 0;
+    }
+    .progress-item {
+      margin-bottom: var(--space-4);
+    }
+    .progress-item:last-child {
+      margin-bottom: 0;
+    }
+    .progress-header {
+      display: flex; justify-content: space-between; align-items: baseline;
+      margin-bottom: var(--space-2);
+      font-size: var(--font-size-sm); font-weight: 600;
+    }
+    .progress-label { color: var(--text); }
+    .progress-score { color: var(--text-secondary); font-family: var(--font-mono); }
+    .progress-track {
+      width: 100%; height: 12px;
+      background: var(--bg-alt); border-radius: 6px;
+      overflow: hidden; border: 1px solid var(--border);
+    }
+    .progress-fill {
+      height: 100%; border-radius: 6px;
+      animation: barGrow 1s ease-out forwards;
+    }
+    .progress-fill-high { background: var(--success); }
+    .progress-fill-mid { background: var(--warning); }
+
+    @keyframes barGrow {
+      from { width: 0; }
+    }
+
     .eval-footer {
       margin-top: var(--space-12); padding-top: var(--space-6);
       border-top: 1px solid var(--border);
@@ -130,6 +190,7 @@
       body { background: white; color: black; }
       .evaluation { max-width: none; padding: 0; }
       .verdict-banner { border: 2px solid; }
+      .progress-fill { animation: none; }
     }
     @media (max-width: 640px) {
       .evaluation { padding: var(--space-4); }
@@ -183,6 +244,95 @@
       <div class="score-item">
         <div class="score-number score-low">{{SCORE_4}}</div>
         <div class="score-dim">{{DIM_4}}</div>
+      </div>
+    </div>
+
+    <!-- Radar Chart -->
+    <div class="radar-container">
+      <h3>{{RADAR_CHART_TITLE}}</h3>
+      <svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{{RADAR_CHART_TITLE}}">
+        <!-- Grid: 3 concentric diamond levels -->
+        <polygon points="200,50 350,200 200,350 50,200"
+          fill="none" stroke="var(--radar-grid)" stroke-width="1" />
+        <polygon points="200,100 300,200 200,300 100,200"
+          fill="none" stroke="var(--radar-grid)" stroke-width="1" stroke-dasharray="4,4" />
+        <polygon points="200,150 250,200 200,250 150,200"
+          fill="none" stroke="var(--radar-grid)" stroke-width="1" stroke-dasharray="4,4" />
+
+        <!-- Axis lines -->
+        <line x1="200" y1="50" x2="200" y2="350" stroke="var(--radar-axis)" stroke-width="1" stroke-dasharray="2,3" />
+        <line x1="50" y1="200" x2="350" y2="200" stroke="var(--radar-axis)" stroke-width="1" stroke-dasharray="2,3" />
+
+        <!-- Data polygon -->
+        <polygon points="{{RADAR_1_X}},{{RADAR_1_Y}} {{RADAR_2_X}},{{RADAR_2_Y}} {{RADAR_3_X}},{{RADAR_3_Y}} {{RADAR_4_X}},{{RADAR_4_Y}}"
+          fill="var(--radar-accent-fill)" stroke="var(--radar-accent)" stroke-width="2.5" />
+
+        <!-- Data points -->
+        <circle cx="{{RADAR_1_X}}" cy="{{RADAR_1_Y}}" r="5" fill="var(--radar-accent)" />
+        <circle cx="{{RADAR_2_X}}" cy="{{RADAR_2_Y}}" r="5" fill="var(--radar-accent)" />
+        <circle cx="{{RADAR_3_X}}" cy="{{RADAR_3_Y}}" r="5" fill="var(--radar-accent)" />
+        <circle cx="{{RADAR_4_X}}" cy="{{RADAR_4_Y}}" r="5" fill="var(--radar-accent)" />
+
+        <!-- Center dot -->
+        <circle cx="200" cy="200" r="2.5" fill="var(--radar-axis)" />
+
+        <!-- Dimension labels -->
+        <text x="200" y="32" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="600" font-family="var(--font-sans)">{{RADAR_1_LABEL}}</text>
+        <text x="200" y="48" text-anchor="middle" fill="var(--text-muted)" font-size="12" font-family="var(--font-mono)">{{RADAR_1_VALUE}}</text>
+
+        <text x="365" y="200" text-anchor="start" dominant-baseline="middle" fill="var(--text)" font-size="14" font-weight="600" font-family="var(--font-sans)">{{RADAR_2_LABEL}}</text>
+        <text x="365" y="216" text-anchor="start" fill="var(--text-muted)" font-size="12" font-family="var(--font-mono)">{{RADAR_2_VALUE}}</text>
+
+        <text x="200" y="380" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="600" font-family="var(--font-sans)">{{RADAR_3_LABEL}}</text>
+        <text x="200" y="396" text-anchor="middle" fill="var(--text-muted)" font-size="12" font-family="var(--font-mono)">{{RADAR_3_VALUE}}</text>
+
+        <text x="35" y="200" text-anchor="end" dominant-baseline="middle" fill="var(--text)" font-size="14" font-weight="600" font-family="var(--font-sans)">{{RADAR_4_LABEL}}</text>
+        <text x="35" y="216" text-anchor="end" fill="var(--text-muted)" font-size="12" font-family="var(--font-mono)">{{RADAR_4_VALUE}}</text>
+      </svg>
+    </div>
+
+    <!-- Progress Bars -->
+    <div class="progress-container">
+      <h3>{{PROGRESS_TITLE}}</h3>
+
+      <div class="progress-item">
+        <div class="progress-header">
+          <span class="progress-label">{{PROGRESS_1_LABEL}}</span>
+          <span class="progress-score">{{PROGRESS_1_SCORE}}</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill {{PROGRESS_1_CLASS}}" style="width: {{PROGRESS_1_PCT}}%;"></div>
+        </div>
+      </div>
+
+      <div class="progress-item">
+        <div class="progress-header">
+          <span class="progress-label">{{PROGRESS_2_LABEL}}</span>
+          <span class="progress-score">{{PROGRESS_2_SCORE}}</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill {{PROGRESS_2_CLASS}}" style="width: {{PROGRESS_2_PCT}}%;"></div>
+        </div>
+      </div>
+
+      <div class="progress-item">
+        <div class="progress-header">
+          <span class="progress-label">{{PROGRESS_3_LABEL}}</span>
+          <span class="progress-score">{{PROGRESS_3_SCORE}}</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill {{PROGRESS_3_CLASS}}" style="width: {{PROGRESS_3_PCT}}%;"></div>
+        </div>
+      </div>
+
+      <div class="progress-item">
+        <div class="progress-header">
+          <span class="progress-label">{{PROGRESS_4_LABEL}}</span>
+          <span class="progress-score">{{PROGRESS_4_SCORE}}</span>
+        </div>
+        <div class="progress-track">
+          <div class="progress-fill {{PROGRESS_4_CLASS}}" style="width: {{PROGRESS_4_PCT}}%;"></div>
+        </div>
       </div>
     </div>
 

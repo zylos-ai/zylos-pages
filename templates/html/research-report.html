@@ -27,6 +27,16 @@
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
       --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
       --content-width: 860px;
+      /* -- Chart colors -- */
+      --chart-bar-1: #2563eb;
+      --chart-bar-2: #7c3aed;
+      --chart-bar-3: #059669;
+      --chart-bar-4: #d97706;
+      --chart-bar-5: #dc2626;
+      --chart-bar-bg: #e5e7eb;
+      --chart-pie-blue: #3b82f6;
+      --chart-pie-purple: #8b5cf6;
+      --chart-pie-teal: #14b8a6;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -39,6 +49,15 @@
         --error: #f87171; --error-light: #450a0a;
         --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
         --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4), 0 2px 4px -2px rgba(0,0,0,0.3);
+        --chart-bar-1: #60a5fa;
+        --chart-bar-2: #a78bfa;
+        --chart-bar-3: #34d399;
+        --chart-bar-4: #fbbf24;
+        --chart-bar-5: #f87171;
+        --chart-bar-bg: #334155;
+        --chart-pie-blue: #60a5fa;
+        --chart-pie-purple: #a78bfa;
+        --chart-pie-teal: #2dd4bf;
       }
     }
     html { font-size: 16px; }
@@ -132,6 +151,23 @@
       text-align: center;
     }
 
+    /* -- Chart styles -- */
+    .chart-title {
+      font-size: var(--font-size-lg);
+      font-weight: 600;
+      margin-bottom: var(--space-4);
+      color: var(--text);
+    }
+    .chart-container {
+      width: 100%;
+      overflow-x: auto;
+    }
+    .chart-container svg {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
     @media print {
       body { background: white; color: black; }
       .report { max-width: none; padding: 0; }
@@ -160,6 +196,86 @@
     <div class="executive-summary">
       <h2>Executive Summary</h2>
       <p>{{SUMMARY}}</p>
+    </div>
+
+    <!-- == Chart: Horizontal Bar Chart == -->
+    <div class="finding-card">
+      <h4 class="chart-title">{{BAR_CHART_TITLE}}</h4>
+      <div class="chart-container">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 280" role="img" aria-label="{{BAR_CHART_TITLE}}">
+          <!-- Background grid lines -->
+          <line x1="160" y1="30" x2="160" y2="250" stroke="var(--border)" stroke-width="1"/>
+          <line x1="295" y1="30" x2="295" y2="250" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4,4"/>
+          <line x1="430" y1="30" x2="430" y2="250" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4,4"/>
+          <line x1="565" y1="30" x2="565" y2="250" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4,4"/>
+          <line x1="700" y1="30" x2="700" y2="250" stroke="var(--border)" stroke-width="1"/>
+
+          <!-- Axis labels -->
+          <text x="160" y="268" fill="var(--text-muted)" font-size="11" font-family="var(--font-sans)" text-anchor="middle">0</text>
+          <text x="295" y="268" fill="var(--text-muted)" font-size="11" font-family="var(--font-sans)" text-anchor="middle">25</text>
+          <text x="430" y="268" fill="var(--text-muted)" font-size="11" font-family="var(--font-sans)" text-anchor="middle">50</text>
+          <text x="565" y="268" fill="var(--text-muted)" font-size="11" font-family="var(--font-sans)" text-anchor="middle">75</text>
+          <text x="700" y="268" fill="var(--text-muted)" font-size="11" font-family="var(--font-sans)" text-anchor="middle">100</text>
+
+          <!-- Row 1 -->
+          <text x="150" y="56" fill="var(--text)" font-size="13" font-family="var(--font-sans)" text-anchor="end" dominant-baseline="middle">{{BAR_1_LABEL}}</text>
+          <rect x="160" y="40" width="540" height="28" rx="4" fill="var(--chart-bar-bg)" opacity="0.4"/>
+          <rect x="160" y="40" width="{{BAR_1_WIDTH}}" height="28" rx="4" fill="var(--chart-bar-1)"/>
+          <text x="{{BAR_1_TEXT_X}}" y="56" fill="var(--text)" font-size="12" font-family="var(--font-sans)" font-weight="600" dominant-baseline="middle">{{BAR_1_VALUE}}</text>
+
+          <!-- Row 2 -->
+          <text x="150" y="100" fill="var(--text)" font-size="13" font-family="var(--font-sans)" text-anchor="end" dominant-baseline="middle">{{BAR_2_LABEL}}</text>
+          <rect x="160" y="84" width="540" height="28" rx="4" fill="var(--chart-bar-bg)" opacity="0.4"/>
+          <rect x="160" y="84" width="{{BAR_2_WIDTH}}" height="28" rx="4" fill="var(--chart-bar-2)"/>
+          <text x="{{BAR_2_TEXT_X}}" y="100" fill="var(--text)" font-size="12" font-family="var(--font-sans)" font-weight="600" dominant-baseline="middle">{{BAR_2_VALUE}}</text>
+
+          <!-- Row 3 -->
+          <text x="150" y="144" fill="var(--text)" font-size="13" font-family="var(--font-sans)" text-anchor="end" dominant-baseline="middle">{{BAR_3_LABEL}}</text>
+          <rect x="160" y="128" width="540" height="28" rx="4" fill="var(--chart-bar-bg)" opacity="0.4"/>
+          <rect x="160" y="128" width="{{BAR_3_WIDTH}}" height="28" rx="4" fill="var(--chart-bar-3)"/>
+          <text x="{{BAR_3_TEXT_X}}" y="144" fill="var(--text)" font-size="12" font-family="var(--font-sans)" font-weight="600" dominant-baseline="middle">{{BAR_3_VALUE}}</text>
+
+          <!-- Row 4 -->
+          <text x="150" y="188" fill="var(--text)" font-size="13" font-family="var(--font-sans)" text-anchor="end" dominant-baseline="middle">{{BAR_4_LABEL}}</text>
+          <rect x="160" y="172" width="540" height="28" rx="4" fill="var(--chart-bar-bg)" opacity="0.4"/>
+          <rect x="160" y="172" width="{{BAR_4_WIDTH}}" height="28" rx="4" fill="var(--chart-bar-4)"/>
+          <text x="{{BAR_4_TEXT_X}}" y="188" fill="var(--text)" font-size="12" font-family="var(--font-sans)" font-weight="600" dominant-baseline="middle">{{BAR_4_VALUE}}</text>
+
+          <!-- Row 5 -->
+          <text x="150" y="232" fill="var(--text)" font-size="13" font-family="var(--font-sans)" text-anchor="end" dominant-baseline="middle">{{BAR_5_LABEL}}</text>
+          <rect x="160" y="216" width="540" height="28" rx="4" fill="var(--chart-bar-bg)" opacity="0.4"/>
+          <rect x="160" y="216" width="{{BAR_5_WIDTH}}" height="28" rx="4" fill="var(--chart-bar-5)"/>
+          <text x="{{BAR_5_TEXT_X}}" y="232" fill="var(--text)" font-size="12" font-family="var(--font-sans)" font-weight="600" dominant-baseline="middle">{{BAR_5_VALUE}}</text>
+        </svg>
+      </div>
+    </div>
+
+    <!-- == Chart: Pie Chart == -->
+    <div class="finding-card">
+      <h4 class="chart-title">{{PIE_CHART_TITLE}}</h4>
+      <div class="chart-container" style="display: flex; flex-direction: column; align-items: center;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400" role="img" aria-label="{{PIE_CHART_TITLE}}">
+          <!-- Segment 1 -->
+          <path d="{{PIE_1_PATH}}" fill="var(--chart-pie-blue)"/>
+          <!-- Segment 2 -->
+          <path d="{{PIE_2_PATH}}" fill="var(--chart-pie-purple)"/>
+          <!-- Segment 3 -->
+          <path d="{{PIE_3_PATH}}" fill="var(--chart-pie-teal)"/>
+
+          <!-- Percentage labels -->
+          <text x="{{PIE_1_LABEL_X}}" y="{{PIE_1_LABEL_Y}}" fill="#ffffff" font-size="16" font-weight="700" font-family="var(--font-sans)" text-anchor="middle" dominant-baseline="middle">{{PIE_1_PCT}}</text>
+          <text x="{{PIE_2_LABEL_X}}" y="{{PIE_2_LABEL_Y}}" fill="#ffffff" font-size="16" font-weight="700" font-family="var(--font-sans)" text-anchor="middle" dominant-baseline="middle">{{PIE_2_PCT}}</text>
+          <text x="{{PIE_3_LABEL_X}}" y="{{PIE_3_LABEL_Y}}" fill="#ffffff" font-size="16" font-weight="700" font-family="var(--font-sans)" text-anchor="middle" dominant-baseline="middle">{{PIE_3_PCT}}</text>
+
+          <!-- Legend -->
+          <rect x="60" y="355" width="14" height="14" rx="3" fill="var(--chart-pie-blue)"/>
+          <text x="80" y="366" fill="var(--text-secondary)" font-size="13" font-family="var(--font-sans)" dominant-baseline="middle">{{PIE_1_LABEL}}</text>
+          <rect x="195" y="355" width="14" height="14" rx="3" fill="var(--chart-pie-purple)"/>
+          <text x="215" y="366" fill="var(--text-secondary)" font-size="13" font-family="var(--font-sans)" dominant-baseline="middle">{{PIE_2_LABEL}}</text>
+          <rect x="310" y="355" width="14" height="14" rx="3" fill="var(--chart-pie-teal)"/>
+          <text x="330" y="366" fill="var(--text-secondary)" font-size="13" font-family="var(--font-sans)" dominant-baseline="middle">{{PIE_3_LABEL}}</text>
+        </svg>
+      </div>
     </div>
 
     <nav class="toc">
