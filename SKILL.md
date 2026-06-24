@@ -51,3 +51,23 @@ echo "# Hello World" > ~/zylos/http/public/pages/hello.md
 
 # View it at https://domain/pages/hello
 ```
+
+## References
+
+| Document | When to read |
+|----------|-------------|
+| `references/html-rendering.md` | When creating HTML artifacts (`.html` files), choosing between Markdown vs HTML mode, or needing to understand CSP constraints, dark mode, CJK typography, and responsive design best practices |
+| `templates/html/README.md` | When generating HTML reports — lists available templates, usage instructions, and the shared design system |
+
+## HTML Report Templates
+
+Four standalone HTML templates are available in `templates/html/`:
+
+| Template | Use case |
+|----------|----------|
+| `research-report.html` | Research/investigation reports with summary, findings, and recommendations |
+| `technical-proposal.html` | Technical proposals with architecture sections, pros/cons comparison |
+| `comparison.html` | A-vs-B product or technology comparisons with scoring |
+| `evaluation.html` | Candidate or vendor evaluations with rating breakdowns |
+
+All templates share `templates/html/base.css` (design tokens, dark mode, CJK fonts, responsive layout). Copy a template, fill in content, and save as `.html` in the pages directory.
