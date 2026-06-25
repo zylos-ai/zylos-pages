@@ -1,6 +1,6 @@
 {
   "name": "zylos-pages",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Markdown-to-HTML rendering component for zylos — write .md, get beautiful web pages",
   "type": "module",
   "main": "src/index.js",
