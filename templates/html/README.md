@@ -12,6 +12,7 @@ The layouts are adapted from common open-source report patterns: executive summa
 | `technical-proposal.html` | Technical proposals, architecture documents, design specs | Purple |
 | `comparison.html` | A vs B comparisons, competitive analysis, feature matrices | Teal |
 | `evaluation.html` | Interview evaluations, candidate assessments, review reports | Teal-green |
+| `interview-questions.html` | Interview question guides with hypotheses, pacing, and judgment framework | Blue |
 
 ## Shared Design System
 
