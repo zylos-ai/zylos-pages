@@ -126,6 +126,13 @@ function sharePage(args) {
   const config = getConfig();
   const normalized = normalizeSlug(slug);
 
+  try {
+    resolveSafePath(normalized, config.contentDir);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+
   if (config.sharing?.enabled === false) {
     console.error('Error: sharing is disabled in config (sharing.enabled=false)');
     process.exit(1);
