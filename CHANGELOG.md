@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] - 2026-06-25
+
+### Added
+- **Interview questions HTML template** (#64): New `interview-questions.html` in `templates/html/` for structured interview question guides — candidate info card, prior round summary, core hypotheses, numbered question blocks with interviewer notes/follow-ups, pacing notes, judgment framework table, and badge variants (required/new/optional).
+
 ## [0.4.0] - 2026-06-25
 
 ### Added
