@@ -121,9 +121,11 @@ function normalizeAndValidateSlug(rawSlug) {
   return slug;
 }
 
-function assertMarkdown(filePath) {
-  if (path.extname(filePath).toLowerCase() !== '.md') {
-    throw new CliError('source_not_markdown', 'source must be a Markdown .md file');
+const ALLOWED_EXTENSIONS = new Set(['.md', '.html']);
+
+function assertAllowedExtension(filePath) {
+  if (!ALLOWED_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+    throw new CliError('source_not_allowed', 'source must be a .md or .html file');
   }
 }
 
@@ -148,7 +150,7 @@ function resolveSource(sourcePath, allowedRoot) {
   if (!sourcePath || !path.isAbsolute(sourcePath)) {
     throw new CliError('source_missing', 'source must be an absolute path');
   }
-  assertMarkdown(sourcePath);
+  assertAllowedExtension(sourcePath);
 
   let sourceRealPath;
   try {
@@ -156,7 +158,7 @@ function resolveSource(sourcePath, allowedRoot) {
   } catch {
     throw new CliError('source_missing', 'source file does not exist');
   }
-  assertMarkdown(sourceRealPath);
+  assertAllowedExtension(sourceRealPath);
 
   if (!isInsideRoot(sourceRealPath, allowedRoot)) {
     throw new CliError('source_outside_allowed_root', 'source is outside the configured allowed root');
