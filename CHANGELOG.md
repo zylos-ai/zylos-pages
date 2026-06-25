@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.0] - 2026-06-25
+
+### Added
+- **Pages CLI** (#61): `src/cli/pages.js` with three commands — `templates` (list available HTML templates), `create --template <name> --slug <path>` (create page from template in correct content directory), `share <slug> --duration <dur>` (create public share link). Eliminates wrong-directory and manual-template-copy failure modes for agents.
+- **SKILL.md CLI quick-start**: Added "Creating HTML Pages (CLI)" section at the top of SKILL.md for discoverability.
+
+### Security
+- Path traversal guard (`resolveSafePath()`) on both `create` and `share` commands — rejects slugs containing `..` segments.
+- `share` command respects `sharing.enabled=false` configuration.
+
 ## [0.3.1] - 2026-06-24
 
 ### Added
