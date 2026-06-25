@@ -82,7 +82,7 @@ echo "# Hello World" > ~/zylos/http/public/pages/hello.md
 
 ## HTML Report Templates
 
-Four standalone HTML templates are available in `templates/html/`:
+Five standalone HTML templates are available in `templates/html/`:
 
 | Template | Use case |
 |----------|----------|
@@ -90,5 +90,6 @@ Four standalone HTML templates are available in `templates/html/`:
 | `technical-proposal.html` | Technical proposals with architecture sections, pros/cons comparison |
 | `comparison.html` | A-vs-B product or technology comparisons with scoring |
 | `evaluation.html` | Candidate or vendor evaluations with rating breakdowns |
+| `interview-questions.html` | Interview question guides with hypotheses, pacing notes, and judgment framework |
 
 All templates share `templates/html/base.css` (design tokens, dark mode, CJK fonts, responsive layout). Copy a template, fill in content, and save as `.html` in the pages directory.
