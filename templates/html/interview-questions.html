@@ -25,7 +25,7 @@
       --info: #0891b2; --info-light: #cffafe;
       --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
       --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
-      --content-width: 860px;
+      --content-width: 1260px;
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -115,14 +115,30 @@
 
     .question-block {
       background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: var(--radius-lg); padding: var(--space-6);
+      border-radius: var(--radius-lg);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0;
       margin-bottom: var(--space-6); box-shadow: var(--shadow-sm);
       border-left: 4px solid var(--accent);
     }
     .question-block h3 {
       font-size: var(--font-size-lg); margin-top: 0; margin-bottom: var(--space-4);
       display: flex; align-items: center; gap: var(--space-2);
+      grid-column: 1 / -1; padding: var(--space-6) var(--space-6) 0 var(--space-6);
     }
+    .q-left { padding: 0 var(--space-6) var(--space-6) var(--space-6); }
+    .q-right {
+      padding: 0 var(--space-6) var(--space-6) var(--space-6);
+      border-left: 1px solid var(--border);
+    }
+    .q-right h4 {
+      font-size: var(--font-size-sm); color: var(--success); margin-bottom: var(--space-3);
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .q-right ul, .q-right ol { padding-left: var(--space-4); margin-bottom: var(--space-3); }
+    .q-right li { font-size: var(--font-size-sm); color: var(--text-secondary); margin-bottom: var(--space-2); }
+    .q-right .ref-good { color: var(--success); font-weight: 600; font-size: var(--font-size-xs); }
+    .q-right .ref-bad { color: var(--error); font-weight: 600; font-size: var(--font-size-xs); }
+    .q-right .ref-note { font-size: var(--font-size-xs); color: var(--text-muted); margin-top: var(--space-2); }
     .q-num {
       display: inline-flex; align-items: center; justify-content: center;
       width: 28px; height: 28px; border-radius: 50%;
@@ -170,6 +186,11 @@
       margin-top: var(--space-12); padding-top: var(--space-6);
       border-top: 1px solid var(--border);
       font-size: var(--font-size-sm); color: var(--text-muted); text-align: center;
+    }
+
+    @media (max-width: 900px) {
+      .question-block { grid-template-columns: 1fr; }
+      .q-right { border-left: none; border-top: 1px solid var(--border); padding-top: var(--space-4); }
     }
 
     @media print {
@@ -244,20 +265,52 @@
 
       <div class="question-block">
         <h3><span class="q-num">1</span> {{Q1_TITLE}}</h3>
-        <div class="question-text">{{Q1_TEXT}}</div>
-        <div class="interviewer-note">
-          <strong>Note:</strong> {{Q1_NOTE}}
+        <div class="q-left">
+          <div class="question-text">{{Q1_TEXT}}</div>
+          <div class="interviewer-note">
+            <strong>Note:</strong> {{Q1_NOTE}}
+          </div>
+          <div class="followup">
+            <strong>Follow-up:</strong> {{Q1_FOLLOWUP}}
+          </div>
         </div>
-        <div class="followup">
-          <strong>Follow-up:</strong> {{Q1_FOLLOWUP}}
+        <div class="q-right">
+          <h4>Reference Answer</h4>
+          <p class="ref-good">&#10003; {{Q1_REF_GOOD_LABEL}}</p>
+          <ul>
+            <li>{{Q1_REF_GOOD_1}}</li>
+            <li>{{Q1_REF_GOOD_2}}</li>
+          </ul>
+          <p class="ref-bad">&#10007; {{Q1_REF_BAD_LABEL}}</p>
+          <ul>
+            <li>{{Q1_REF_BAD_1}}</li>
+            <li>{{Q1_REF_BAD_2}}</li>
+          </ul>
+          <p class="ref-note">{{Q1_REF_NOTE}}</p>
         </div>
       </div>
 
       <div class="question-block">
         <h3><span class="q-num">2</span> {{Q2_TITLE}}</h3>
-        <div class="question-text">{{Q2_TEXT}}</div>
-        <div class="interviewer-note">
-          <strong>Note:</strong> {{Q2_NOTE}}
+        <div class="q-left">
+          <div class="question-text">{{Q2_TEXT}}</div>
+          <div class="interviewer-note">
+            <strong>Note:</strong> {{Q2_NOTE}}
+          </div>
+        </div>
+        <div class="q-right">
+          <h4>Reference Answer</h4>
+          <p class="ref-good">&#10003; {{Q2_REF_GOOD_LABEL}}</p>
+          <ul>
+            <li>{{Q2_REF_GOOD_1}}</li>
+            <li>{{Q2_REF_GOOD_2}}</li>
+          </ul>
+          <p class="ref-bad">&#10007; {{Q2_REF_BAD_LABEL}}</p>
+          <ul>
+            <li>{{Q2_REF_BAD_1}}</li>
+            <li>{{Q2_REF_BAD_2}}</li>
+          </ul>
+          <p class="ref-note">{{Q2_REF_NOTE}}</p>
         </div>
       </div>
     </section>
@@ -267,17 +320,49 @@
 
       <div class="question-block">
         <h3><span class="q-num">3</span> {{Q3_TITLE}}</h3>
-        <div class="question-text">{{Q3_TEXT}}</div>
-        <div class="interviewer-note">
-          <strong>Note:</strong> {{Q3_NOTE}}
+        <div class="q-left">
+          <div class="question-text">{{Q3_TEXT}}</div>
+          <div class="interviewer-note">
+            <strong>Note:</strong> {{Q3_NOTE}}
+          </div>
+        </div>
+        <div class="q-right">
+          <h4>Reference Answer</h4>
+          <p class="ref-good">&#10003; {{Q3_REF_GOOD_LABEL}}</p>
+          <ul>
+            <li>{{Q3_REF_GOOD_1}}</li>
+            <li>{{Q3_REF_GOOD_2}}</li>
+          </ul>
+          <p class="ref-bad">&#10007; {{Q3_REF_BAD_LABEL}}</p>
+          <ul>
+            <li>{{Q3_REF_BAD_1}}</li>
+            <li>{{Q3_REF_BAD_2}}</li>
+          </ul>
+          <p class="ref-note">{{Q3_REF_NOTE}}</p>
         </div>
       </div>
 
       <div class="question-block">
         <h3><span class="q-num">4</span> {{Q4_TITLE}}</h3>
-        <div class="question-text">{{Q4_TEXT}}</div>
-        <div class="interviewer-note">
-          <strong>Note:</strong> {{Q4_NOTE}}
+        <div class="q-left">
+          <div class="question-text">{{Q4_TEXT}}</div>
+          <div class="interviewer-note">
+            <strong>Note:</strong> {{Q4_NOTE}}
+          </div>
+        </div>
+        <div class="q-right">
+          <h4>Reference Answer</h4>
+          <p class="ref-good">&#10003; {{Q4_REF_GOOD_LABEL}}</p>
+          <ul>
+            <li>{{Q4_REF_GOOD_1}}</li>
+            <li>{{Q4_REF_GOOD_2}}</li>
+          </ul>
+          <p class="ref-bad">&#10007; {{Q4_REF_BAD_LABEL}}</p>
+          <ul>
+            <li>{{Q4_REF_BAD_1}}</li>
+            <li>{{Q4_REF_BAD_2}}</li>
+          </ul>
+          <p class="ref-note">{{Q4_REF_NOTE}}</p>
         </div>
       </div>
     </section>
