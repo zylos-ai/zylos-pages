@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.2] - 2026-06-25
+
+### Changed
+- **Interview questions template side-by-side layout** (#66): Question blocks now use CSS Grid two-column layout — left column for question/notes/follow-ups, right column for reference answers (good/bad indicators + notes). Content width expanded to 1260px. Responsive fallback to single column below 900px.
+
 ## [0.4.1] - 2026-06-25
 
 ### Added
