@@ -43,7 +43,28 @@ dependencies: []
 
 # Zylos Pages
 
-Render Markdown files as styled web pages.
+Render Markdown and HTML files as styled web pages.
+
+## Creating HTML Pages (CLI)
+
+```bash
+PAGES_DIR="~/.claude/skills/pages"
+
+# List available templates
+node $PAGES_DIR/src/cli/pages.js templates
+
+# Create a page from template (writes to the correct content directory)
+node $PAGES_DIR/src/cli/pages.js create --template technical-proposal --slug docs/my-report
+
+# Edit the file — replace {{PLACEHOLDER}} values with content
+
+# Create a public share link (no login required)
+node $PAGES_DIR/src/cli/pages.js share docs/my-report --duration 30d
+```
+
+Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
+
+## Quick Start (Markdown)
 
 ```bash
 # Write a page
