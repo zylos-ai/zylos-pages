@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { getConfig } from '../lib/config.js';
 import { createShare } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
+import { resolveSafePath } from '../security/pathGuard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = path.resolve(__dirname, '../../templates/html');
@@ -83,6 +84,15 @@ function createPage(args) {
 
   const config = getConfig();
   const slug = normalizeSlug(args.slug);
+
+  // Validate slug stays within content root (rejects .. traversal)
+  try {
+    resolveSafePath(slug, config.contentDir);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+
   const outPath = path.join(config.contentDir, `${slug}.html`);
 
   const outDir = path.dirname(outPath);
@@ -115,6 +125,11 @@ function sharePage(args) {
   const duration = args.duration || '30d';
   const config = getConfig();
   const normalized = normalizeSlug(slug);
+
+  if (config.sharing?.enabled === false) {
+    console.error('Error: sharing is disabled in config (sharing.enabled=false)');
+    process.exit(1);
+  }
 
   const htmlPath = path.join(config.contentDir, `${normalized}.html`);
   const mdPath = path.join(config.contentDir, `${normalized}.md`);
