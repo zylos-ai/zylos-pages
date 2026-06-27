@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.0] - 2026-06-27
+
+### Added
+- **HTML files in external-files registration** (#69): External-files registration now accepts `.html` sources. An `.html` source is linked at a `<slug>.html` path and rendered as a full-page HTML artifact (type `html`), instead of being misrouted through the Markdown pipeline. The symlink extension is now derived from the source file rather than hardcoded to `.md`, so future non-markdown source types register correctly.
+
 ## [0.4.2] - 2026-06-25
 
 ### Changed
