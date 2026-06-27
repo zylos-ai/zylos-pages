@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DATA_DIR, getConfig } from '../lib/config.js';
-import { resolveSafePath } from '../security/pathGuard.js';
+import { resolvePagePath } from '../security/pathGuard.js';
 import { normalizeSlug } from '../utils/slug.js';
 
 const REGISTRY_PATH = path.join(DATA_DIR, 'external-files.json');
@@ -394,7 +394,8 @@ function commandRegister(args) {
   const component = args.component;
   const allowedRoot = resolveAllowedRoot(externalConfig, component);
   const sourceRealPath = resolveSource(args.source, allowedRoot);
-  const linkPath = resolveSafePath(slug, externalConfig.contentDir);
+  const linkExtension = path.extname(sourceRealPath).toLowerCase();
+  const linkPath = resolvePagePath(slug, externalConfig.contentDir, linkExtension);
   const now = new Date().toISOString();
   let createdLink = false;
 
