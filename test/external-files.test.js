@@ -213,16 +213,46 @@ test('source symlink escaping allowed root is rejected', () => {
   assert.equal(result.code, 'source_outside_allowed_root');
 });
 
-test('missing and non-markdown sources are rejected', () => {
+test('missing and disallowed-extension sources are rejected', () => {
   const fixture = makeFixture();
   const txt = path.join(fixture.sourceRoot, 'notes.txt');
-  fs.writeFileSync(txt, 'not markdown\n');
+  fs.writeFileSync(txt, 'not a page\n');
 
-  const nonMarkdown = runCli(fixture, registerArgs('notes', txt), { expectFailure: true });
-  assert.equal(nonMarkdown.code, 'source_not_markdown');
+  const disallowed = runCli(fixture, registerArgs('notes', txt), { expectFailure: true });
+  assert.equal(disallowed.code, 'source_not_allowed');
 
   const missing = runCli(fixture, registerArgs('missing', path.join(fixture.sourceRoot, 'missing.md')), { expectFailure: true });
   assert.equal(missing.code, 'source_missing');
+});
+
+test('html source registers as an .html link and resolves as an html page', async () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'artifact.html');
+  fs.writeFileSync(source, '<!doctype html><title>Artifact</title><h1>Artifact</h1>\n');
+
+  const result = runCli(fixture, registerArgs('recruit/artifact', source));
+  assert.equal(result.ok, true);
+
+  const linkPath = path.join(fixture.contentDir, 'recruit/artifact.html');
+  assert.equal(result.linkPath, linkPath);
+  assert.equal(fs.existsSync(path.join(fixture.contentDir, 'recruit/artifact.md')), false);
+  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
+  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(source));
+
+  const { resolvePageDescriptor } = await import('../src/security/pathGuard.js');
+  const descriptor = await resolvePageDescriptor('recruit/artifact', fixture.contentDir);
+  assert.equal(descriptor.type, 'html');
+  assert.equal(descriptor.filePath, linkPath);
+});
+
+test('markdown source still registers as an .md link', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'notes.md');
+  fs.writeFileSync(source, '# Notes\n');
+
+  const result = runCli(fixture, registerArgs('recruit/notes', source));
+  assert.equal(result.ok, true);
+  assert.equal(result.linkPath, path.join(fixture.contentDir, 'recruit/notes.md'));
 });
 
 test('existing normal page is not overwritten', () => {

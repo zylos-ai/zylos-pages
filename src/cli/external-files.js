@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DATA_DIR, getConfig } from '../lib/config.js';
-import { resolveSafePath } from '../security/pathGuard.js';
+import { resolvePagePath } from '../security/pathGuard.js';
 import { normalizeSlug } from '../utils/slug.js';
 
 const REGISTRY_PATH = path.join(DATA_DIR, 'external-files.json');
@@ -121,9 +121,11 @@ function normalizeAndValidateSlug(rawSlug) {
   return slug;
 }
 
-function assertMarkdown(filePath) {
-  if (path.extname(filePath).toLowerCase() !== '.md') {
-    throw new CliError('source_not_markdown', 'source must be a Markdown .md file');
+const ALLOWED_EXTENSIONS = new Set(['.md', '.html']);
+
+function assertAllowedExtension(filePath) {
+  if (!ALLOWED_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
+    throw new CliError('source_not_allowed', 'source must be a .md or .html file');
   }
 }
 
@@ -148,7 +150,7 @@ function resolveSource(sourcePath, allowedRoot) {
   if (!sourcePath || !path.isAbsolute(sourcePath)) {
     throw new CliError('source_missing', 'source must be an absolute path');
   }
-  assertMarkdown(sourcePath);
+  assertAllowedExtension(sourcePath);
 
   let sourceRealPath;
   try {
@@ -156,7 +158,7 @@ function resolveSource(sourcePath, allowedRoot) {
   } catch {
     throw new CliError('source_missing', 'source file does not exist');
   }
-  assertMarkdown(sourceRealPath);
+  assertAllowedExtension(sourceRealPath);
 
   if (!isInsideRoot(sourceRealPath, allowedRoot)) {
     throw new CliError('source_outside_allowed_root', 'source is outside the configured allowed root');
@@ -392,7 +394,8 @@ function commandRegister(args) {
   const component = args.component;
   const allowedRoot = resolveAllowedRoot(externalConfig, component);
   const sourceRealPath = resolveSource(args.source, allowedRoot);
-  const linkPath = resolveSafePath(slug, externalConfig.contentDir);
+  const linkExtension = path.extname(sourceRealPath).toLowerCase();
+  const linkPath = resolvePagePath(slug, externalConfig.contentDir, linkExtension);
   const now = new Date().toISOString();
   let createdLink = false;
 
