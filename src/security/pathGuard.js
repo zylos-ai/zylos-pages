@@ -3,6 +3,7 @@
 import { resolve, relative, extname } from 'node:path';
 import { access } from 'node:fs/promises';
 import { getMimeType, isAssetExtension } from '../utils/mime.js';
+import { getLogicalPage } from '../pages/page-store.js';
 
 export class PathViolationError extends Error {
   constructor(msg) {
@@ -80,6 +81,18 @@ async function exists(filePath) {
  */
 export async function resolvePageDescriptor(slug, contentRoot) {
   validateSlug(slug);
+  const logicalPage = getLogicalPage(slug);
+  if (logicalPage) {
+    return {
+      type: logicalPage.sourceExt === '.html' ? 'html' : 'markdown',
+      filePath: logicalPage.sourcePath,
+      slug,
+      logical: true,
+      title: logicalPage.title,
+      accessMode: logicalPage.accessMode,
+    };
+  }
+
   const htmlPath = resolveCandidate(slug, contentRoot, '.html');
   const markdownPath = resolveCandidate(slug, contentRoot, '.md');
 

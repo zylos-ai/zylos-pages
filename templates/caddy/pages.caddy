@@ -1,0 +1,8 @@
+# zylos-pages reverse proxy.
+# External entry stays /pages/* while the app receives root-level paths.
+handle_path /pages/* {
+  reverse_proxy 127.0.0.1:3462 {
+    header_up X-Forwarded-Prefix /pages
+  }
+}
+

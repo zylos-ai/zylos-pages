@@ -26,6 +26,8 @@ export function pageRoute(config) {
     const start = performance.now();
     const browserBase = browserBaseFromRequest(req);
     const rawSlug = req.params.slug || req.params[0] || req.path.slice(1) || '';
+    const isLogicalRoute = rawSlug.startsWith('p/');
+    const routeSlug = isLogicalRoute ? rawSlug.slice(2) : rawSlug;
 
     // Redirect explicit extension URLs to clean URLs.
     if (/\.md$/i.test(rawSlug)) {
@@ -35,18 +37,19 @@ export function pageRoute(config) {
       return redirectCleanExtension(req, res, browserBase, rawSlug, 'html');
     }
 
-    const slug = normalizeSlug(rawSlug);
+    const slug = normalizeSlug(routeSlug);
+    const displaySlug = isLogicalRoute ? `p/${slug}` : slug;
 
     // Redirect if slug was normalized differently
-    if (slug !== rawSlug && slug !== decodeURIComponent(rawSlug)) {
-      return res.redirect(301, browserPath(browserBase, slug));
+    if (routeSlug && slug !== routeSlug && slug !== decodeURIComponent(routeSlug)) {
+      return res.redirect(301, browserPath(browserBase, displaySlug));
     }
 
     const isShareViewer = res.locals.viewerType === 'share';
     const shareCanWriteAttachments = res.locals.shareCanWriteAttachments === true;
 
     try {
-      const result = await getPage(slug, config, browserBase);
+      const result = await getPage(displaySlug, config, browserBase);
       const elapsed = Math.round(performance.now() - start);
       const isHtmlArtifact = result.type === 'html';
 
@@ -97,13 +100,13 @@ export function pageRoute(config) {
       if (isHtmlArtifact) {
         const titleMatch = result.html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
         const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : slug;
-        const iframeSrc = `${browserBase}/${encodeURI(slug)}?raw=1`;
-        let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug, iframeSrc });
+        const iframeSrc = browserPath(browserBase, `${displaySlug}?raw=1`);
+        let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug: displaySlug, iframeSrc });
         if (isShareViewer) {
           html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         } else {
           const pages = await scanPages(config.contentDir);
-          html = injectNavSidebar(html, pages, slug, browserBase);
+          html = injectNavSidebar(html, pages, displaySlug, browserBase);
         }
         logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
         return res.send(html);
@@ -116,7 +119,7 @@ export function pageRoute(config) {
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
       } else {
         const pages = await scanPages(config.contentDir);
-        html = injectNavSidebar(html, pages, slug, browserBase);
+        html = injectNavSidebar(html, pages, displaySlug, browserBase);
       }
 
       logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth' });

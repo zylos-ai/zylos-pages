@@ -2,6 +2,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
+import { rewriteRelativeAssetRefs } from '../pages/asset-resolver.js';
 import { getCachedPage, setCachedPage, invalidatePage } from '../cache/pageCache.js';
 import { singleflight } from '../cache/singleflight.js';
 import { renderPage } from './renderService.js';
@@ -20,8 +21,10 @@ import { logger } from '../utils/logger.js';
  */
 export async function getPage(rawSlug, config, browserBase = '') {
   const slug = normalizeSlug(rawSlug);
+  const routeSlug = slug.startsWith('p/') ? slug.slice(2) : slug;
+  const publicSlug = slug.startsWith('p/') ? slug : routeSlug;
   const cacheKey = `${browserBase || '/'}:${slug}`;
-  const descriptor = await resolvePageDescriptor(slug, config.contentDir);
+  const descriptor = await resolvePageDescriptor(routeSlug, config.contentDir);
 
   // Check cache — with mtime validation as safety net.
   // fs.watch on Linux can miss events from editors that use write-to-temp-then-rename
@@ -50,7 +53,7 @@ export async function getPage(rawSlug, config, browserBase = '') {
 
   // Singleflight: only one render/read per slug at a time
   const { result, shared } = await singleflight(cacheKey, async () => {
-    const current = await resolvePageDescriptor(slug, config.contentDir);
+    const current = await resolvePageDescriptor(routeSlug, config.contentDir);
     let rendered;
     let st;
 
@@ -70,6 +73,9 @@ export async function getPage(rawSlug, config, browserBase = '') {
         type: 'html',
         companionPath: current.companionPath,
       };
+      if (current.logical) {
+        rendered.html = rewriteRelativeAssetRefs(rendered.html, { baseUrl: browserBase, pageUri: routeSlug });
+      }
     } else {
       rendered = await renderPage(current.filePath, {
         allowRawHtml: config.security?.allowRawHtml ?? false,
@@ -78,8 +84,11 @@ export async function getPage(rawSlug, config, browserBase = '') {
         codeTheme: config.theme?.codeTheme ?? 'github-dark',
         renderTimeoutMs: config.security?.renderTimeoutMs ?? 5000,
         baseUrl: browserBase,
-        slug,
+        slug: publicSlug,
       });
+      if (current.logical) {
+        rendered.html = rewriteRelativeAssetRefs(rendered.html, { baseUrl: browserBase, pageUri: routeSlug });
+      }
       rendered.type = 'markdown';
       st = await stat(current.filePath);
     }

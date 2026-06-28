@@ -22,10 +22,11 @@ import { setupShareApi } from './routes/share-api.js';
 import { setupRawApi } from './routes/raw-api.js';
 import { setupStateApi } from './routes/state-api.js';
 import { setupAttachmentApi } from './routes/attachment-api.js';
-import { setupTodoApi } from './routes/todo-api.js';
-import { todoRoute } from './routes/todo-page.js';
 import { cleanupShares } from './sharing/share-manager.js';
 import { setupAssetRoute } from './routes/asset.js';
+import { setupLogicalAssetRoute } from './routes/logical-assets.js';
+import { setupPageApi } from './routes/page-api.js';
+import { adminRoute } from './routes/admin.js';
 import { pageRoute } from './routes/pages.js';
 import { indexRoute } from './routes/index.js';
 import { logger } from './utils/logger.js';
@@ -103,15 +104,12 @@ async function main() {
   setupRawApi(app, config);
   setupStateApi(app);
   setupAttachmentApi(app, config);
-
-  // Todo routes (before catch-all)
-  if (config.todo?.enabled) {
-    setupTodoApi(app, config);
-    app.get('/todo/:board', todoRoute(config));
-  }
+  setupPageApi(app, config);
 
   // Routes
   app.get('/', indexRoute(config));
+  app.get('/admin', adminRoute());
+  setupLogicalAssetRoute(app, config);
   setupAssetRoute(app, config);
   app.get('/:slug(*)', pageRoute(config));
 

@@ -61,11 +61,6 @@ function csrfCheck(req, res) {
 
 function requireAttachmentMutation(req, res, artifact) {
   if (res.locals.authenticated === true) return true;
-  if (res.locals.viewerType === 'share'
-      && res.locals.shareCanWriteAttachments === true
-      && res.locals.shareSlug === artifact) {
-    return true;
-  }
   logger.info('attachment mutation rejected', { path: req.path, viewer: res.locals.viewerType || 'none' });
   res.status(403).json({ error: 'Authentication required for attachment mutation' });
   return false;

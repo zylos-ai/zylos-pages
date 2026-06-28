@@ -105,7 +105,7 @@ async function upload(origin, artifact, key, cookie, buffer = JPEG, type = 'imag
   });
 }
 
-async function patchSharePermission(origin, tokenId, canWriteAttachments, cookie) {
+async function patchSharePermission(origin, tokenId, canWriteAttachments, cookie, expectedStatus = 200) {
   const response = await fetch(`${origin}/api/share/${tokenId}`, {
     method: 'PATCH',
     headers: {
@@ -115,7 +115,8 @@ async function patchSharePermission(origin, tokenId, canWriteAttachments, cookie
     },
     body: JSON.stringify({ canWriteAttachments }),
   });
-  assert.equal(response.status, 200);
+  assert.equal(response.status, expectedStatus);
+  if (expectedStatus !== 200) return response.json();
   const body = await response.json();
   assert.equal(body.ok, true);
   assert.equal(body.tokenId, tokenId);
@@ -321,7 +322,7 @@ test('share viewers can list and read matching artifact attachments but cannot m
   }
 });
 
-test('editable share viewers can upload and delete matching artifact attachments only', async () => {
+test('short share viewers remain read-only even when write permission is requested', async () => {
   const contentDir = await makeContentDir();
   try {
     const share = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
@@ -331,14 +332,7 @@ test('editable share viewers can upload and delete matching artifact attachments
       const shareCookies = cookieHeader(res.headers.get('set-cookie'));
 
       res = await upload(origin, 'renovation-checklist', 'editable-log', shareCookies);
-      assert.equal(res.status, 201);
-      const attachment = (await res.json()).attachment;
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/editable-log`, {
-        headers: { Cookie: shareCookies },
-      });
-      assert.equal(res.status, 200);
-      assert.equal((await res.json()).attachments.length, 1);
+      assert.equal(res.status, 403);
 
       res = await fetch(`${origin}/api/attachments/notes/wrong-artifact`, {
         method: 'POST',
@@ -359,20 +353,13 @@ test('editable share viewers can upload and delete matching artifact attachments
         headers: { Origin: origin, Cookie: shareCookies },
       });
       expectLoginRedirect(res);
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${attachment.attachmentId}`, {
-        method: 'DELETE',
-        headers: { Origin: origin, Cookie: shareCookies },
-      });
-      assert.equal(res.status, 200);
-      assert.deepEqual(await res.json(), { ok: true });
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
   }
 });
 
-test('existing short share cookie sessions reflect upgraded and downgraded attachment permission', async () => {
+test('existing short share cookie sessions cannot be upgraded to attachment writes', async () => {
   const contentDir = await makeContentDir();
   try {
     await withServer(baseConfig(contentDir), async ({ origin }) => {
@@ -386,36 +373,10 @@ test('existing short share cookie sessions reflect upgraded and downgraded attac
       res = await upload(origin, 'renovation-checklist', 'short-upgrade-before', readOnlyCookies);
       assert.equal(res.status, 403);
 
-      await patchSharePermission(origin, readOnly.tokenId, true, authCookie);
+      const body = await patchSharePermission(origin, readOnly.tokenId, true, authCookie, 410);
+      assert.deepEqual(body, { error: 'Public attachment writes are deprecated' });
 
       res = await upload(origin, 'renovation-checklist', 'short-upgrade-after', readOnlyCookies);
-      assert.equal(res.status, 201);
-      const upgradedAttachment = (await res.json()).attachment;
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${upgradedAttachment.attachmentId}`, {
-        method: 'DELETE',
-        headers: { Origin: origin, Cookie: readOnlyCookies },
-      });
-      assert.equal(res.status, 200);
-
-      const editable = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
-      res = await fetch(`${origin}/s/${editable.tokenId}`, { redirect: 'manual' });
-      assert.equal(res.status, 302);
-      const editableCookies = cookieHeader(res.headers.get('set-cookie'));
-
-      res = await upload(origin, 'renovation-checklist', 'short-downgrade-before', editableCookies);
-      assert.equal(res.status, 201);
-      const downgradedAttachment = (await res.json()).attachment;
-
-      await patchSharePermission(origin, editable.tokenId, false, authCookie);
-
-      res = await upload(origin, 'renovation-checklist', 'short-downgrade-after', editableCookies);
-      assert.equal(res.status, 403);
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${downgradedAttachment.attachmentId}`, {
-        method: 'DELETE',
-        headers: { Origin: origin, Cookie: editableCookies },
-      });
       assert.equal(res.status, 403);
     });
   } finally {
@@ -423,7 +384,7 @@ test('existing short share cookie sessions reflect upgraded and downgraded attac
   }
 });
 
-test('legacy editable tokens can upload and delete matching artifact attachments only', async () => {
+test('legacy tokens remain read-only even when created with deprecated write permission', async () => {
   const contentDir = await makeContentDir();
   try {
     const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
@@ -442,8 +403,7 @@ test('legacy editable tokens can upload and delete matching artifact attachments
         headers: { Origin: origin },
         body: formData(JPEG),
       });
-      assert.equal(res.status, 201);
-      const attachment = (await res.json()).attachment;
+      assert.equal(res.status, 403);
 
       res = await fetch(`${origin}/api/attachments/notes/legacy-wrong?token=${encodeURIComponent(editable.token)}`, {
         method: 'POST',
@@ -453,100 +413,11 @@ test('legacy editable tokens can upload and delete matching artifact attachments
       });
       expectLoginRedirect(res);
 
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${attachment.attachmentId}?token=${encodeURIComponent(readOnly.token)}`, {
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/not-found?token=${encodeURIComponent(readOnly.token)}`, {
         method: 'DELETE',
         headers: { Origin: origin },
       });
       assert.equal(res.status, 403);
-
-      res = await fetch(`${origin}/api/attachments/notes/${attachment.attachmentId}?token=${encodeURIComponent(editable.token)}`, {
-        method: 'DELETE',
-        redirect: 'manual',
-        headers: { Origin: origin },
-      });
-      expectLoginRedirect(res);
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${attachment.attachmentId}?token=${encodeURIComponent(editable.token)}`, {
-        method: 'DELETE',
-        headers: { Origin: origin },
-      });
-      assert.equal(res.status, 200);
-      assert.deepEqual(await res.json(), { ok: true });
-    });
-  } finally {
-    await rm(contentDir, { recursive: true, force: true });
-  }
-});
-
-test('existing legacy tokens reflect upgraded and downgraded attachment permission without changing token', async () => {
-  const contentDir = await makeContentDir();
-  try {
-    await withServer(baseConfig(contentDir), async ({ origin }) => {
-      const authCookie = await login(origin);
-
-      const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
-      let res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-upgrade-before?token=${encodeURIComponent(readOnly.token)}`, {
-        method: 'POST',
-        headers: { Origin: origin },
-        body: formData(JPEG),
-      });
-      assert.equal(res.status, 403);
-
-      await patchSharePermission(origin, readOnly.tokenId, true, authCookie);
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-upgrade-after?token=${encodeURIComponent(readOnly.token)}`, {
-        method: 'POST',
-        headers: { Origin: origin },
-        body: formData(JPEG),
-      });
-      assert.equal(res.status, 201);
-      const upgradedAttachment = (await res.json()).attachment;
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${upgradedAttachment.attachmentId}?token=${encodeURIComponent(readOnly.token)}`, {
-        method: 'DELETE',
-        headers: { Origin: origin },
-      });
-      assert.equal(res.status, 200);
-
-      res = await fetch(`${origin}/api/attachments/notes/legacy-upgrade-wrong?token=${encodeURIComponent(readOnly.token)}`, {
-        method: 'POST',
-        redirect: 'manual',
-        headers: { Origin: origin },
-        body: formData(JPEG),
-      });
-      expectLoginRedirect(res);
-
-      const editable = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-downgrade-before?token=${encodeURIComponent(editable.token)}`, {
-        method: 'POST',
-        headers: { Origin: origin },
-        body: formData(JPEG),
-      });
-      assert.equal(res.status, 201);
-      const downgradedAttachment = (await res.json()).attachment;
-
-      await patchSharePermission(origin, editable.tokenId, false, authCookie);
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-downgrade-after?token=${encodeURIComponent(editable.token)}`, {
-        method: 'POST',
-        headers: { Origin: origin },
-        body: formData(JPEG),
-      });
-      assert.equal(res.status, 403);
-
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/${downgradedAttachment.attachmentId}?token=${encodeURIComponent(editable.token)}`, {
-        method: 'DELETE',
-        headers: { Origin: origin },
-      });
-      assert.equal(res.status, 403);
-
-      res = await fetch(`${origin}/api/attachments/notes/legacy-downgrade-wrong?token=${encodeURIComponent(editable.token)}`, {
-        method: 'POST',
-        redirect: 'manual',
-        headers: { Origin: origin },
-        body: formData(JPEG),
-      });
-      expectLoginRedirect(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

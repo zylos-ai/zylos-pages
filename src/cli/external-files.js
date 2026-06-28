@@ -1,17 +1,10 @@
 #!/usr/bin/env node
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DATA_DIR, getConfig } from '../lib/config.js';
-import { resolvePagePath } from '../security/pathGuard.js';
+import { getConfig } from '../lib/config.js';
 import { normalizeSlug } from '../utils/slug.js';
-
-const REGISTRY_PATH = path.join(DATA_DIR, 'external-files.json');
-const LOCK_PATH = path.join(DATA_DIR, 'external-files.lock');
-const LOCK_RETRY_MS = Number.parseInt(process.env.PAGES_EXTERNAL_FILES_LOCK_RETRY_MS || '100', 10);
-const LOCK_TIMEOUT_MS = Number.parseInt(process.env.PAGES_EXTERNAL_FILES_LOCK_TIMEOUT_MS || '5000', 10);
-const STALE_LOCK_MS = Number.parseInt(process.env.PAGES_EXTERNAL_FILES_STALE_LOCK_MS || '30000', 10);
+import { registerLogicalPage, searchLogicalPages } from '../pages/page-store.js';
 
 class CliError extends Error {
   constructor(code, message) {
@@ -62,13 +55,13 @@ function humanize(result) {
     return `error: ${result.error}`;
   }
   if (Array.isArray(result.entries)) {
-    return result.entries.map((entry) => `${entry.slug} -> ${entry.sourcePath}`).join('\n') || 'no external files registered';
+    return result.entries.map((entry) => `${entry.slug || entry.uri} -> ${entry.sourcePath}`).join('\n') || 'no external files registered';
   }
   return JSON.stringify(result, null, 2);
 }
 
 function fail(error, json) {
-  const code = error instanceof CliError ? error.code : 'internal_error';
+  const code = error instanceof CliError || typeof error?.code === 'string' ? error.code : 'internal_error';
   const message = error instanceof Error ? error.message : String(error);
   output({ ok: false, code, error: message }, json);
   process.exitCode = 1;
@@ -94,6 +87,7 @@ function getExternalConfig() {
     enabled: externalFiles.enabled === true,
     allowedSources: externalFiles.allowedSources || {},
     contentDir: expandHome(config.contentDir),
+    config,
   };
 }
 
@@ -121,241 +115,8 @@ function normalizeAndValidateSlug(rawSlug) {
   return slug;
 }
 
-const ALLOWED_EXTENSIONS = new Set(['.md', '.html']);
-
-function assertAllowedExtension(filePath) {
-  if (!ALLOWED_EXTENSIONS.has(path.extname(filePath).toLowerCase())) {
-    throw new CliError('source_not_allowed', 'source must be a .md or .html file');
-  }
-}
-
-function isInsideRoot(filePath, rootPath) {
-  const rel = path.relative(rootPath, filePath);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-
-function resolveAllowedRoot(externalConfig, component) {
-  if (!component || !externalConfig.allowedSources[component]) {
-    throw new CliError('unknown_component', `component is not configured: ${component || '(missing)'}`);
-  }
-
-  try {
-    return fs.realpathSync(expandHome(externalConfig.allowedSources[component]));
-  } catch {
-    throw new CliError('source_outside_allowed_root', `allowed source root is not accessible for component: ${component}`);
-  }
-}
-
-function resolveSource(sourcePath, allowedRoot) {
-  if (!sourcePath || !path.isAbsolute(sourcePath)) {
-    throw new CliError('source_missing', 'source must be an absolute path');
-  }
-  assertAllowedExtension(sourcePath);
-
-  let sourceRealPath;
-  try {
-    sourceRealPath = fs.realpathSync(sourcePath);
-  } catch {
-    throw new CliError('source_missing', 'source file does not exist');
-  }
-  assertAllowedExtension(sourceRealPath);
-
-  if (!isInsideRoot(sourceRealPath, allowedRoot)) {
-    throw new CliError('source_outside_allowed_root', 'source is outside the configured allowed root');
-  }
-
-  return sourceRealPath;
-}
-
-function readRegistry() {
-  if (!fs.existsSync(REGISTRY_PATH)) {
-    return { version: 1, entries: {} };
-  }
-
-  try {
-    const registry = JSON.parse(fs.readFileSync(REGISTRY_PATH, 'utf8'));
-    if (registry.version !== 1 || !registry.entries || typeof registry.entries !== 'object') {
-      throw new Error('invalid registry shape');
-    }
-    return registry;
-  } catch (err) {
-    throw new CliError('registry_corrupt', `external file registry is corrupt: ${err.message}`);
-  }
-}
-
-function writeRegistryAtomic(registry) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const tmpPath = `${REGISTRY_PATH}.tmp.${process.pid}.${Date.now()}`;
-  const payload = `${JSON.stringify(registry, null, 2)}\n`;
-  const fd = fs.openSync(tmpPath, 'w');
-  try {
-    fs.writeFileSync(fd, payload, 'utf8');
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  fs.renameSync(tmpPath, REGISTRY_PATH);
-}
-
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function pidIsAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === 'EPERM';
-  }
-}
-
-function maybeRemoveStaleLock() {
-  const ownerPath = path.join(LOCK_PATH, 'owner.json');
-  let owner = null;
-  let ownerReadable = false;
-  try {
-    owner = JSON.parse(fs.readFileSync(ownerPath, 'utf8'));
-    ownerReadable = true;
-  } catch {
-    owner = null;
-  }
-
-  const lockStats = lstatOrNull(LOCK_PATH);
-  if (!lockStats) {
-    return;
-  }
-
-  const createdAt = ownerReadable ? Date.parse(owner.createdAt) : lockStats.mtimeMs;
-  const isOld = Number.isFinite(createdAt) && Date.now() - createdAt > STALE_LOCK_MS;
-  const ownerAlive = ownerReadable && pidIsAlive(owner.pid);
-  if (isOld && !ownerAlive) {
-    fs.rmSync(LOCK_PATH, { recursive: true, force: true });
-  }
-}
-
-function acquireLock(command) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < LOCK_TIMEOUT_MS) {
-    try {
-      fs.mkdirSync(LOCK_PATH);
-      fs.writeFileSync(path.join(LOCK_PATH, 'owner.json'), JSON.stringify({
-        pid: process.pid,
-        createdAt: new Date().toISOString(),
-        command,
-      }, null, 2));
-      return () => fs.rmSync(LOCK_PATH, { recursive: true, force: true });
-    } catch (err) {
-      if (err.code !== 'EEXIST') {
-        throw err;
-      }
-      maybeRemoveStaleLock();
-      sleep(LOCK_RETRY_MS);
-    }
-  }
-
-  throw new CliError('lock_timeout', 'timed out waiting for external file registry lock');
-}
-
 function getUrl(slug) {
   return `/pages/${slug}`;
-}
-
-function symlinkIsPagesOwned(linkPath, entry) {
-  if (!entry || entry.linkPath !== linkPath) {
-    return false;
-  }
-  try {
-    return fs.lstatSync(linkPath).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
-function symlinkPointsTo(linkPath, targetRealPath) {
-  try {
-    return fs.realpathSync(linkPath) === targetRealPath;
-  } catch {
-    return false;
-  }
-}
-
-function lstatOrNull(filePath) {
-  try {
-    return fs.lstatSync(filePath);
-  } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') {
-      return null;
-    }
-    throw err;
-  }
-}
-
-function removeRegisteredSymlink(linkPath, entry) {
-  const stats = lstatOrNull(linkPath);
-  if (!stats) {
-    return;
-  }
-  if (!stats.isSymbolicLink() || entry.linkPath !== linkPath) {
-    throw new CliError('slug_conflict', 'registered slug path exists but is not a pages-owned symlink');
-  }
-  fs.unlinkSync(linkPath);
-}
-
-function existingSlugError(linkPath, entry) {
-  const stats = lstatOrNull(linkPath);
-  if (!stats) {
-    return null;
-  }
-  if (stats.isSymbolicLink()) {
-    if (entry && symlinkIsPagesOwned(linkPath, entry)) {
-      return new CliError('slug_conflict', 'registered slug path points to a different source');
-    }
-    return new CliError('slug_conflict', 'slug path exists but is not a pages-owned symlink');
-  }
-  if (entry) {
-    return new CliError('slug_conflict', 'registered slug path exists but is not a pages-owned symlink');
-  }
-  return new CliError('normal_page_exists', 'a normal pages document already exists at this slug');
-}
-
-function createSymlinkNoReplace(sourceRealPath, linkPath, entry = null) {
-  try {
-    fs.mkdirSync(path.dirname(linkPath), { recursive: true });
-  } catch (err) {
-    if (err.code === 'EEXIST' || err.code === 'ENOTDIR') {
-      throw new CliError('slug_conflict', 'slug parent path conflicts with an existing pages document');
-    }
-    throw err;
-  }
-  try {
-    fs.symlinkSync(sourceRealPath, linkPath);
-    return true;
-  } catch (err) {
-    if (err.code === 'EEXIST') {
-      if (entry && symlinkIsPagesOwned(linkPath, entry) && symlinkPointsTo(linkPath, sourceRealPath)) {
-        return false;
-      }
-      throw existingSlugError(linkPath, entry) || err;
-    }
-    throw err;
-  }
-}
-
-function rollbackCreatedSymlink(linkPath, sourceRealPath) {
-  try {
-    const stats = fs.lstatSync(linkPath);
-    if (stats.isSymbolicLink() && symlinkPointsTo(linkPath, sourceRealPath)) {
-      fs.unlinkSync(linkPath);
-    }
-  } catch {
-    // Best-effort rollback; the original error is more useful to callers.
-  }
 }
 
 function commandStatus(args) {
@@ -369,19 +130,23 @@ function commandStatus(args) {
     enabled: externalConfig.enabled,
     contentDir: externalConfig.contentDir,
     allowedSources,
-    registryPath: REGISTRY_PATH,
+    registry: 'pages.db logical_pages',
   }, args.json);
 }
 
 function commandList(args) {
   const externalConfig = getExternalConfig();
   requireEnabled(externalConfig);
-  const registry = readRegistry();
-  const entries = Object.values(registry.entries)
-    .sort((a, b) => a.slug.localeCompare(b.slug))
+  const entries = searchLogicalPages('')
+    .sort((a, b) => a.uri.localeCompare(b.uri))
     .map((entry) => ({
-      ...entry,
-      url: getUrl(entry.slug),
+      slug: entry.uri,
+      uri: entry.uri,
+      title: entry.title,
+      sourcePath: entry.sourcePath,
+      sourceRealPath: entry.sourcePath,
+      accessMode: entry.accessMode,
+      url: getUrl(`p/${entry.uri}`),
     }));
 
   output({ ok: true, entries }, args.json);
@@ -391,111 +156,31 @@ function commandRegister(args) {
   const externalConfig = getExternalConfig();
   requireEnabled(externalConfig);
   const slug = normalizeAndValidateSlug(args.slug);
-  const component = args.component;
-  const allowedRoot = resolveAllowedRoot(externalConfig, component);
-  const sourceRealPath = resolveSource(args.source, allowedRoot);
-  const linkExtension = path.extname(sourceRealPath).toLowerCase();
-  const linkPath = resolvePagePath(slug, externalConfig.contentDir, linkExtension);
-  const now = new Date().toISOString();
-  let createdLink = false;
+  const page = registerLogicalPage({
+    uri: slug,
+    title: args.title || slug,
+    sourcePath: args.source,
+    component: args.component,
+    accessMode: args.accessMode || args['access-mode'] || 'private',
+  }, externalConfig.config);
 
-  const release = acquireLock('register');
-  try {
-    const registry = readRegistry();
-    const existingEntry = registry.entries[slug];
-
-    if (existingEntry) {
-      if (existingEntry.component !== component || existingEntry.sourceRealPath !== sourceRealPath) {
-        throw new CliError('slug_conflict', 'slug is already registered to a different source');
-      }
-
-      if (fs.existsSync(linkPath)) {
-        if (!symlinkIsPagesOwned(linkPath, existingEntry)) {
-          throw new CliError('slug_conflict', 'registered slug path exists but is not a pages-owned symlink');
-        }
-        if (!symlinkPointsTo(linkPath, sourceRealPath)) {
-          throw new CliError('slug_conflict', 'registered slug path points to a different source');
-        }
-      } else {
-        removeRegisteredSymlink(linkPath, existingEntry);
-        createdLink = createSymlinkNoReplace(sourceRealPath, linkPath, existingEntry);
-      }
-
-      existingEntry.sourcePath = args.source;
-      existingEntry.sourceRealPath = sourceRealPath;
-      existingEntry.linkPath = linkPath;
-      existingEntry.updatedAt = now;
-      writeRegistryAtomic(registry);
-      return output({
-        ok: true,
-        slug,
-        url: getUrl(slug),
-        linkPath,
-        sourcePath: args.source,
-      }, args.json);
-    }
-
-    const existingLinkStats = lstatOrNull(linkPath);
-    if (existingLinkStats) {
-      throw existingSlugError(linkPath) || new CliError('normal_page_exists', 'a normal pages document already exists at this slug');
-    }
-
-    createdLink = createSymlinkNoReplace(sourceRealPath, linkPath);
-    registry.entries[slug] = {
-      slug,
-      component,
-      sourcePath: args.source,
-      sourceRealPath,
-      linkPath,
-      createdAt: now,
-      updatedAt: now,
-    };
-    writeRegistryAtomic(registry);
-
-    output({
-      ok: true,
-      slug,
-      url: getUrl(slug),
-      linkPath,
-      sourcePath: args.source,
-    }, args.json);
-  } catch (err) {
-    if (createdLink) {
-      rollbackCreatedSymlink(linkPath, sourceRealPath);
-    }
-    throw err;
-  } finally {
-    release();
-  }
+  output({
+    ok: true,
+    slug,
+    uri: page.uri,
+    url: getUrl(`p/${page.uri}`),
+    sourcePath: page.sourcePath,
+    sourceRealPath: page.sourcePath,
+    accessMode: page.accessMode,
+  }, args.json);
 }
 
 function commandUnregister(args) {
   const externalConfig = getExternalConfig();
   requireEnabled(externalConfig);
   const slug = normalizeAndValidateSlug(args.slug);
-
-  const release = acquireLock('unregister');
-  try {
-    const registry = readRegistry();
-    const entry = registry.entries[slug];
-    if (entry) {
-      try {
-        if (fs.lstatSync(entry.linkPath).isSymbolicLink() && symlinkPointsTo(entry.linkPath, entry.sourceRealPath)) {
-          fs.unlinkSync(entry.linkPath);
-        }
-      } catch (err) {
-        if (err.code !== 'ENOENT') {
-          throw err;
-        }
-      }
-      delete registry.entries[slug];
-      writeRegistryAtomic(registry);
-    }
-
-    output({ ok: true, slug }, args.json);
-  } finally {
-    release();
-  }
+  output({ ok: false, code: 'unsupported', error: `unregister is not supported for DB-backed logical pages yet: ${slug}` }, args.json);
+  process.exitCode = 1;
 }
 
 function main(argv) {
