@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Admin console redesign**: The `/admin` React console was rebuilt for a beautiful, human-friendly experience using the existing Pages design tokens (GitHub/Linear style). Adds a centered max-width layout, card surfaces, a proper button system (the Register/Search buttons previously fell back to unstyled browser defaults — most visible as broken white buttons in dark mode), styled inputs with focus rings, field hints, success/error toasts, a polished empty state, and skeleton loading. Page rows are now cards showing an access-mode badge, component tag, and relative "updated" time. Share-link creation gained an expiry selector (24h / 7d / 30d / permanent), an inline result with one-click copy + expiry, and "copied" feedback. The login page was elevated to match (logo, vertical centering, soft shadow, focus ring).
+
+### Fixed
+- **Share cookies `SameSite=Strict` → `Lax`**: `__Host-share_access` and `__Host-share_scope` cookies are now `SameSite=Lax` so share links open correctly inside IM in-app browsers (Telegram/Lark/etc.), which a top-level navigation from another origin would otherwise drop under `Strict`. The admin session cookie remains `SameSite=Strict`.
+
 ## [0.5.0] - 2026-06-27
 
 ### Added
