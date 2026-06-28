@@ -128,7 +128,7 @@ test('create share returns short URL only', async () => {
   }
 });
 
-test('create and list editable attachment shares', async () => {
+test('create share ignores deprecated attachment write requests', async () => {
   const { server, origin } = await makeServer();
   try {
     const response = await fetch(`${origin}/api/share`, {
@@ -144,40 +144,36 @@ test('create and list editable attachment shares', async () => {
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.ok, true);
-    assert.equal(body.canWriteAttachments, true);
+    assert.equal(body.canWriteAttachments, false);
 
     const list = await fetch(`${origin}/api/shares/docs/page`);
     assert.equal(list.status, 200);
     const listed = await list.json();
     const created = listed.shares.find(share => share.tokenId === body.tokenId);
     assert.ok(created);
-    assert.equal(created.canWriteAttachments, true);
+    assert.equal(created.canWriteAttachments, false);
   } finally {
     server.close();
   }
 });
 
-test('patch upgrades and downgrades existing share attachment permission', async () => {
+test('patch cannot upgrade share attachment permission and can keep read-only state', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const cookie = await login(origin);
     const readOnly = await createShareViaApi(origin, cookie);
 
     let response = await patchShare(origin, readOnly.tokenId, true, cookie);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 410);
     let body = await response.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.tokenId, readOnly.tokenId);
-    assert.equal(body.canWriteAttachments, true);
-    assert.equal(body.expiresAt, readOnly.expiresAt);
-    assert.ok(body.createdAt);
+    assert.deepEqual(body, { error: 'Public attachment writes are deprecated' });
 
     let list = await fetch(`${origin}/api/shares/docs/page`, { headers: { Cookie: cookie } });
     assert.equal(list.status, 200);
     let listed = await list.json();
     let updated = listed.shares.find(share => share.tokenId === readOnly.tokenId);
     assert.ok(updated);
-    assert.equal(updated.canWriteAttachments, true);
+    assert.equal(updated.canWriteAttachments, false);
 
     const editable = await createShareViaApi(origin, cookie, { canWriteAttachments: true });
     response = await patchShare(origin, editable.tokenId, false, cookie);
@@ -210,25 +206,25 @@ test('share viewers cannot patch share attachment permission', async () => {
   }
 });
 
-test('patch rejects revoked expired malformed unknown and invalid-body share updates', async () => {
+test('patch rejects revoked expired malformed unknown and deprecated write share updates', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const cookie = await login(origin);
 
     const revoked = await createShareViaApi(origin, cookie);
     revokeShare(revoked.tokenId);
-    let response = await patchShare(origin, revoked.tokenId, true, cookie);
+    let response = await patchShare(origin, revoked.tokenId, false, cookie);
     assert.equal(response.status, 404);
 
     const expired = await createShareViaApi(origin, cookie);
     getPagesDb().prepare('UPDATE shares SET expires_at = ? WHERE token_id = ?').run(Date.now() - 1000, expired.tokenId);
-    response = await patchShare(origin, expired.tokenId, true, cookie);
+    response = await patchShare(origin, expired.tokenId, false, cookie);
     assert.equal(response.status, 404);
 
-    response = await patchShare(origin, 'bad-token', true, cookie);
+    response = await patchShare(origin, 'bad-token', false, cookie);
     assert.equal(response.status, 400);
 
-    response = await patchShare(origin, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', true, cookie);
+    response = await patchShare(origin, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', false, cookie);
     assert.equal(response.status, 404);
 
     response = await fetch(`${origin}/api/share/${expired.tokenId}`, {
@@ -237,6 +233,9 @@ test('patch rejects revoked expired malformed unknown and invalid-body share upd
       body: JSON.stringify({ canWriteAttachments: 'yes' }),
     });
     assert.equal(response.status, 400);
+
+    response = await patchShare(origin, expired.tokenId, true, cookie);
+    assert.equal(response.status, 410);
   } finally {
     server.close();
   }
@@ -310,7 +309,7 @@ test('auth middleware allows short share URL cookies to access target page', asy
   }
 });
 
-test('auth middleware carries editable share permission on short share cookies', async () => {
+test('auth middleware keeps short share cookies read-only', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const login = await fetch(`${origin}/login`, {
@@ -344,7 +343,7 @@ test('auth middleware carries editable share permission on short share cookies',
     assert.equal(appCheck.status, 200);
     assert.deepEqual(await appCheck.json(), {
       viewerType: 'share',
-      shareCanWriteAttachments: true,
+      shareCanWriteAttachments: false,
     });
   } finally {
     server.close();

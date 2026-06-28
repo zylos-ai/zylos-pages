@@ -9,10 +9,8 @@ const ASSET_VERSION = Date.now();
  * Generate the directory index page listing all available pages.
  * @param {{topLevel: Array<{slug, title, description, date}>, folders: Array<{path, label, pages: Array<{slug, title, description, date}>}>}} pageTree
  * @param {string} baseUrl
- * @param {Array<{name, slug}>} todoBoards
  */
-export function indexTemplate(pageTree, baseUrl, todoBoards = []) {
-  const hasTodo = todoBoards.length > 0;
+export function indexTemplate(pageTree, baseUrl) {
   const pageCount = getPageCount(pageTree);
 
   const topLevelRows = renderPageRows(pageTree.topLevel, baseUrl);
@@ -30,14 +28,6 @@ export function indexTemplate(pageTree, baseUrl, todoBoards = []) {
     folderRows ? `<div class="page-folders">${folderRows}</div>` : '',
     topLevelRows ? `<ul class="page-list page-list-top-level">${topLevelRows}</ul>` : '',
   ].filter(Boolean).join('');
-
-  const todoRows = todoBoards.map(b => `
-    <li class="page-item">
-      <a href="${baseUrl}/${encodeURI(b.slug)}">
-        <span class="page-item-title">${escapeHtml(b.name)}</span>
-      </a>
-    </li>
-  `).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -94,13 +84,6 @@ export function indexTemplate(pageTree, baseUrl, todoBoards = []) {
   </header>
 
   <main class="page-content index-page">
-    ${hasTodo ? `
-    <div class="index-tabs">
-      <button class="index-tab active" data-tab="pages">Pages</button>
-      <button class="index-tab" data-tab="todo">Todo</button>
-    </div>
-    ` : ''}
-
     <div id="panel-pages" class="tab-panel active">
       <p class="index-count">${pageCount} page${pageCount !== 1 ? 's' : ''}</p>
       ${pageCount === 0
@@ -109,15 +92,7 @@ export function indexTemplate(pageTree, baseUrl, todoBoards = []) {
       }
     </div>
 
-    ${hasTodo ? `
-    <div id="panel-todo" class="tab-panel">
-      <p class="index-count">${todoBoards.length} board${todoBoards.length !== 1 ? 's' : ''}</p>
-      <ul class="page-list">${todoRows}</ul>
-    </div>
-    ` : ''}
   </main>
-
-  ${hasTodo ? `<script src="${baseUrl}/_assets/tabs.js?v=${ASSET_VERSION}"></script>` : ''}
 
 </body>
 </html>`;

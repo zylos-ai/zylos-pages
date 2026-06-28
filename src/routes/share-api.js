@@ -1,6 +1,6 @@
 // Share API route handlers
 // POST /api/share — create share (requires login + CSRF)
-// PATCH /api/share/:tokenId — update share permissions (requires login + CSRF)
+// PATCH /api/share/:tokenId — deprecated write permission endpoint (requires login + CSRF)
 // DELETE /api/share/:tokenId — revoke share (requires login + CSRF)
 // GET /api/shares/:slug(*) — list active shares for slug (requires login)
 // DELETE /api/shares/:slug(*) — revoke all shares for slug (requires login + CSRF)
@@ -154,7 +154,7 @@ export function setupShareApi(app, sharingConfig) {
     }
   });
 
-  // PATCH /api/share/:tokenId — update attachment write permission
+  // PATCH /api/share/:tokenId — attachment writes are no longer supported for public shares
   app.patch('/api/share/:tokenId', async (req, res) => {
     if (!csrfCheck(req, res)) return;
 
@@ -172,8 +172,11 @@ export function setupShareApi(app, sharingConfig) {
       if (typeof body.canWriteAttachments !== 'boolean') {
         return res.status(400).json({ error: 'Invalid canWriteAttachments' });
       }
+      if (body.canWriteAttachments === true) {
+        return res.status(410).json({ error: 'Public attachment writes are deprecated' });
+      }
 
-      const updated = updateShareAttachmentPermission(tokenId, body.canWriteAttachments);
+      const updated = updateShareAttachmentPermission(tokenId, false);
       if (!updated) {
         return res.status(404).json({ error: 'Share not found' });
       }

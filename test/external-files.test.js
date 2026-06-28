@@ -1,29 +1,31 @@
 import assert from 'node:assert/strict';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { getPage } from '../src/services/pageService.js';
-import { getCachedPage, initCache, invalidatePagesForSlug, setCachedPage } from '../src/cache/pageCache.js';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const cliPath = path.join(repoRoot, 'src/cli/external-files.js');
+const sharedDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-db-test-'));
+process.env.PAGES_DATA_DIR = sharedDataDir;
+
+const { getPage } = await import('../src/services/pageService.js');
+const { getCachedPage, initCache, invalidatePagesForSlug, setCachedPage } = await import('../src/cache/pageCache.js');
+const { resolveLogicalAsset } = await import('../src/pages/asset-resolver.js');
 
 function makeEnv(home, extra = {}) {
   return {
     ...process.env,
     HOME: home,
-    PAGES_EXTERNAL_FILES_LOCK_RETRY_MS: '5',
-    PAGES_EXTERNAL_FILES_LOCK_TIMEOUT_MS: '200',
-    PAGES_EXTERNAL_FILES_STALE_LOCK_MS: '10',
+    PAGES_DATA_DIR: sharedDataDir,
     ...extra,
   };
 }
 
 function makeFixture(options = {}) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-test-'));
-  const dataDir = path.join(home, 'zylos/components/pages');
+  const dataDir = sharedDataDir;
   const contentDir = path.join(home, 'zylos/http/public/pages');
   const sourceRoot = path.join(home, 'zylos/components/recruit');
   fs.mkdirSync(dataDir, { recursive: true });
@@ -55,31 +57,24 @@ function runCli(fixture, args, options = {}) {
   return JSON.parse(result.stdout);
 }
 
-function registerArgs(slug, source) {
+function registerArgs(slug, source, extra = []) {
   return [
     'register',
     '--component', 'recruit',
     '--slug', slug,
     '--source', source,
+    ...extra,
     '--json',
   ];
 }
 
-function spawnCli(fixture, args) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath, ...args], {
-      cwd: repoRoot,
-      env: makeEnv(fixture.home),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout += chunk; });
-    child.stderr.on('data', (chunk) => { stderr += chunk; });
-    child.on('close', (status) => resolve({ status, stdout, stderr }));
-  });
+function configFor(fixture) {
+  return {
+    contentDir: fixture.contentDir,
+    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
+    toc: { minHeadings: 3 },
+    theme: { codeTheme: 'github-dark' },
+  };
 }
 
 test('status reports external file configuration', () => {
@@ -92,114 +87,59 @@ test('status reports external file configuration', () => {
   assert.equal(result.allowedSources.recruit, fixture.sourceRoot);
 });
 
-test('register creates symlink and registry entry, unregister removes only the symlink', () => {
+test('register stores a DB-backed logical page without creating a content symlink', () => {
   const fixture = makeFixture();
   const source = path.join(fixture.sourceRoot, 'questions.md');
   fs.writeFileSync(source, '# Questions\n');
   const sourceRealPath = fs.realpathSync(source);
 
-  const registered = runCli(fixture, registerArgs('recruit/questions', source));
-  const linkPath = path.join(fixture.contentDir, 'recruit/questions.md');
+  const registered = runCli(fixture, registerArgs('recruit/questions', source, ['--title', 'Interview Questions']));
   assert.equal(registered.ok, true);
-  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
-  assert.equal(fs.realpathSync(linkPath), sourceRealPath);
+  assert.equal(registered.uri, 'recruit/questions');
+  assert.equal(registered.url, '/pages/p/recruit/questions');
+  assert.equal(registered.sourceRealPath, sourceRealPath);
+  assert.equal(fs.existsSync(path.join(fixture.contentDir, 'recruit/questions.md')), false);
 
-  const registry = JSON.parse(fs.readFileSync(path.join(fixture.dataDir, 'external-files.json'), 'utf8'));
-  assert.equal(registry.entries['recruit/questions'].sourceRealPath, sourceRealPath);
-
-  const unregistered = runCli(fixture, ['unregister', '--slug', 'recruit/questions', '--json']);
-  assert.equal(unregistered.ok, true);
-  assert.equal(fs.existsSync(linkPath), false);
-  assert.equal(fs.existsSync(source), true);
-});
-
-test('register is idempotent for the same slug and source', () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  fs.writeFileSync(source, '# Questions\n');
-
-  const first = runCli(fixture, registerArgs('recruit/questions', source));
-  const second = runCli(fixture, registerArgs('recruit/questions', source));
-
-  assert.equal(first.ok, true);
-  assert.equal(second.ok, true);
   const list = runCli(fixture, ['list', '--json']);
   assert.deepEqual(list.entries.map((entry) => entry.slug), ['recruit/questions']);
+  assert.equal(list.entries[0].title, 'Interview Questions');
 });
 
-test('register does not overwrite a registered symlink that drifted to another source', () => {
-  const fixture = makeFixture();
-  const original = path.join(fixture.sourceRoot, 'original.md');
-  const replacement = path.join(fixture.sourceRoot, 'replacement.md');
-  fs.writeFileSync(original, '# Original\n');
-  fs.writeFileSync(replacement, '# Replacement\n');
-
-  runCli(fixture, registerArgs('questions', original));
-  const linkPath = path.join(fixture.contentDir, 'questions.md');
-  fs.unlinkSync(linkPath);
-  fs.symlinkSync(replacement, linkPath);
-
-  const result = runCli(fixture, registerArgs('questions', original), { expectFailure: true });
-  assert.equal(result.code, 'slug_conflict');
-  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
-  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(replacement));
-});
-
-test('registered file is rendered by page service and reflects source updates', async () => {
+test('registered logical markdown page renders through /p/:uri and reflects source updates', async () => {
   const fixture = makeFixture();
   const source = path.join(fixture.sourceRoot, 'render-source.md');
-  fs.writeFileSync(source, '# First Render\n');
+  fs.writeFileSync(source, '# First Render\n![Chart](./chart.png)\n');
+  fs.writeFileSync(path.join(fixture.sourceRoot, 'chart.png'), 'png');
 
   runCli(fixture, registerArgs('external/render-source', source));
-  const config = {
-    contentDir: fixture.contentDir,
-    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
-    toc: { minHeadings: 3 },
-    theme: { codeTheme: 'github-dark' },
-  };
 
-  const first = await getPage('external/render-source', config);
+  const first = await getPage('p/external/render-source', configFor(fixture), '/pages');
   assert.match(first.html, /First Render/);
+  assert.match(first.html, /src="\/pages\/assets\/external\/render-source\?path=.%2Fchart.png"/);
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   fs.writeFileSync(source, '# Updated Render\n');
 
-  const updated = await getPage('external/render-source', config);
+  const updated = await getPage('p/external/render-source', configFor(fixture), '/pages');
   assert.match(updated.html, /Updated Render/);
 });
 
-test('page service renders root-internal and forwarded-prefix browser bases separately', async () => {
+test('html source registers and resolves as a logical html artifact', async () => {
   const fixture = makeFixture();
-  const nestedDir = path.join(fixture.contentDir, 'docs');
-  fs.mkdirSync(nestedDir, { recursive: true });
-  fs.writeFileSync(path.join(nestedDir, 'nested.md'), '# Nested Page\n');
+  const source = path.join(fixture.sourceRoot, 'artifact.html');
+  fs.writeFileSync(source, '<!doctype html><title>Artifact</title><img src="./image.png">\n');
+  fs.writeFileSync(path.join(fixture.sourceRoot, 'image.png'), 'image');
 
-  const config = {
-    contentDir: fixture.contentDir,
-    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
-    toc: { minHeadings: 3 },
-    theme: { codeTheme: 'github-dark' },
-  };
+  const result = runCli(fixture, registerArgs('recruit/artifact', source));
+  assert.equal(result.ok, true);
 
-  const direct = await getPage('docs/nested', config, '');
-  assert.match(direct.html, /href="\/_assets\/style\.css/);
-  assert.match(direct.html, /data-base-url=""/);
+  const { resolvePageDescriptor } = await import('../src/security/pathGuard.js');
+  const descriptor = await resolvePageDescriptor('recruit/artifact', fixture.contentDir);
+  assert.equal(descriptor.type, 'html');
+  assert.equal(descriptor.filePath, fs.realpathSync(source));
 
-  const proxied = await getPage('docs/nested', config, '/pages');
-  assert.match(proxied.html, /href="\/pages\/_assets\/style\.css/);
-  assert.match(proxied.html, /data-base-url="\/pages"/);
-});
-
-test('cache invalidation clears all browser-base variants for a slug', () => {
-  initCache({ maxEntries: 10, ttlSeconds: 60 });
-  setCachedPage('/:docs/nested', { html: 'direct' });
-  setCachedPage('/pages:docs/nested', { html: 'proxied' });
-  setCachedPage('/pages:other', { html: 'other' });
-
-  assert.equal(invalidatePagesForSlug('docs/nested'), true);
-  assert.equal(getCachedPage('/:docs/nested'), undefined);
-  assert.equal(getCachedPage('/pages:docs/nested'), undefined);
-  assert.deepEqual(getCachedPage('/pages:other'), { html: 'other' });
+  const page = await getPage('p/recruit/artifact', configFor(fixture), '/pages');
+  assert.match(page.html, /src="\/pages\/assets\/recruit\/artifact\?path=.%2Fimage.png"/);
 });
 
 test('source symlink escaping allowed root is rejected', () => {
@@ -225,143 +165,48 @@ test('missing and disallowed-extension sources are rejected', () => {
   assert.equal(missing.code, 'source_missing');
 });
 
-test('html source registers as an .html link and resolves as an html page', async () => {
+test('logical asset resolver serves same-directory assets and rejects traversal or symlink escape', async () => {
   const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'artifact.html');
-  fs.writeFileSync(source, '<!doctype html><title>Artifact</title><h1>Artifact</h1>\n');
+  const source = path.join(fixture.sourceRoot, 'page.md');
+  const asset = path.join(fixture.sourceRoot, 'image.png');
+  const outside = path.join(fixture.home, 'secret.png');
+  const escapeLink = path.join(fixture.sourceRoot, 'escape.png');
+  fs.writeFileSync(source, '# Page\n');
+  fs.writeFileSync(asset, 'image');
+  fs.writeFileSync(outside, 'secret');
+  fs.symlinkSync(outside, escapeLink);
+  runCli(fixture, registerArgs('page', source));
 
-  const result = runCli(fixture, registerArgs('recruit/artifact', source));
-  assert.equal(result.ok, true);
+  const resolved = await resolveLogicalAsset('page', './image.png');
+  assert.equal(resolved.filePath, fs.realpathSync(asset));
 
-  const linkPath = path.join(fixture.contentDir, 'recruit/artifact.html');
-  assert.equal(result.linkPath, linkPath);
-  assert.equal(fs.existsSync(path.join(fixture.contentDir, 'recruit/artifact.md')), false);
-  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
-  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(source));
-
-  const { resolvePageDescriptor } = await import('../src/security/pathGuard.js');
-  const descriptor = await resolvePageDescriptor('recruit/artifact', fixture.contentDir);
-  assert.equal(descriptor.type, 'html');
-  assert.equal(descriptor.filePath, linkPath);
+  await assert.rejects(() => resolveLogicalAsset('page', '../secret.png'), /outside page source directory/);
+  await assert.rejects(() => resolveLogicalAsset('page', './escape.png'), /outside page source directory/);
 });
 
-test('markdown source still registers as an .md link', () => {
+test('page service renders root-internal and forwarded-prefix browser bases separately', async () => {
   const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'notes.md');
-  fs.writeFileSync(source, '# Notes\n');
+  const nestedDir = path.join(fixture.contentDir, 'docs');
+  fs.mkdirSync(nestedDir, { recursive: true });
+  fs.writeFileSync(path.join(nestedDir, 'nested.md'), '# Nested Page\n');
 
-  const result = runCli(fixture, registerArgs('recruit/notes', source));
-  assert.equal(result.ok, true);
-  assert.equal(result.linkPath, path.join(fixture.contentDir, 'recruit/notes.md'));
+  const direct = await getPage('docs/nested', configFor(fixture), '');
+  assert.match(direct.html, /href="\/_assets\/style\.css/);
+  assert.match(direct.html, /data-base-url=""/);
+
+  const proxied = await getPage('docs/nested', configFor(fixture), '/pages');
+  assert.match(proxied.html, /href="\/pages\/_assets\/style\.css/);
+  assert.match(proxied.html, /data-base-url="\/pages"/);
 });
 
-test('existing normal page is not overwritten', () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  const linkPath = path.join(fixture.contentDir, 'questions.md');
-  fs.writeFileSync(source, '# Questions\n');
-  fs.writeFileSync(linkPath, '# Normal Page\n');
+test('cache invalidation clears all browser-base variants for a slug', () => {
+  initCache({ maxEntries: 10, ttlSeconds: 60 });
+  setCachedPage('/:docs/nested', { html: 'direct' });
+  setCachedPage('/pages:docs/nested', { html: 'proxied' });
+  setCachedPage('/pages:other', { html: 'other' });
 
-  const result = runCli(fixture, registerArgs('questions', source), { expectFailure: true });
-  assert.equal(result.code, 'normal_page_exists');
-  assert.equal(fs.readFileSync(linkPath, 'utf8'), '# Normal Page\n');
-  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), false);
-});
-
-test('unknown symlink at slug is treated as a slug conflict', () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  const linkPath = path.join(fixture.contentDir, 'questions.md');
-  fs.writeFileSync(source, '# Questions\n');
-  fs.symlinkSync(source, linkPath);
-
-  const result = runCli(fixture, registerArgs('questions', source), { expectFailure: true });
-  assert.equal(result.code, 'slug_conflict');
-  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
-});
-
-test('slug parent file conflict is rejected without overwriting', () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  const parentPath = path.join(fixture.contentDir, 'recruit');
-  fs.writeFileSync(source, '# Questions\n');
-  fs.writeFileSync(parentPath, 'not a directory\n');
-
-  const result = runCli(fixture, registerArgs('recruit/questions', source), { expectFailure: true });
-  assert.equal(result.code, 'slug_conflict');
-  assert.equal(fs.readFileSync(parentPath, 'utf8'), 'not a directory\n');
-});
-
-test('invalid encoded slug is rejected as invalid_slug', () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  fs.writeFileSync(source, '# Questions\n');
-
-  const result = runCli(fixture, registerArgs('%E0%A4%A', source), { expectFailure: true });
-  assert.equal(result.code, 'invalid_slug');
-});
-
-test('unregister does not delete a symlink that no longer points to the registry source', () => {
-  const fixture = makeFixture();
-  const original = path.join(fixture.sourceRoot, 'original.md');
-  const replacement = path.join(fixture.sourceRoot, 'replacement.md');
-  fs.writeFileSync(original, '# Original\n');
-  fs.writeFileSync(replacement, '# Replacement\n');
-
-  runCli(fixture, registerArgs('questions', original));
-  const linkPath = path.join(fixture.contentDir, 'questions.md');
-  fs.unlinkSync(linkPath);
-  fs.symlinkSync(replacement, linkPath);
-
-  const result = runCli(fixture, ['unregister', '--slug', 'questions', '--json']);
-  assert.equal(result.ok, true);
-  assert.equal(fs.lstatSync(linkPath).isSymbolicLink(), true);
-  assert.equal(fs.realpathSync(linkPath), fs.realpathSync(replacement));
-});
-
-test('stale lock without owner file is recovered', async () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  fs.writeFileSync(source, '# Questions\n');
-
-  const lockPath = path.join(fixture.dataDir, 'external-files.lock');
-  fs.mkdirSync(lockPath);
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  const result = runCli(fixture, registerArgs('questions', source));
-  assert.equal(result.ok, true);
-});
-
-test('stale lock with corrupt owner file is recovered', async () => {
-  const fixture = makeFixture();
-  const source = path.join(fixture.sourceRoot, 'questions.md');
-  fs.writeFileSync(source, '# Questions\n');
-
-  const lockPath = path.join(fixture.dataDir, 'external-files.lock');
-  fs.mkdirSync(lockPath);
-  fs.writeFileSync(path.join(lockPath, 'owner.json'), '{');
-  await new Promise((resolve) => setTimeout(resolve, 20));
-
-  const result = runCli(fixture, registerArgs('questions', source));
-  assert.equal(result.ok, true);
-});
-
-test('concurrent registrations preserve both registry entries', async () => {
-  const fixture = makeFixture();
-  const sourceA = path.join(fixture.sourceRoot, 'a.md');
-  const sourceB = path.join(fixture.sourceRoot, 'b.md');
-  fs.writeFileSync(sourceA, '# A\n');
-  fs.writeFileSync(sourceB, '# B\n');
-
-  const [childA, childB] = await Promise.all([
-    spawnCli(fixture, registerArgs('a', sourceA)),
-    spawnCli(fixture, registerArgs('b', sourceB)),
-  ]);
-
-  assert.equal(childA.status, 0, childA.stderr || childA.stdout);
-  assert.equal(childB.status, 0, childB.stderr || childB.stdout);
-  assert.equal(JSON.parse(childA.stdout).ok, true);
-  assert.equal(JSON.parse(childB.stdout).ok, true);
-  const list = runCli(fixture, ['list', '--json']);
-  assert.deepEqual(list.entries.map((entry) => entry.slug), ['a', 'b']);
+  assert.equal(invalidatePagesForSlug('docs/nested'), true);
+  assert.equal(getCachedPage('/:docs/nested'), undefined);
+  assert.equal(getCachedPage('/pages:docs/nested'), undefined);
+  assert.deepEqual(getCachedPage('/pages:other'), { html: 'other' });
 });

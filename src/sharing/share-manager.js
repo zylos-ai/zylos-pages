@@ -269,7 +269,7 @@ function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
 export function createShare(slug, duration, sharingConfig = {}, options = {}) {
   initShareStore();
   const normalizedSlug = normalizeSlug(slug);
-  const canWriteAttachments = options.canWriteAttachments === true;
+  const canWriteAttachments = false;
 
   if (duration === 'permanent' && !sharingConfig.allowPermanent) {
     throw Object.assign(new Error('Permanent shares are disabled'), { statusCode: 403 });
@@ -457,6 +457,7 @@ export function revokeAllForSlug(slug) {
 
 export function updateShareAttachmentPermission(tokenId, canWriteAttachments) {
   if (!isTokenId(tokenId)) return null;
+  if (canWriteAttachments === true) return null;
   initShareStore();
   const result = _updateShareAttachmentPermission.run(canWriteAttachments ? 1 : 0, tokenId, nowMs());
   if (result.changes === 0) return null;

@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "build:admin": "esbuild src/admin/Admin.jsx --bundle --format=esm --target=es2020 --define:process.env.NODE_ENV=\\\"production\\\" --minify --outfile=assets/admin.js",
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "external-files": "node src/cli/external-files.js",
@@ -41,7 +42,12 @@
     "lru-cache": "^11.0.0",
     "marked": "^15.0.0",
     "marked-highlight": "^2.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "sanitize-html": "^2.13.0",
     "shiki": "^1.24.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1"
   }
 }

@@ -19,15 +19,7 @@ export function indexRoute(config) {
     try {
       const pages = await scanPages(config.contentDir);
 
-      // Collect todo boards for index display
-      const todoBoards = [];
-      if (config.todo?.enabled && config.todo?.boards) {
-        for (const [name, board] of Object.entries(config.todo.boards)) {
-          todoBoards.push({ name, slug: `todo/${name}` });
-        }
-      }
-
-      const html = indexTemplate(buildPageTree(pages), browserBaseFromRequest(req), todoBoards);
+      const html = indexTemplate(buildPageTree(pages), browserBaseFromRequest(req));
       const elapsed = Math.round(performance.now() - start);
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');

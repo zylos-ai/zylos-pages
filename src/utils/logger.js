@@ -11,8 +11,7 @@ function log(level, msg, fields = {}) {
     msg,
     ...fields
   };
-  const out = level === 'error' ? process.stderr : process.stdout;
-  out.write(JSON.stringify(entry) + '\n');
+  process.stderr.write(JSON.stringify(entry) + '\n');
 }
 
 export const logger = {
