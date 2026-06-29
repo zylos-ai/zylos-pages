@@ -28,7 +28,6 @@ import { setupLogicalAssetRoute } from './routes/logical-assets.js';
 import { setupPageApi } from './routes/page-api.js';
 import { adminRoute } from './routes/admin.js';
 import { pageRoute } from './routes/pages.js';
-import { indexRoute } from './routes/index.js';
 import { logger } from './utils/logger.js';
 
 // Initialize
@@ -99,7 +98,7 @@ async function main() {
 
   // Share API routes (after auth — requires authenticated session)
   if (sharingConfig.enabled !== false) {
-    setupShareApi(app, sharingConfig);
+    setupShareApi(app, sharingConfig, config);
   }
   setupRawApi(app, config);
   setupStateApi(app);
@@ -107,8 +106,7 @@ async function main() {
   setupPageApi(app, config);
 
   // Routes
-  app.get('/', indexRoute(config));
-  app.get('/admin', adminRoute());
+  app.get('/', adminRoute());
   setupLogicalAssetRoute(app, config);
   setupAssetRoute(app, config);
   app.get('/:slug(*)', pageRoute(config));

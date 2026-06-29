@@ -26,7 +26,16 @@ function cookieHeader(setCookie) {
 }
 
 function makeServer({ auth = false, sharingEnabled = true, shareViewer = false } = {}) {
+  const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-share-content-'));
+  fs.mkdirSync(path.join(contentDir, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(contentDir, 'docs', 'page.html'), '<!doctype html><head><title>Shared page</title></head><h1>Shared page</h1>');
   const app = express();
+  const config = {
+    contentDir,
+    security: { allowRawHtml: false, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
+    toc: { minHeadings: 3 },
+    theme: { codeTheme: 'github-dark' },
+  };
   if (auth) {
     setupAuth(app, {
       enabled: true,
@@ -40,7 +49,7 @@ function makeServer({ auth = false, sharingEnabled = true, shareViewer = false }
     });
   }
   if (sharingEnabled) {
-    setupShareApi(app, { enabled: true, allowPermanent: false });
+    setupShareApi(app, { enabled: true, allowPermanent: false }, config);
   }
   app.get('/docs/page', (req, res) => {
     if (req.query.locals === '1') {
@@ -59,7 +68,7 @@ function makeServer({ auth = false, sharingEnabled = true, shareViewer = false }
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
-      resolve({ server, origin: `http://127.0.0.1:${port}` });
+      resolve({ server, origin: `http://127.0.0.1:${port}`, contentDir });
     });
   });
 }
@@ -241,7 +250,7 @@ test('patch rejects revoked expired malformed unknown and deprecated write share
   }
 });
 
-test('short share URL sets share cookies and redirects to clean page URL', async () => {
+test('short share URL sets access cookie and renders clean page in place', async () => {
   const { server, origin } = await makeServer();
   try {
     const create = await fetch(`${origin}/api/share`, {
@@ -256,12 +265,12 @@ test('short share URL sets share cookies and redirects to clean page URL', async
     const share = await create.json();
 
     const redirect = await fetch(share.url, { redirect: 'manual' });
-    assert.equal(redirect.status, 302);
-    assert.equal(redirect.headers.get('location'), '/docs/page');
+    assert.equal(redirect.status, 200);
+    assert.equal(redirect.headers.get('location'), null);
     const setCookie = redirect.headers.get('set-cookie');
     assert.match(setCookie, /__Host-share_access=/);
-    assert.match(setCookie, /__Host-share_scope=/);
-    assert.doesNotMatch(redirect.headers.get('location'), /token=/);
+    assert.doesNotMatch(setCookie, /__Host-share_scope=/);
+    assert.match(await redirect.text(), /<base href="\/docs\/page">/);
   } finally {
     server.close();
   }
@@ -292,11 +301,10 @@ test('auth middleware allows short share URL cookies to access target page', asy
     assert.equal(create.status, 200);
     const share = await create.json();
 
-    const redirect = await fetch(share.url, { redirect: 'manual' });
-    assert.equal(redirect.status, 302);
-    assert.doesNotMatch(redirect.headers.get('location'), /login/);
-    assert.equal(redirect.headers.get('location'), '/docs/page');
-    const cookies = cookieHeader(redirect.headers.get('set-cookie'));
+    const direct = await fetch(share.url, { redirect: 'manual' });
+    assert.equal(direct.status, 200);
+    assert.doesNotMatch(await direct.text(), /login/);
+    const cookies = cookieHeader(direct.headers.get('set-cookie'));
 
     const page = await fetch(`${origin}/docs/page`, {
       redirect: 'manual',
@@ -333,9 +341,9 @@ test('auth middleware keeps short share cookies read-only', async () => {
     assert.equal(create.status, 200);
     const share = await create.json();
 
-    const redirect = await fetch(share.url, { redirect: 'manual' });
-    assert.equal(redirect.status, 302);
-    const cookies = cookieHeader(redirect.headers.get('set-cookie'));
+    const direct = await fetch(share.url, { redirect: 'manual' });
+    assert.equal(direct.status, 200);
+    const cookies = cookieHeader(direct.headers.get('set-cookie'));
 
     const appCheck = await fetch(`${origin}/docs/page?locals=1`, {
       headers: { Cookie: cookies },

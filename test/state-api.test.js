@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -45,12 +45,24 @@ async function withApp(app, fn) {
 }
 
 async function withServer(authConfig, fn) {
+  const contentDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-state-content-'));
+  await writeFile(path.join(contentDir, 'short-state.html'), '<!doctype html><h1>Short state</h1>');
   const app = express();
+  const config = {
+    contentDir,
+    security: { allowRawHtml: false, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
+    toc: { minHeadings: 3 },
+    theme: { codeTheme: 'github-dark' },
+  };
   setupAuth(app, authConfig || { enabled: false, password: null });
-  setupShareApi(app, { enabled: true, allowPermanent: false });
+  setupShareApi(app, { enabled: true, allowPermanent: false }, config);
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
-  await withApp(app, fn);
+  try {
+    await withApp(app, fn);
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
 }
 
 async function login(origin) {
@@ -291,9 +303,9 @@ test('state API allows short-share cookie CRUD for the matching artifact', async
 
   await withServer(authConfig(), async ({ origin }) => {
     const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
-    assert.equal(redirect.status, 302);
-    assert.equal(redirect.headers.get('location'), '/short-state');
-    assert.doesNotMatch(redirect.headers.get('location'), /token=/);
+    assert.equal(redirect.status, 200);
+    assert.equal(redirect.headers.get('location'), null);
+    assert.match(await redirect.text(), /<base href="\/short-state">/);
     const cookies = cookieHeader(redirect.headers.get('set-cookie'));
 
     let res = await fetch(`${origin}/api/state/short-state`, {

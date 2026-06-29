@@ -55,7 +55,7 @@ async function withServer(config, fn) {
   const app = express();
   app.use(securityHeaders());
   setupAuth(app, config.auth || { enabled: false, password: null });
-  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false });
+  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
   setupRawApi(app, config);
   app.get('/', indexRoute(config));
   app.get('/:slug(*)', pageRoute(config));

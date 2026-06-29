@@ -13,10 +13,8 @@ import {
   clearShareAccessCookieHeader,
   clearShareScopeCookieHeader,
   createShareAccessCookie,
-  createShareScopeCookie,
   verifyShare,
   verifyShareAccessCookie,
-  verifyShareScopeCookie,
 } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
 import { isAssetExtension } from '../utils/mime.js';
@@ -178,11 +176,6 @@ function getSessionCookie(req) {
   return cookies[COOKIE_NAME] || null;
 }
 
-function getShareScopeCookie(req) {
-  const cookies = parseCookies(req.headers.cookie);
-  return cookies[SHARE_SCOPE_COOKIE_NAME] || null;
-}
-
 function getShareAccessCookie(req) {
   const cookies = parseCookies(req.headers.cookie);
   return cookies[SHARE_ACCESS_COOKIE_NAME] || null;
@@ -220,11 +213,6 @@ function clearShareAccessCookie(res) {
   appendSetCookie(res, clearShareAccessCookieHeader());
 }
 
-function setShareScopeCookie(res, slug, tokenId, tokenExpiresAt) {
-  const cookie = createShareScopeCookie(slug, tokenId, tokenExpiresAt);
-  appendSetCookie(res, cookie.header);
-}
-
 function setShareAccessCookie(res, slug, tokenId, tokenExpiresAt) {
   const cookie = createShareAccessCookie(slug, tokenId, tokenExpiresAt);
   appendSetCookie(res, cookie.header);
@@ -235,11 +223,9 @@ function acceptShareViewer(res, result, options = {}) {
   res.locals.authenticated = false;
   res.locals.shareSlug = result.slug;
   res.locals.shareCanWriteAttachments = result.canWriteAttachments === true;
+  res.locals.shareContext = result;
   if (options.refreshAccessCookie) {
     setShareAccessCookie(res, result.slug, result.tokenId, result.expiresAt);
-  }
-  if (options.refreshScopeCookie) {
-    setShareScopeCookie(res, result.slug, result.tokenId, result.expiresAt);
   }
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -594,7 +580,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       const slug = req.path.slice(1);
       const result = verifyShareAccessCookie(getShareAccessCookie(req), slug);
       if (result.valid) {
-        acceptShareViewer(res, result, { refreshScopeCookie: true });
+        acceptShareViewer(res, result);
         return next();
       }
     }
@@ -608,7 +594,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       const slug = req.path.slice(1);
       const result = verifyShare(req.query.token, slug);
       if (result.valid) {
-        acceptShareViewer(res, result, { refreshAccessCookie: true, refreshScopeCookie: true });
+        acceptShareViewer(res, result, { refreshAccessCookie: true });
         return next();
       }
       logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
@@ -639,16 +625,11 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       logger.info('api share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
-    if ((req.method === 'GET' || req.method === 'HEAD') && isAssetPath(req.path)) {
-      const result = verifyShareScopeCookie(getShareScopeCookie(req), req.path.slice(1));
-      if (result.valid) {
-        res.locals.viewerType = 'share';
-        res.locals.authenticated = false;
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Referrer-Policy', 'no-referrer');
-        return next();
-      }
-      logger.info('asset share-scope cookie invalid', { path: req.path, ip: getClientIp(req) });
+    if ((req.method === 'GET' || req.method === 'HEAD')
+        && req.path.startsWith('/assets/')
+        && typeof req.query.exp === 'string'
+        && typeof req.query.sig === 'string') {
+      return next();
     }
 
     if (validateSession(getSessionCookie(req))) {
