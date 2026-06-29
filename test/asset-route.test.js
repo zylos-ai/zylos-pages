@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +14,7 @@ const { setupAssetRoute } = await import('../src/routes/asset.js');
 const { adminRoute } = await import('../src/routes/admin.js');
 const { setupLogicalAssetRoute } = await import('../src/routes/logical-assets.js');
 const { pageRoute } = await import('../src/routes/pages.js');
+const { registerLogicalPage } = await import('../src/pages/page-store.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi } = await import('../src/routes/state-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
@@ -116,6 +117,12 @@ function expectLoginRedirect(response) {
 
 function expectAssetDenied(response) {
   assert.equal(response.status, 403);
+}
+
+function logicalAssetPath(html, assetName) {
+  const match = html.match(new RegExp(`["']([^"']*/assets/[^"']*path=[^"']*${assetName}[^"']*)["']`));
+  assert.ok(match, `logical asset URL for ${assetName} should be present`);
+  return match[1].replace(/&amp;/g, '&');
 }
 
 async function rawGet(origin, requestPath) {
@@ -231,6 +238,79 @@ test('asset route follows auth wall, session auth, and method boundaries', async
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('authenticated /p view resolves out-of-directory assets within allowed roots and rejects escapes', async () => {
+  const contentDir = await makeContentDir();
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-owner-source-'));
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-owner-outside-'));
+  let outsideSibling;
+  try {
+    const slug = `owner-assets-${Date.now()}`;
+    const docsDir = path.join(sourceRoot, 'docs');
+    const sharedDir = path.join(sourceRoot, 'shared');
+    await mkdir(docsDir, { recursive: true });
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(path.join(docsDir, 'guide.md'), '# Guide\n![Logo](../shared/logo.png)\n');
+    await writeFile(path.join(sharedDir, 'logo.png'), 'logo');
+    await writeFile(path.join(sharedDir, 'real.txt'), 'not actually png');
+    await symlink(path.join(sharedDir, 'real.txt'), path.join(sharedDir, 'fake.png'));
+    await writeFile(path.join(outsideRoot, 'secret.png'), 'secret');
+    await symlink(path.join(outsideRoot, 'secret.png'), path.join(sharedDir, 'escape.png'));
+    outsideSibling = path.join(sourceRoot, '..', `${slug}-outside.png`);
+    await writeFile(outsideSibling, 'outside root');
+
+    const config = {
+      ...baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }),
+      sourceRegistry: {
+        allowedSources: {
+          docs: sourceRoot,
+        },
+      },
+    };
+    registerLogicalPage({
+      uri: slug,
+      title: 'Owner Assets',
+      sourcePath: path.join(docsDir, 'guide.md'),
+      component: 'docs',
+    }, config);
+
+    await withServer(config, async ({ origin }) => {
+      let res = await fetch(`${origin}/p/${slug}`, { redirect: 'manual' });
+      expectLoginRedirect(res);
+
+      const cookie = sessionCookie(await login(origin));
+      res = await fetch(`${origin}/p/${slug}`, { headers: { Cookie: cookie } });
+      assert.equal(res.status, 200);
+      const body = await res.text();
+      const assetUrl = logicalAssetPath(body, 'logo.png');
+      assert.match(assetUrl, new RegExp(`/assets/${slug}\\?path=\\.\\.\\%2Fshared\\%2Flogo\\.png`));
+
+      res = await fetch(`${origin}${assetUrl}`, { headers: { Cookie: cookie } });
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), 'logo');
+
+      const assetBase = `${origin}/assets/${slug}`;
+      for (const badPath of [
+        `../../${path.basename(outsideSibling)}`,
+        '../shared/escape.png',
+        '../shared/fake.png',
+        '/tmp/absolute.png',
+        `../shared/logo.png${String.fromCharCode(0)}`,
+      ]) {
+        res = await fetch(`${assetBase}?path=${encodeURIComponent(badPath)}`, {
+          headers: { Cookie: cookie },
+          redirect: 'manual',
+        });
+        assert.equal(res.status, 400, `${badPath} should be rejected`);
+      }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+    await rm(sourceRoot, { recursive: true, force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
+    if (outsideSibling) await rm(outsideSibling, { force: true });
   }
 });
 
