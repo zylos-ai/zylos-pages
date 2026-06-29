@@ -220,7 +220,7 @@ test('share page access sets scoped cookie and asset request uses cookie without
       assert.match(setCookie, /__Host-share_scope=/);
       assert.match(setCookie, /HttpOnly/);
       assert.match(setCookie, /Secure/);
-      assert.match(setCookie, /SameSite=Strict/);
+      assert.match(setCookie, /SameSite=Lax/);
       assert.match(setCookie, /Path=\//);
       assert.match(setCookie, /Max-Age=\d+/);
       const cookie = shareScopeCookie(setCookie);

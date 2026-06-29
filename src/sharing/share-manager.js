@@ -319,12 +319,12 @@ export function createShareAccessCookie(slug, tokenId, tokenExpiresAt) {
   return {
     value: token,
     maxAge,
-    header: `${SHARE_ACCESS_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`,
+    header: `${SHARE_ACCESS_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
   };
 }
 
 export function clearShareAccessCookieHeader() {
-  return `${SHARE_ACCESS_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
+  return `${SHARE_ACCESS_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
 export function verifyShareAccessCookie(cookieValue, requestSlug) {
@@ -393,12 +393,12 @@ export function createShareScopeCookie(slug, tokenId, tokenExpiresAt) {
   return {
     value,
     maxAge,
-    header: `${SHARE_SCOPE_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`,
+    header: `${SHARE_SCOPE_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
   };
 }
 
 export function clearShareScopeCookieHeader() {
-  return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`;
+  return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
 export function verifyShareScopeCookie(cookieValue, assetPath) {

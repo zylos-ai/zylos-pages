@@ -22,7 +22,7 @@ export function adminRoute() {
       <form method="POST" action="${baseUrl}/logout" class="logout-form"><button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button></form>
     </div>
   </header>
-  <main class="page-content">
+  <main class="admin-page">
     <div id="pages-admin-root" data-base-url="${baseUrl}"></div>
   </main>
   <script type="module" src="${baseUrl}/_assets/admin.js"></script>
