@@ -2,11 +2,17 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-30
+
+### Added
+- **In-place share rendering + per-asset signed access** (#73): Share pages (`/s/:tokenId`) now render server-side with HTTP 200 and an injected `<base href>` so the address bar stays on the share URL instead of redirecting. Referenced images are served through a new per-asset signed endpoint (`/assets/:uri?path=&exp=&sig=`) whose HMAC signature binds the logical uri, the resolved real path, the expiry, and the tokenId; each asset request re-validates via realpath / allowed-root / extension checks, and links are rejected once the share expires or is revoked. The directory-level `share_scope` cookie is removed entirely.
+
 ### Changed
-- **Admin console redesign**: The `/admin` React console was rebuilt for a beautiful, human-friendly experience using the existing Pages design tokens (GitHub/Linear style). Adds a centered max-width layout, card surfaces, a proper button system (the Register/Search buttons previously fell back to unstyled browser defaults — most visible as broken white buttons in dark mode), styled inputs with focus rings, field hints, success/error toasts, a polished empty state, and skeleton loading. Page rows are now cards showing an access-mode badge, component tag, and relative "updated" time. Share-link creation gained an expiry selector (24h / 7d / 30d / permanent), an inline result with one-click copy + expiry, and "copied" feedback. The login page was elevated to match (logo, vertical centering, soft shadow, focus ring).
+- **Authenticated root is the admin console** (#73, F1): the authenticated `/` is now the Pages admin console and the separate `/admin` mount is removed. The page list is sourced solely from the DB registry.
+- **Admin console redesign** (#72): The admin React console was rebuilt for a beautiful, human-friendly experience using the existing Pages design tokens (GitHub/Linear style). Adds a centered max-width layout, card surfaces, a proper button system (the Register/Search buttons previously fell back to unstyled browser defaults — most visible as broken white buttons in dark mode), styled inputs with focus rings, field hints, success/error toasts, a polished empty state, and skeleton loading. Page rows are now cards showing an access-mode badge, component tag, and relative "updated" time. Share-link creation gained an expiry selector (24h / 7d / 30d / permanent), an inline result with one-click copy + expiry, and "copied" feedback. The login page was elevated to match (logo, vertical centering, soft shadow, focus ring).
 
 ### Fixed
-- **Share cookies `SameSite=Strict` → `Lax`**: `__Host-share_access` and `__Host-share_scope` cookies are now `SameSite=Lax` so share links open correctly inside IM in-app browsers (Telegram/Lark/etc.), which a top-level navigation from another origin would otherwise drop under `Strict`. The admin session cookie remains `SameSite=Strict`.
+- **Share cookies `SameSite=Strict` → `Lax`** (#72): `__Host-share_access` and `__Host-share_scope` cookies are now `SameSite=Lax` so share links open correctly inside IM in-app browsers (Telegram/Lark/etc.), which a top-level navigation from another origin would otherwise drop under `Strict`. The admin session cookie remains `SameSite=Strict`.
 
 ## [0.5.0] - 2026-06-27
 
