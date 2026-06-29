@@ -15,6 +15,7 @@ const TOKEN_ID_BYTES = 16;
 const SHARE_ACCESS_BYTES = 32;
 const SHARE_SESSION_MAX_AGE_SECONDS = 3600;
 const SHARE_SCOPE_MAX_AGE_SECONDS = 3600;
+const SHARE_ASSET_MAX_AGE_MS = 3600_000;
 
 export const SHARE_ACCESS_COOKIE_NAME = '__Host-share_access';
 export const SHARE_SCOPE_COOKIE_NAME = '__Host-share_scope';
@@ -253,6 +254,12 @@ function computeShareScopeHmac(directory, tokenId, expiresAt, secret) {
     .digest('hex');
 }
 
+function computeShareAssetHmac(uri, realPath, expiresAt, tokenId, secret) {
+  return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
+    .update(`${normalizeSlug(uri)}|${realPath}|${expiresAt}|${tokenId}`)
+    .digest('hex');
+}
+
 function isAssetWithinScope(assetPath, directory) {
   const normalizedAsset = normalizeSlug(assetPath);
   const assetDir = directoryScope(normalizedAsset);
@@ -431,6 +438,47 @@ export function verifyShareScopeCookie(cookieValue, assetPath) {
   }
 
   return { valid: true, directory, viewerType: 'share' };
+}
+
+export function shareAssetExpiresAt(shareExpiresAt) {
+  const current = nowMs();
+  const cap = current + SHARE_ASSET_MAX_AGE_MS;
+  if (!shareExpiresAt || shareExpiresAt === 0) return cap;
+  return Math.max(0, Math.min(cap, Number(shareExpiresAt)));
+}
+
+export function createShareAssetSignature({ uri, realPath, expiresAt, tokenId }) {
+  if (!isTokenId(tokenId) || !Number.isFinite(Number(expiresAt))) {
+    throw new Error('Invalid share asset signature input');
+  }
+  const hmac = computeShareAssetHmac(uri, realPath, Number(expiresAt), tokenId, getSecret());
+  return `${tokenId}.${hmac}`;
+}
+
+export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, sig }) {
+  const exp = Number(expiresAt);
+  if (!Number.isFinite(exp) || !sig || typeof sig !== 'string') {
+    return { valid: false };
+  }
+  let actualSig = sig;
+  let actualTokenId = tokenId;
+  const dotIndex = sig.indexOf('.');
+  if (dotIndex !== -1) {
+    actualTokenId = sig.slice(0, dotIndex);
+    actualSig = sig.slice(dotIndex + 1);
+  }
+  if (!isTokenId(actualTokenId)) return { valid: false };
+  if (nowMs() > exp) return { valid: false };
+  const record = activeShareRecord(actualTokenId);
+  if (!record || normalizeSlug(record.slug) !== normalizeSlug(uri)) return { valid: false };
+  if (record.expiresAt !== 0 && exp > record.expiresAt) return { valid: false };
+
+  const expected = computeShareAssetHmac(uri, realPath, exp, actualTokenId, getSecret());
+  const actualBuffer = Buffer.from(actualSig, 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  if (actualBuffer.length !== expectedBuffer.length) return { valid: false };
+  if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return { valid: false };
+  return { valid: true, share: record };
 }
 
 export function revokeShare(tokenId) {

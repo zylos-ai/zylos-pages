@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolveLogicalAsset } from '../pages/asset-resolver.js';
+import { verifyShareAssetSignature } from '../sharing/share-manager.js';
 import { generateEtag } from '../utils/etag.js';
 import { logger } from '../utils/logger.js';
 
@@ -10,7 +11,23 @@ export function setupLogicalAssetRoute(app, config) {
     if (!pageUri || typeof assetPath !== 'string') return next();
 
     try {
-      const { filePath, mimeType } = await resolveLogicalAsset(pageUri, assetPath);
+      const signedRequest = typeof req.query.exp === 'string' || typeof req.query.sig === 'string';
+      const { filePath, mimeType } = await resolveLogicalAsset(pageUri, assetPath, {
+        config,
+        allowConfiguredRoots: signedRequest,
+      });
+      if (signedRequest) {
+        const verification = verifyShareAssetSignature({
+          uri: pageUri,
+          realPath: filePath,
+          expiresAt: Number(req.query.exp),
+          sig: req.query.sig,
+        });
+        if (!verification.valid) {
+          return res.status(403).send('Invalid asset signature');
+        }
+        res.locals.viewerType = 'share';
+      }
       const info = await stat(filePath);
       const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
       if (info.size > maxFileSizeBytes) {
@@ -36,4 +53,3 @@ export function setupLogicalAssetRoute(app, config) {
     }
   });
 }
-

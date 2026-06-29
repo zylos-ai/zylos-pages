@@ -48,7 +48,7 @@ function baseConfig(contentDir, auth = authConfig(), extra = {}) {
 async function withServer(config, fn, options = {}) {
   const app = express();
   setupAuth(app, config.auth || { enabled: false, password: null }, config.sharing || { enabled: true, allowPermanent: false });
-  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false });
+  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
   setupAttachmentApi(app, config, options);
   app.get('/s/:slug', (_req, res) => res.status(200).send('fallback'));
   app.get('/:slug(*)', (req, res) => res.status(200).send(req.params.slug || 'root'));
@@ -283,7 +283,7 @@ test('share viewers can list and read matching artifact attachments but cannot m
       const attachment = (await uploaded.json()).attachment;
 
       let res = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
-      assert.equal(res.status, 302);
+      assert.equal(res.status, 200);
       const shareCookies = cookieHeader(res.headers.get('set-cookie'));
 
       res = await fetch(`${origin}/api/attachments/renovation-checklist/share-log`, {
@@ -328,7 +328,7 @@ test('short share viewers remain read-only even when write permission is request
     const share = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       let res = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
-      assert.equal(res.status, 302);
+      assert.equal(res.status, 200);
       const shareCookies = cookieHeader(res.headers.get('set-cookie'));
 
       res = await upload(origin, 'renovation-checklist', 'editable-log', shareCookies);
@@ -367,7 +367,7 @@ test('existing short share cookie sessions cannot be upgraded to attachment writ
 
       const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
       let res = await fetch(`${origin}/s/${readOnly.tokenId}`, { redirect: 'manual' });
-      assert.equal(res.status, 302);
+      assert.equal(res.status, 200);
       const readOnlyCookies = cookieHeader(res.headers.get('set-cookie'));
 
       res = await upload(origin, 'renovation-checklist', 'short-upgrade-before', readOnlyCookies);

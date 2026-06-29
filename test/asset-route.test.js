@@ -11,17 +11,14 @@ process.env.PAGES_DATA_DIR = dataDir;
 const express = (await import('express')).default;
 const { initCache } = await import('../src/cache/pageCache.js');
 const { setupAssetRoute } = await import('../src/routes/asset.js');
+const { adminRoute } = await import('../src/routes/admin.js');
+const { setupLogicalAssetRoute } = await import('../src/routes/logical-assets.js');
 const { pageRoute } = await import('../src/routes/pages.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi } = await import('../src/routes/state-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { securityHeaders } = await import('../src/security/headers.js');
-const {
-  SHARE_SCOPE_COOKIE_NAME,
-  createShare,
-  createShareScopeCookie,
-  revokeShare,
-} = await import('../src/sharing/share-manager.js');
+const { SHARE_SCOPE_COOKIE_NAME, createShare, createShareScopeCookie, revokeShare } = await import('../src/sharing/share-manager.js');
 
 test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
@@ -50,9 +47,10 @@ async function withServer(config, fn) {
   const app = express();
   app.use(securityHeaders());
   setupAuth(app, config.auth || { enabled: false, password: null });
-  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false });
+  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
+  setupLogicalAssetRoute(app, config);
   setupAssetRoute(app, config);
   app.get('/:slug(*)', pageRoute(config));
   app.use((err, req, res, _next) => {
@@ -103,6 +101,12 @@ function cookieHeader(setCookieHeader) {
     .split(/,\s*(?=__Host-)/)
     .map(cookie => cookie.split(';', 1)[0])
     .join('; ');
+}
+
+function signedAssetPath(html, assetName) {
+  const match = html.match(new RegExp(`["']([^"']*/assets/[^"']*path=[^"']*${assetName}[^"']*)["']`));
+  assert.ok(match, `signed asset URL for ${assetName} should be present`);
+  return match[1].replace(/&amp;/g, '&');
 }
 
 function expectLoginRedirect(response) {
@@ -173,6 +177,41 @@ test('asset route serves allowlisted assets with MIME, ETag, 304, and size limit
   }
 });
 
+test('root route serves admin console and /admin is not mounted', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir);
+    const app = express();
+    app.get('/', adminRoute());
+    setupLogicalAssetRoute(app, config);
+    setupAssetRoute(app, config);
+    app.get('/:slug(*)', pageRoute(config));
+    app.use((err, req, res, _next) => {
+      const status = err.statusCode || err.status || 500;
+      res.status(status >= 400 && status < 500 ? status : 500).send(err.message || 'Internal Server Error');
+    });
+    const server = await new Promise((resolve) => {
+      const s = http.createServer(app);
+      s.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const root = await fetch(`${origin}/`);
+      assert.equal(root.status, 200);
+      assert.match(await root.text(), /id="pages-admin-root"/);
+
+      const oldAdmin = await fetch(`${origin}/admin`, { redirect: 'manual' });
+      assert.equal(oldAdmin.status, 404);
+    } finally {
+      await new Promise((resolve, reject) => {
+        server.close((err) => err ? reject(err) : resolve());
+      });
+    }
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('asset route follows auth wall, session auth, and method boundaries', async () => {
   const contentDir = await makeContentDir();
   try {
@@ -195,7 +234,7 @@ test('asset route follows auth wall, session auth, and method boundaries', async
   }
 });
 
-test('share page access sets scoped cookie and asset request uses cookie without token', async () => {
+test('share page access renders in place and signs referenced assets', async () => {
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'renovation-checklist.html'), '<!doctype html><img src="kitchen-ref.jpg">');
@@ -208,24 +247,21 @@ test('share page access sets scoped cookie and asset request uses cookie without
 
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
       const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
-      assert.equal(redirect.status, 302);
-      assert.equal(redirect.headers.get('location'), '/renovation-checklist');
-      assert.doesNotMatch(redirect.headers.get('location'), /token=/);
-
-      const page = await fetch(`${origin}/renovation-checklist`, {
-        headers: { Cookie: cookieHeader(redirect.headers.get('set-cookie')) },
-      });
-      assert.equal(page.status, 200);
+      assert.equal(redirect.status, 200);
+      assert.equal(redirect.headers.get('location'), null);
+      const body = await redirect.text();
+      assert.match(body, /<base href="\/renovation-checklist">/);
       const setCookie = redirect.headers.get('set-cookie');
-      assert.match(setCookie, /__Host-share_scope=/);
+      assert.match(setCookie, /__Host-share_access=/);
+      assert.doesNotMatch(setCookie, /__Host-share_scope=/);
       assert.match(setCookie, /HttpOnly/);
       assert.match(setCookie, /Secure/);
       assert.match(setCookie, /SameSite=Lax/);
       assert.match(setCookie, /Path=\//);
       assert.match(setCookie, /Max-Age=\d+/);
-      const cookie = shareScopeCookie(setCookie);
 
-      let res = await fetch(`${origin}/kitchen-ref.jpg`, { headers: { Cookie: cookie } });
+      const signedPath = signedAssetPath(body, 'kitchen-ref.jpg');
+      let res = await fetch(`${origin}${signedPath}`);
       assert.equal(res.status, 200);
       assert.equal(await res.text(), 'kitchen image');
       assert.equal(res.headers.get('cache-control'), 'no-store');
@@ -238,7 +274,7 @@ test('share page access sets scoped cookie and asset request uses cookie without
 
       res = await fetch(`${origin}/docs/nested.jpg`, {
         redirect: 'manual',
-        headers: { Cookie: cookie },
+        headers: { Cookie: cookieHeader(setCookie) },
       });
       expectAssetDenied(res);
     });
@@ -247,13 +283,16 @@ test('share page access sets scoped cookie and asset request uses cookie without
   }
 });
 
-test('nested share-scope cookie isolates root and sibling directory assets', async () => {
+test('signed share assets allow page assets while isolating unsigned siblings', async () => {
   const contentDir = await makeContentDir();
   try {
     await mkdir(path.join(contentDir, 'docs'));
     await mkdir(path.join(contentDir, 'other'));
-    await writeFile(path.join(contentDir, 'docs', 'guide.html'), '<!doctype html><img src="diagram.png">');
+    await mkdir(path.join(contentDir, 'shared'));
+    await writeFile(path.join(contentDir, 'docs', 'guide.html'), '<!doctype html><img src="diagram.png"><img src="../shared/logo.png">');
     await writeFile(path.join(contentDir, 'docs', 'diagram.png'), 'diagram');
+    await writeFile(path.join(contentDir, 'shared', 'logo.png'), 'logo');
+    await writeFile(path.join(contentDir, 'shared', 'secret.png'), 'secret');
     await writeFile(path.join(contentDir, 'root.png'), 'root');
     await writeFile(path.join(contentDir, 'other', 'secret.png'), 'secret');
     const token = createShare('docs/guide', '24h', { allowPermanent: false }).token;
@@ -261,15 +300,25 @@ test('nested share-scope cookie isolates root and sibling directory assets', asy
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
       const page = await fetch(`${origin}/docs/guide?token=${encodeURIComponent(token)}`);
       assert.equal(page.status, 200);
-      const cookie = shareScopeCookie(page.headers.get('set-cookie'));
+      const body = await page.text();
+      const signedPath = signedAssetPath(body, 'diagram.png');
+      const sharedPath = signedAssetPath(body, 'logo.png');
 
-      let res = await fetch(`${origin}/docs/diagram.png`, { headers: { Cookie: cookie } });
+      let res = await fetch(`${origin}${signedPath}`);
       assert.equal(res.status, 200);
 
-      res = await fetch(`${origin}/root.png`, { redirect: 'manual', headers: { Cookie: cookie } });
+      res = await fetch(`${origin}${sharedPath}`);
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), 'logo');
+
+      const tamperedPath = sharedPath.replace('logo.png', 'secret.png');
+      res = await fetch(`${origin}${tamperedPath}`, { redirect: 'manual' });
+      assert.equal(res.status, 403);
+
+      res = await fetch(`${origin}/root.png`, { redirect: 'manual' });
       expectAssetDenied(res);
 
-      res = await fetch(`${origin}/other/secret.png`, { redirect: 'manual', headers: { Cookie: cookie } });
+      res = await fetch(`${origin}/other/secret.png`, { redirect: 'manual' });
       expectAssetDenied(res);
     });
   } finally {
@@ -306,7 +355,7 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
   }
 });
 
-test('revoked share invalidates existing share-scope asset cookie', async () => {
+test('revoked share invalidates existing signed asset URLs', async () => {
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><img src="asset.jpg">');
@@ -316,17 +365,16 @@ test('revoked share invalidates existing share-scope asset cookie', async () => 
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
       const page = await fetch(`${origin}/shared?token=${encodeURIComponent(share.token)}`);
       assert.equal(page.status, 200);
-      const cookie = shareScopeCookie(page.headers.get('set-cookie'));
+      const signedPath = signedAssetPath(await page.text(), 'asset.jpg');
 
-      let res = await fetch(`${origin}/asset.jpg`, { headers: { Cookie: cookie } });
+      let res = await fetch(`${origin}${signedPath}`);
       assert.equal(res.status, 200);
 
       assert.equal(revokeShare(share.tokenId), true);
-      res = await fetch(`${origin}/asset.jpg`, {
+      res = await fetch(`${origin}${signedPath}`, {
         redirect: 'manual',
-        headers: { Cookie: cookie },
       });
-      expectAssetDenied(res);
+      assert.equal(res.status, 403);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -359,15 +407,16 @@ test('asset route rejects traversal, null byte, and double-encoded traversal', a
   }
 });
 
-test('login clears share-scope cookie without overwriting session cookie', async () => {
+test('login clears legacy share-scope cookie without overwriting session cookie', async () => {
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><h1>Shared</h1>');
     const token = createShare('shared', '24h', { allowPermanent: false }).token;
 
     await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
-      const page = await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
-      const shareCookie = shareScopeCookie(page.headers.get('set-cookie'));
+      await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
+      const legacy = createShareScopeCookie('shared', createShare('shared', '24h', { allowPermanent: false }).tokenId, Date.now() + 3600_000).value;
+      const shareCookie = `${SHARE_SCOPE_COOKIE_NAME}=${legacy}`;
       const loginCookies = await login(origin, { Cookie: shareCookie });
       assert.match(loginCookies, /__Host-zylos_pages_session=/);
       assert.match(loginCookies, /__Host-share_scope=;/);
