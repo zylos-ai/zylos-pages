@@ -12,9 +12,10 @@ export function setupLogicalAssetRoute(app, config) {
 
     try {
       const signedRequest = typeof req.query.exp === 'string' || typeof req.query.sig === 'string';
+      const ownerDirectView = res.locals.authenticated === true;
       const { filePath, mimeType } = await resolveLogicalAsset(pageUri, assetPath, {
         config,
-        allowConfiguredRoots: signedRequest,
+        allowConfiguredRoots: signedRequest || ownerDirectView,
       });
       if (signedRequest) {
         const verification = verifyShareAssetSignature({
