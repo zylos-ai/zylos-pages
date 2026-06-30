@@ -137,8 +137,9 @@ function getPageUrl(uri) {
   return `/pages/p/${uri}`;
 }
 
-function getBaseUrl() {
-  return (process.env.PAGES_BASE_URL || 'https://zylos01.jinglever.com/pages').replace(/\/$/, '');
+function getBaseUrl(config = getConfig()) {
+  const configured = process.env.PAGES_BASE_URL || config.publicBaseUrl || '/pages';
+  return String(configured).replace(/\/$/, '');
 }
 
 function staticPageExists(uri, config) {
@@ -160,13 +161,13 @@ function shareSlugForUri(uri, config, options = {}) {
   return normalized;
 }
 
-function formatShare(share) {
+function formatShare(share, config = getConfig()) {
   return {
     tokenId: share.tokenId,
     expiresAt: share.expiresAt,
     createdAt: share.createdAt,
     canWriteAttachments: share.canWriteAttachments === true,
-    shortUrl: `${getBaseUrl()}/s/${share.tokenId}`,
+    shortUrl: `${getBaseUrl(config)}/s/${share.tokenId}`,
   };
 }
 
@@ -278,14 +279,15 @@ function commandShare(args) {
     tokenId: result.tokenId,
     expiresAt: result.expiresAt,
     canWriteAttachments: result.canWriteAttachments,
-    shortUrl: `${getBaseUrl()}/s/${result.tokenId}`,
+    shortUrl: `${getBaseUrl(config)}/s/${result.tokenId}`,
   }, args.json);
 }
 
 function commandShares(args) {
   const uri = normalizeUri(args._[0] || args.uri || args.slug);
-  const slug = shareSlugForUri(uri, getConfig());
-  const shares = listSharesForSlug(slug).map(formatShare);
+  const config = getConfig();
+  const slug = shareSlugForUri(uri, config);
+  const shares = listSharesForSlug(slug).map(share => formatShare(share, config));
   output({ ok: true, command: 'shares', uri, slug, shares }, args.json);
 }
 
