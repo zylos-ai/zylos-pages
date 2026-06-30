@@ -42,6 +42,13 @@
 }
 .admin-heading h1 { font-size: 1.6rem; margin: 0; }
 .admin-subtitle { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 0.9rem; }
+.admin-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .admin-count {
   flex-shrink: 0;
   font-size: 0.8rem;
@@ -59,7 +66,7 @@
 .card {
   background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 20px 22px;
   box-shadow: 0 1px 2px rgba(27, 31, 36, 0.04);
 }
@@ -135,6 +142,44 @@
   box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
 }
 .admin-form-actions { display: flex; gap: 0.5rem; margin-top: 4px; }
+.private-default-row { display: flex; align-items: center; }
+
+.admin-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.admin-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(31, 35, 40, 0.48);
+  cursor: default;
+}
+.admin-modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(560px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 20px 22px;
+  box-shadow: 0 16px 48px rgba(31, 35, 40, 0.24);
+}
+.admin-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.admin-modal-header h2 { margin: 0; font-size: 1.05rem; }
+.admin-modal-header p { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 0.85rem; }
 
 /* Search */
 .admin-search { display: flex; gap: 8px; margin-bottom: 16px; }
@@ -239,6 +284,9 @@
 
 @media (max-width: 600px) {
   .admin-page { padding: 20px 16px 48px; }
+  .admin-heading-actions { justify-content: flex-start; width: 100%; }
+  .admin-modal { padding: 12px; align-items: start; }
+  .admin-modal-panel { max-height: calc(100vh - 24px); }
   .page-card { flex-direction: column; align-items: stretch; }
   .page-card-actions { justify-content: flex-start; }
 }
