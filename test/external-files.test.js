@@ -33,6 +33,7 @@ function makeFixture(options = {}) {
   fs.mkdirSync(contentDir, { recursive: true });
   fs.mkdirSync(sourceRoot, { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'config.json'), JSON.stringify({
+    ...(options.publicBaseUrl ? { publicBaseUrl: options.publicBaseUrl } : {}),
     contentDir,
     externalFiles: {
       enabled: options.enabled ?? true,
@@ -131,6 +132,7 @@ test('unified pages CLI registers, shares, lists shares, and unshares logical pa
   assert.equal(share.slug, 'p/recruit/share-target');
   assert.match(share.tokenId, /^[a-f0-9]{32}$/);
   assert.match(share.shortUrl, /\/pages\/s\/[a-f0-9]{32}$/);
+  assert.doesNotMatch(share.shortUrl, /jinglever\.com/);
 
   const shares = runPagesCli(fixture, ['shares', 'recruit/share-target', '--json']);
   assert.deepEqual(shares.shares.map(entry => entry.tokenId), [share.tokenId]);
@@ -141,6 +143,30 @@ test('unified pages CLI registers, shares, lists shares, and unshares logical pa
 
   const after = runPagesCli(fixture, ['shares', 'recruit/share-target', '--json']);
   assert.deepEqual(after.shares, []);
+});
+
+test('pages CLI share base URL uses config when env is absent', () => {
+  const fixture = makeFixture({ publicBaseUrl: 'https://pages.example.test/custom-pages/' });
+  const source = path.join(fixture.sourceRoot, 'configured-base.md');
+  fs.writeFileSync(source, '# Configured Base\n');
+
+  runPagesCli(fixture, [
+    'register',
+    '--component', 'recruit',
+    '--uri', 'recruit/configured-base',
+    '--source', source,
+    '--json',
+  ]);
+
+  const share = runPagesCli(fixture, ['share', 'recruit/configured-base', '--duration', '24h', '--json'], {
+    env: { PAGES_BASE_URL: '' },
+  });
+  assert.match(share.shortUrl, /^https:\/\/pages\.example\.test\/custom-pages\/s\/[a-f0-9]{32}$/);
+
+  const shares = runPagesCli(fixture, ['shares', 'recruit/configured-base', '--json'], {
+    env: { PAGES_BASE_URL: '' },
+  });
+  assert.equal(shares.shares[0].shortUrl, share.shortUrl);
 });
 
 test('allow-root add preserves existing config fields and enables registration from new root', () => {

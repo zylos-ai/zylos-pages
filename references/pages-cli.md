@@ -37,6 +37,7 @@ node src/cli/pages.js unshare reports/q3
 
 - `share` accepts `24h`, `7d`, `30d`, or `permanent` when config allows permanent shares.
 - Registered logical pages are shared as `p/<uri>` and return `/pages/s/<tokenId>`.
+- Share link base URL priority is `PAGES_BASE_URL` env var, then `publicBaseUrl` in `config.json`, then the neutral `/pages` path fallback.
 - `shares` lists active share tokens for the page.
 - `unshare` revokes all active shares for the page.
 
