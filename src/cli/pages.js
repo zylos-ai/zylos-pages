@@ -1,181 +1,418 @@
 #!/usr/bin/env node
 
 /**
- * pages CLI — create pages from templates, manage share links.
- *
- * Usage:
- *   node pages.js templates                          List available HTML templates
- *   node pages.js create --template <name> --slug <path>   Copy template to content dir
- *   node pages.js share <slug> [--duration 24h|7d|30d]     Create a share link
+ * pages agent CLI — local DB operations for logical pages plus legacy template helpers.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getConfig } from '../lib/config.js';
-import { createShare } from '../sharing/share-manager.js';
-import { normalizeSlug } from '../utils/slug.js';
+import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
+import { getLogicalPage, registerLogicalPage, searchLogicalPages } from '../pages/page-store.js';
 import { resolveSafePath } from '../security/pathGuard.js';
+import { createShare, listSharesForSlug, revokeAllForSlug } from '../sharing/share-manager.js';
+import { normalizeSlug } from '../utils/slug.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = path.resolve(__dirname, '../../templates/html');
 
+class CliError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'CliError';
+    this.code = code;
+  }
+}
+
 function printUsage() {
-  console.log(`pages CLI — create pages from templates, manage share links.
+  console.log(`pages agent CLI
 
 Usage:
-  node pages.js templates                                   List available templates
-  node pages.js create --template <name> --slug <path>      Create page from template
-  node pages.js share <slug> [--duration 24h|7d|30d]        Create a share link
+  node pages.js register --source <path> --uri <uri> [--title <title>] [--component <name>] [--json]
+  node pages.js list [--q <query>] [--json]
+  node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--json]
+  node pages.js shares <uri> [--json]
+  node pages.js unshare <uri> [--json]
+  node pages.js allow-root add <path> [--name <name>] [--json]
+  node pages.js status [--json]
+
+Template helpers:
+  node pages.js templates
+  node pages.js create --template <name> --slug <path>
 
 Examples:
-  node pages.js templates
-  node pages.js create --template technical-proposal --slug docs/my-report
-  node pages.js share docs/my-report --duration 30d`);
+  node pages.js register --source /abs/report.md --uri reports/q3 --title "Q3 Report"
+  node pages.js share reports/q3 --duration 7d
+  node pages.js allow-root add /Users/howard/zylos/workspace/reports --name reports`);
 }
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  const args = { command };
-  for (let i = 0; i < rest.length; i++) {
+  const args = { command, _: [], json: false };
+  for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
-    if (token === '--template' && rest[i + 1]) { args.template = rest[++i]; continue; }
-    if (token === '--slug' && rest[i + 1]) { args.slug = rest[++i]; continue; }
-    if (token === '--duration' && rest[i + 1]) { args.duration = rest[++i]; continue; }
-    if (!token.startsWith('--') && !args.positional) { args.positional = token; }
+    if (token === '--json') {
+      args.json = true;
+      continue;
+    }
+    if (token.startsWith('--')) {
+      const key = token.slice(2);
+      const value = rest[i + 1];
+      if (!value || value.startsWith('--')) {
+        throw new CliError('invalid_args', `missing value for --${key}`);
+      }
+      args[key] = value;
+      i += 1;
+      continue;
+    }
+    args._.push(token);
   }
   return args;
 }
 
-function listTemplates() {
-  if (!fs.existsSync(TEMPLATES_DIR)) {
-    console.error(`Templates directory not found: ${TEMPLATES_DIR}`);
-    process.exit(1);
-  }
-  const files = fs.readdirSync(TEMPLATES_DIR).filter(f => f.endsWith('.html'));
-  if (files.length === 0) {
-    console.log('No templates found.');
+function output(result, json) {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
-  console.log('Available HTML templates:\n');
-  for (const f of files) {
-    const name = f.replace('.html', '');
-    console.log(`  ${name}`);
+  process.stdout.write(`${humanize(result)}\n`);
+}
+
+function humanize(result) {
+  if (!result.ok) return `error: ${result.error}`;
+  if (result.command === 'list') {
+    return result.entries.map(entry => `${entry.uri} [${entry.accessMode}] -> ${entry.sourcePath}`).join('\n') || 'no pages registered';
   }
-  console.log(`\nUsage: node pages.js create --template <name> --slug <path>`);
+  if (result.command === 'share') {
+    return [
+      `Share link created for: ${result.uri}`,
+      `URL: ${result.shortUrl}`,
+      `Duration: ${result.duration}`,
+      `Expires: ${result.expiresAt ? new Date(Number(result.expiresAt)).toISOString() : 'never'}`,
+    ].join('\n');
+  }
+  if (result.command === 'shares') {
+    return result.shares.map(share => `${share.tokenId} ${share.expiresAt ? new Date(Number(share.expiresAt)).toISOString() : 'never'}`).join('\n') || 'no active shares';
+  }
+  if (result.command === 'unshare') return `revoked ${result.revoked} share(s) for ${result.uri}`;
+  if (result.command === 'allow-root') return `allowed root ${result.name}: ${result.path}`;
+  return JSON.stringify(result, null, 2);
+}
+
+function fail(error, json) {
+  const code = error instanceof CliError || typeof error?.code === 'string' ? error.code : 'internal_error';
+  const message = error instanceof Error ? error.message : String(error);
+  output({ ok: false, code, error: message }, json);
+  process.exitCode = 1;
+}
+
+function expandHome(value) {
+  if (typeof value !== 'string') return value;
+  if (value === '~') return process.env.HOME;
+  if (value.startsWith('~/')) return path.join(process.env.HOME, value.slice(2));
+  return value;
+}
+
+function requireExternalFilesEnabled(config) {
+  if (config.externalFiles?.enabled !== true) {
+    throw new CliError('disabled', 'external file registration is disabled');
+  }
+}
+
+function normalizeUri(rawUri) {
+  if (!rawUri) throw new CliError('invalid_uri', 'uri is required');
+  let uri;
+  try {
+    uri = normalizeSlug(rawUri);
+  } catch {
+    throw new CliError('invalid_uri', 'uri must be a valid URL path');
+  }
+  if (!uri || uri.includes('\\') || uri.split('/').includes('..') || uri.split('/').includes('.')) {
+    throw new CliError('invalid_uri', 'uri must be a non-empty relative pages path');
+  }
+  return uri;
+}
+
+function getPageUrl(uri) {
+  return `/pages/p/${uri}`;
+}
+
+function getBaseUrl() {
+  return (process.env.PAGES_BASE_URL || 'https://zylos01.jinglever.com/pages').replace(/\/$/, '');
+}
+
+function staticPageExists(uri, config) {
+  try {
+    resolveSafePath(uri, config.contentDir);
+  } catch {
+    return false;
+  }
+  return fs.existsSync(path.join(config.contentDir, `${uri}.html`)) ||
+    fs.existsSync(path.join(config.contentDir, `${uri}.md`));
+}
+
+function shareSlugForUri(uri, config, options = {}) {
+  const normalized = normalizeUri(uri);
+  if (getLogicalPage(normalized)) return `p/${normalized}`;
+  if (options.requireExistingContent && !staticPageExists(normalized, config)) {
+    throw new CliError('page_missing', `page not found: ${normalized}`);
+  }
+  return normalized;
+}
+
+function formatShare(share) {
+  return {
+    tokenId: share.tokenId,
+    expiresAt: share.expiresAt,
+    createdAt: share.createdAt,
+    canWriteAttachments: share.canWriteAttachments === true,
+    shortUrl: `${getBaseUrl()}/s/${share.tokenId}`,
+  };
+}
+
+function readConfigFileForWrite() {
+  if (!fs.existsSync(CONFIG_PATH)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+  } catch (err) {
+    throw new CliError('invalid_config', `cannot parse config.json: ${err.message}`);
+  }
+}
+
+function writeConfigFile(config) {
+  fs.mkdirSync(path.dirname(CONFIG_PATH), { recursive: true });
+  const tmpPath = `${CONFIG_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tmpPath, CONFIG_PATH);
+}
+
+function deriveRootName(rootPath) {
+  const base = path.basename(rootPath).replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  return base || 'source';
+}
+
+function uniqueRootName(allowedSources, preferred) {
+  let name = preferred;
+  let suffix = 2;
+  while (Object.prototype.hasOwnProperty.call(allowedSources, name)) {
+    name = `${preferred}-${suffix}`;
+    suffix += 1;
+  }
+  return name;
+}
+
+function commandStatus(args) {
+  const config = getConfig();
+  const allowedSources = Object.fromEntries(
+    Object.entries(config.externalFiles?.allowedSources || {}).map(([name, sourceRoot]) => [name, expandHome(sourceRoot)]),
+  );
+  output({
+    ok: true,
+    command: 'status',
+    dataDir: DATA_DIR,
+    configPath: CONFIG_PATH,
+    enabled: config.externalFiles?.enabled === true,
+    contentDir: expandHome(config.contentDir),
+    allowedSources,
+    registry: 'pages.db logical_pages',
+  }, args.json);
+}
+
+function commandRegister(args) {
+  const config = getConfig();
+  requireExternalFilesEnabled(config);
+  const uri = normalizeUri(args.uri || args.slug);
+  const page = registerLogicalPage({
+    uri,
+    title: args.title || uri,
+    sourcePath: args.source,
+    component: args.component,
+    accessMode: args.accessMode || args['access-mode'] || 'private',
+  }, config);
+  output({
+    ok: true,
+    command: 'register',
+    uri: page.uri,
+    url: getPageUrl(page.uri),
+    sourcePath: page.sourcePath,
+    sourceRealPath: page.sourcePath,
+    sourceRootName: page.sourceRootName,
+    accessMode: page.accessMode,
+  }, args.json);
+}
+
+function commandList(args) {
+  const config = getConfig();
+  requireExternalFilesEnabled(config);
+  const entries = searchLogicalPages(args.q || '')
+    .sort((a, b) => a.uri.localeCompare(b.uri))
+    .map(entry => ({
+      slug: entry.uri,
+      uri: entry.uri,
+      title: entry.title,
+      sourcePath: entry.sourcePath,
+      sourceRealPath: entry.sourcePath,
+      sourceRootName: entry.sourceRootName,
+      accessMode: entry.accessMode,
+      url: getPageUrl(entry.uri),
+      updatedAt: entry.updatedAt,
+    }));
+  output({ ok: true, command: 'list', entries }, args.json);
+}
+
+function commandShare(args) {
+  const uri = normalizeUri(args._[0] || args.uri || args.slug);
+  const duration = args.duration || '30d';
+  const config = getConfig();
+  if (config.sharing?.enabled === false) {
+    throw new CliError('sharing_disabled', 'sharing is disabled in config (sharing.enabled=false)');
+  }
+  const slug = shareSlugForUri(uri, config, { requireExistingContent: true });
+  const result = createShare(slug, duration, config.sharing || {});
+  output({
+    ok: true,
+    command: 'share',
+    uri,
+    slug,
+    duration,
+    tokenId: result.tokenId,
+    expiresAt: result.expiresAt,
+    canWriteAttachments: result.canWriteAttachments,
+    shortUrl: `${getBaseUrl()}/s/${result.tokenId}`,
+  }, args.json);
+}
+
+function commandShares(args) {
+  const uri = normalizeUri(args._[0] || args.uri || args.slug);
+  const slug = shareSlugForUri(uri, getConfig());
+  const shares = listSharesForSlug(slug).map(formatShare);
+  output({ ok: true, command: 'shares', uri, slug, shares }, args.json);
+}
+
+function commandUnshare(args) {
+  const uri = normalizeUri(args._[0] || args.uri || args.slug);
+  const slug = shareSlugForUri(uri, getConfig());
+  const revoked = revokeAllForSlug(slug);
+  output({ ok: true, command: 'unshare', uri, slug, revoked }, args.json);
+}
+
+function commandAllowRoot(args) {
+  const subcommand = args._[0];
+  if (subcommand !== 'add') {
+    throw new CliError('invalid_args', 'expected: allow-root add <path> [--name <name>]');
+  }
+  const rawPath = args._[1];
+  if (!rawPath) throw new CliError('invalid_args', 'path is required');
+  const expanded = path.resolve(expandHome(rawPath));
+  if (!path.isAbsolute(expanded)) {
+    throw new CliError('invalid_path', 'path must resolve to an absolute path');
+  }
+  let realPath;
+  try {
+    realPath = fs.realpathSync(expanded);
+  } catch {
+    throw new CliError('path_missing', 'allowed root path does not exist');
+  }
+  const stat = fs.statSync(realPath);
+  if (!stat.isDirectory()) {
+    throw new CliError('invalid_path', 'allowed root path must be a directory');
+  }
+
+  const fileConfig = readConfigFileForWrite();
+  fileConfig.externalFiles = fileConfig.externalFiles && typeof fileConfig.externalFiles === 'object'
+    ? fileConfig.externalFiles
+    : {};
+  fileConfig.externalFiles.enabled = fileConfig.externalFiles.enabled ?? true;
+  fileConfig.externalFiles.allowedSources = fileConfig.externalFiles.allowedSources && typeof fileConfig.externalFiles.allowedSources === 'object'
+    ? fileConfig.externalFiles.allowedSources
+    : {};
+
+  const preferredName = args.name || deriveRootName(realPath);
+  const existing = Object.entries(fileConfig.externalFiles.allowedSources)
+    .find(([, value]) => {
+      try {
+        return fs.realpathSync(expandHome(value)) === realPath;
+      } catch {
+        return path.resolve(expandHome(value)) === realPath;
+      }
+    });
+  const name = existing?.[0] || uniqueRootName(fileConfig.externalFiles.allowedSources, preferredName);
+  fileConfig.externalFiles.allowedSources[name] = realPath;
+  writeConfigFile(fileConfig);
+  output({ ok: true, command: 'allow-root', name, path: realPath, configPath: CONFIG_PATH }, args.json);
+}
+
+function listTemplates() {
+  if (!fs.existsSync(TEMPLATES_DIR)) {
+    throw new CliError('templates_missing', `templates directory not found: ${TEMPLATES_DIR}`);
+  }
+  const templates = fs.readdirSync(TEMPLATES_DIR)
+    .filter(file => file.endsWith('.html'))
+    .map(file => file.replace('.html', ''))
+    .sort();
+  console.log(templates.join('\n') || 'no templates found');
 }
 
 function createPage(args) {
-  if (!args.template) {
-    console.error('Error: --template is required');
-    process.exit(1);
-  }
-  if (!args.slug) {
-    console.error('Error: --slug is required');
-    process.exit(1);
-  }
-
+  if (!args.template) throw new CliError('invalid_args', '--template is required');
+  const slug = normalizeUri(args.slug);
   const templateFile = path.join(TEMPLATES_DIR, `${args.template}.html`);
   if (!fs.existsSync(templateFile)) {
-    console.error(`Template not found: ${args.template}`);
-    console.error(`Run "node pages.js templates" to see available templates.`);
-    process.exit(1);
+    throw new CliError('template_missing', `template not found: ${args.template}`);
   }
-
   const config = getConfig();
-  const slug = normalizeSlug(args.slug);
-
-  // Validate slug stays within content root (rejects .. traversal)
   try {
     resolveSafePath(slug, config.contentDir);
   } catch (err) {
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
+    throw new CliError('invalid_slug', err.message);
   }
-
   const outPath = path.join(config.contentDir, `${slug}.html`);
-
-  const outDir = path.dirname(outPath);
-  if (!fs.existsSync(outDir)) {
-    fs.mkdirSync(outDir, { recursive: true });
-  }
-
-  if (fs.existsSync(outPath)) {
-    console.error(`File already exists: ${outPath}`);
-    console.error('Delete it first or use a different slug.');
-    process.exit(1);
-  }
-
-  const template = fs.readFileSync(templateFile, 'utf8');
-  fs.writeFileSync(outPath, template);
-
-  console.log(`Created: ${outPath}`);
-  console.log(`Template: ${args.template}`);
-  console.log(`Slug: ${slug}`);
-  console.log(`\nEdit the file and replace {{PLACEHOLDER}} values with your content.`);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  if (fs.existsSync(outPath)) throw new CliError('exists', `file already exists: ${outPath}`);
+  fs.copyFileSync(templateFile, outPath);
+  output({ ok: true, command: 'create', path: outPath, template: args.template, slug }, args.json);
 }
 
-function sharePage(args) {
-  const slug = args.positional || args.slug;
-  if (!slug) {
-    console.error('Error: slug is required. Usage: node pages.js share <slug> [--duration 30d]');
-    process.exit(1);
+export function main(argv) {
+  const args = parseArgs(argv);
+  switch (args.command) {
+    case 'status':
+      return commandStatus(args);
+    case 'register':
+      return commandRegister(args);
+    case 'list':
+      return commandList(args);
+    case 'share':
+      return commandShare(args);
+    case 'shares':
+      return commandShares(args);
+    case 'unshare':
+      return commandUnshare(args);
+    case 'allow-root':
+      return commandAllowRoot(args);
+    case 'templates':
+      return listTemplates(args);
+    case 'create':
+      return createPage(args);
+    case undefined:
+    case '--help':
+    case 'help':
+      return printUsage();
+    default:
+      throw new CliError('invalid_args', `unknown command: ${args.command}`);
   }
+}
 
-  const duration = args.duration || '30d';
-  const config = getConfig();
-  const normalized = normalizeSlug(slug);
-
+export function run(argv) {
   try {
-    resolveSafePath(normalized, config.contentDir);
+    main(argv);
   } catch (err) {
-    console.error(`Error: ${err.message}`);
-    process.exit(1);
+    const json = argv.includes('--json');
+    fail(err, json);
   }
-
-  if (config.sharing?.enabled === false) {
-    console.error('Error: sharing is disabled in config (sharing.enabled=false)');
-    process.exit(1);
-  }
-
-  const htmlPath = path.join(config.contentDir, `${normalized}.html`);
-  const mdPath = path.join(config.contentDir, `${normalized}.md`);
-  if (!fs.existsSync(htmlPath) && !fs.existsSync(mdPath)) {
-    console.error(`Page not found: ${normalized}`);
-    console.error(`Looked in: ${config.contentDir}`);
-    process.exit(1);
-  }
-
-  const result = createShare(normalized, duration, config.sharing || {});
-
-  const baseUrl = process.env.PAGES_BASE_URL || 'https://zylos01.jinglever.com/pages';
-  const shareUrl = `${baseUrl}/s/${result.tokenId}`;
-
-  console.log(`Share link created for: ${normalized}`);
-  console.log(`URL: ${shareUrl}`);
-  console.log(`Duration: ${duration}`);
-  console.log(`Expires: ${result.expiresAt ? new Date(result.expiresAt).toISOString() : 'never'}`);
 }
 
-const args = parseArgs(process.argv.slice(2));
-
-switch (args.command) {
-  case 'templates':
-    listTemplates();
-    break;
-  case 'create':
-    createPage(args);
-    break;
-  case 'share':
-    sharePage(args);
-    break;
-  case undefined:
-  case '--help':
-  case 'help':
-    printUsage();
-    break;
-  default:
-    console.error(`Unknown command: ${args.command}`);
-    printUsage();
-    process.exit(1);
+const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntrypoint) {
+  run(process.argv.slice(2));
 }

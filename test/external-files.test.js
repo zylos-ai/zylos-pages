@@ -7,6 +7,7 @@ import test from 'node:test';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const cliPath = path.join(repoRoot, 'src/cli/external-files.js');
+const pagesCliPath = path.join(repoRoot, 'src/cli/pages.js');
 const sharedDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-db-test-'));
 process.env.PAGES_DATA_DIR = sharedDataDir;
 
@@ -44,7 +45,7 @@ function makeFixture(options = {}) {
 }
 
 function runCli(fixture, args, options = {}) {
-  const result = spawnSync(process.execPath, [cliPath, ...args], {
+  const result = spawnSync(process.execPath, [options.cliPath || cliPath, ...args], {
     cwd: repoRoot,
     env: makeEnv(fixture.home, options.env),
     encoding: 'utf8',
@@ -55,6 +56,10 @@ function runCli(fixture, args, options = {}) {
   }
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return JSON.parse(result.stdout);
+}
+
+function runPagesCli(fixture, args, options = {}) {
+  return runCli(fixture, args, { ...options, cliPath: pagesCliPath });
 }
 
 function registerArgs(slug, source, extra = []) {
@@ -98,11 +103,91 @@ test('register stores a DB-backed logical page without creating a content symlin
   assert.equal(registered.uri, 'recruit/questions');
   assert.equal(registered.url, '/pages/p/recruit/questions');
   assert.equal(registered.sourceRealPath, sourceRealPath);
+  assert.equal(registered.accessMode, 'private');
   assert.equal(fs.existsSync(path.join(fixture.contentDir, 'recruit/questions.md')), false);
 
   const list = runCli(fixture, ['list', '--json']);
   assert.deepEqual(list.entries.map((entry) => entry.slug), ['recruit/questions']);
   assert.equal(list.entries[0].title, 'Interview Questions');
+});
+
+test('unified pages CLI registers, shares, lists shares, and unshares logical pages', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'share-target.md');
+  fs.writeFileSync(source, '# Share Target\n');
+
+  const registered = runPagesCli(fixture, [
+    'register',
+    '--component', 'recruit',
+    '--uri', 'recruit/share-target',
+    '--source', source,
+    '--json',
+  ]);
+  assert.equal(registered.ok, true);
+  assert.equal(registered.accessMode, 'private');
+
+  const share = runPagesCli(fixture, ['share', 'recruit/share-target', '--duration', '24h', '--json']);
+  assert.equal(share.ok, true);
+  assert.equal(share.slug, 'p/recruit/share-target');
+  assert.match(share.tokenId, /^[a-f0-9]{32}$/);
+  assert.match(share.shortUrl, /\/pages\/s\/[a-f0-9]{32}$/);
+
+  const shares = runPagesCli(fixture, ['shares', 'recruit/share-target', '--json']);
+  assert.deepEqual(shares.shares.map(entry => entry.tokenId), [share.tokenId]);
+
+  const unshared = runPagesCli(fixture, ['unshare', 'recruit/share-target', '--json']);
+  assert.equal(unshared.ok, true);
+  assert.equal(unshared.revoked, 1);
+
+  const after = runPagesCli(fixture, ['shares', 'recruit/share-target', '--json']);
+  assert.deepEqual(after.shares, []);
+});
+
+test('allow-root add preserves existing config fields and enables registration from new root', () => {
+  const fixture = makeFixture();
+  const newRoot = path.join(fixture.home, 'workspace/reports');
+  fs.mkdirSync(newRoot, { recursive: true });
+  const configPath = path.join(fixture.dataDir, 'config.json');
+  const originalConfig = {
+    auth: {
+      enabled: true,
+      password: 'scrypt:already-hashed',
+    },
+    sharing: {
+      enabled: true,
+      allowPermanent: false,
+    },
+    externalFiles: {
+      enabled: true,
+      allowedSources: {
+        recruit: fixture.sourceRoot,
+      },
+    },
+  };
+  fs.writeFileSync(configPath, JSON.stringify(originalConfig, null, 2));
+
+  const added = runPagesCli(fixture, ['allow-root', 'add', newRoot, '--name', 'reports', '--json']);
+  assert.equal(added.ok, true);
+  assert.equal(added.name, 'reports');
+  assert.equal(added.path, fs.realpathSync(newRoot));
+
+  const updatedConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  assert.equal(updatedConfig.auth.password, originalConfig.auth.password);
+  assert.equal(updatedConfig.sharing.allowPermanent, false);
+  assert.equal(updatedConfig.externalFiles.allowedSources.recruit, fixture.sourceRoot);
+  assert.equal(updatedConfig.externalFiles.allowedSources.reports, fs.realpathSync(newRoot));
+
+  const source = path.join(newRoot, 'allowed.md');
+  fs.writeFileSync(source, '# Allowed\n');
+  const registered = runPagesCli(fixture, [
+    'register',
+    '--component', 'reports',
+    '--uri', 'reports/allowed',
+    '--source', source,
+    '--json',
+  ]);
+  assert.equal(registered.ok, true);
+  assert.equal(registered.sourceRootName, 'reports');
 });
 
 test('registered logical markdown page renders through /p/:uri and reflects source updates', async () => {

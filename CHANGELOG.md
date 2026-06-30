@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- **Local DB agent CLI for Pages registration/sharing**: `src/cli/pages.js` now provides one agent-facing CLI for `register`, `list`, `share`, `shares`, `unshare`, and `allow-root add`, with JSON output and compatibility forwarding from `external-files.js`. Registration continues to use the shared `registerLogicalPage()` four-gate validation path, and `allow-root add` preserves existing config fields while extending `externalFiles.allowedSources`.
+
+### Changed
+- **Pages console registration is tucked behind a top-bar action**: the authenticated console now presents the page list/search as the primary view, removes Admin branding, and opens the path-based registration form only from the Register page button with private-by-default wording.
+
 ## [0.6.0] - 2026-06-30
 
 ### Added

@@ -45,6 +45,30 @@ dependencies: []
 
 Render Markdown and HTML files as styled web pages.
 
+## Agent CLI (Local DB)
+
+Use this CLI when an agent needs to register local Markdown/HTML files, manage share links, or add an allowed source root. It runs locally and writes the Pages DB/config directly; it does not use HTTP or tokens.
+
+```bash
+PAGES_DIR="~/.claude/skills/pages"
+
+# Register a local source file as a logical page. Default access is private.
+node $PAGES_DIR/src/cli/pages.js register --source /absolute/report.md --uri reports/q3 --title "Q3 Report"
+
+# List registered logical pages.
+node $PAGES_DIR/src/cli/pages.js list
+
+# Create, inspect, and revoke share links for a registered page.
+node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
+node $PAGES_DIR/src/cli/pages.js shares reports/q3
+node $PAGES_DIR/src/cli/pages.js unshare reports/q3
+
+# Add a local directory to the allowed source roots.
+node $PAGES_DIR/src/cli/pages.js allow-root add /absolute/reports --name reports
+```
+
+Long-form parameter details and safety notes: `references/pages-cli.md`.
+
 ## Creating HTML Pages (CLI)
 
 ```bash
@@ -77,6 +101,7 @@ echo "# Hello World" > ~/zylos/http/public/pages/hello.md
 
 | Document | When to read |
 |----------|-------------|
+| `references/pages-cli.md` | When registering local source files, sharing/unsharing logical pages, adding allowed source roots, or checking the local DB CLI contract |
 | `references/html-rendering.md` | When creating HTML artifacts (`.html` files), choosing between Markdown vs HTML mode, or needing to understand CSP constraints, dark mode, CJK typography, and responsive design best practices |
 | `templates/html/README.md` | When generating HTML reports — lists available templates, usage instructions, and the shared design system |
 

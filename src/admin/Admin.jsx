@@ -49,6 +49,7 @@ function Icon({ name }) {
     copy: 'M16 1H4a2 2 0 0 0-2 2v12h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z',
     check: 'M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z',
     eye: 'M12 5c-7 0-10 7-10 7s3 7 10 7 10-7 10-7-3-7-10-7Zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
+    plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z',
   };
   return (
     <svg className="i" viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">
@@ -183,6 +184,7 @@ function AdminApp() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [registerOpen, setRegisterOpen] = useState(false);
   const toastSeq = useRef(0);
 
   const notify = useCallback((kind, message) => {
@@ -218,6 +220,7 @@ function AdminApp() {
     try {
       const res = await api('/api/pages', { method: 'POST', body: JSON.stringify(form) });
       setForm(EMPTY_FORM);
+      setRegisterOpen(false);
       setQuery('');
       await loadPages('');
       notify('success', `Registered “${res.page?.title || form.uri}”.`);
@@ -261,20 +264,30 @@ function AdminApp() {
     <div className="admin-shell">
       <header className="admin-heading">
         <div>
-          <h1>Pages Admin</h1>
-          <p className="admin-subtitle">Register source files as logical pages and manage share links.</p>
+          <h1>Pages</h1>
+          <p className="admin-subtitle">Registered pages and share links.</p>
         </div>
-        <span className="admin-count">{countLabel}</span>
+        <div className="admin-heading-actions">
+          <span className="admin-count">{countLabel}</span>
+          <button type="button" className="btn btn-primary" onClick={() => setRegisterOpen(true)}>
+            <Icon name="plus" /> Register page
+          </button>
+        </div>
       </header>
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
-      <div className="admin-grid">
-        <section className="card">
-          <div className="card-header">
-            <Icon name="layers" />
-            <h2>Register a page</h2>
-          </div>
+      {registerOpen ? (
+        <div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="register-page-title">
+          <button type="button" className="admin-modal-backdrop" aria-label="Close registration" onClick={() => setRegisterOpen(false)} />
+          <section className="admin-modal-panel">
+            <div className="admin-modal-header">
+              <div>
+                <h2 id="register-page-title">Register page</h2>
+                <p>Pages are private until shared.</p>
+              </div>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRegisterOpen(false)}>Close</button>
+            </div>
           <form className="admin-form" onSubmit={registerPage}>
             <label>
               <span className="field-label">URI <em>required</em></span>
@@ -294,15 +307,21 @@ function AdminApp() {
             <label>
               <span className="field-label">Source path <em>required</em></span>
               <input name="source_path" required placeholder="/absolute/path/to/file.md" value={form.source_path} onChange={updateField} />
-              <span className="field-hint">Absolute path to the <code>.md</code> or <code>.html</code> source, inside an allowed root.</span>
+              <span className="field-hint">Advanced path registration. Agent CLI is the normal registration path.</span>
             </label>
+            <div className="private-default-row">
+              <span className="badge badge-private">Private by default</span>
+            </div>
             <div className="admin-form-actions">
               <button type="submit" className="btn btn-primary" disabled={submitting}>
                 {submitting ? 'Registering…' : 'Register page'}
               </button>
+              <button type="button" className="btn btn-secondary" onClick={() => setRegisterOpen(false)} disabled={submitting}>Cancel</button>
             </div>
           </form>
-        </section>
+          </section>
+        </div>
+      ) : null}
 
         <section className="card">
           <div className="card-header">
@@ -351,7 +370,6 @@ function AdminApp() {
             )}
           </div>
         </section>
-      </div>
     </div>
   );
 }
