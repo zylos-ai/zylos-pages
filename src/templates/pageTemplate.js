@@ -114,6 +114,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   </div>
   <script src="${baseUrl}/_assets/share.js?v=${ASSET_VERSION}"></script>
   <script src="${baseUrl}/_assets/nav.js?v=${ASSET_VERSION}"></script>
+  <script src="${baseUrl}/_assets/codeblocks.js?v=${ASSET_VERSION}"></script>
   ${bodyHtml.includes('class="mermaid"') ? `<script src="${baseUrl}/_assets/mermaid.min.js?v=${ASSET_VERSION}"></script>
   <script src="${baseUrl}/_assets/mermaid-zoom.js?v=${ASSET_VERSION}"></script>
   <script src="${baseUrl}/_assets/mermaid-init.js?v=${ASSET_VERSION}"></script>` : ''}

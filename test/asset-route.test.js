@@ -229,7 +229,11 @@ test('root route serves admin console and /admin is not mounted', async () => {
     try {
       const root = await fetch(`${origin}/`);
       assert.equal(root.status, 200);
-      assert.match(await root.text(), /id="pages-admin-root"/);
+      const rootHtml = await root.text();
+      assert.match(rootHtml, /id="pages-admin-root"/);
+      assert.match(rootHtml, /class="logout-btn icon-btn"/);
+      assert.match(rootHtml, /aria-label="Sign out"/);
+      assert.doesNotMatch(rootHtml, />Sign out<\/button>/);
 
       const oldAdmin = await fetch(`${origin}/admin`, { redirect: 'manual' });
       assert.equal(oldAdmin.status, 404);
