@@ -26,7 +26,7 @@ function cookieHeader(setCookie) {
     .join('; ');
 }
 
-function makeServer({ auth = false, authConfig = null, sharingEnabled = true, legacyTokenAccess = true, shareViewer = false } = {}) {
+function makeServer({ auth = false, authConfig = null, sharingEnabled = true, shareViewer = false } = {}) {
   const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-share-content-'));
   fs.mkdirSync(path.join(contentDir, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(contentDir, 'docs', 'page.html'), '<!doctype html><head><title>Shared page</title></head><h1>Shared page</h1>');
@@ -48,7 +48,7 @@ function makeServer({ auth = false, authConfig = null, sharingEnabled = true, le
     setupAuth(app, authConfig || {
       enabled: true,
       password: hashPassword('secret'),
-    }, { enabled: sharingEnabled, legacyTokenAccess });
+    }, { enabled: sharingEnabled });
   }
   if (shareViewer) {
     app.use((_req, res, next) => {
@@ -405,8 +405,8 @@ test('auth middleware keeps short share cookies read-only', async () => {
   }
 });
 
-test('legacy long share token bypass can be disabled while short links still work', async () => {
-  const { server, origin } = await makeServer({ auth: true, legacyTokenAccess: false });
+test('legacy long share token bypass is rejected while short links still work', async () => {
+  const { server, origin } = await makeServer({ auth: true });
   try {
     const share = createShare('docs/page', '24h', { allowPermanent: false });
 

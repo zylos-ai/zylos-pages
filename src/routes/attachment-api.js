@@ -68,10 +68,7 @@ function requireAttachmentMutation(req, res, artifact) {
 
 function attachmentResponse(req, record) {
   const browserBase = browserBaseFromRequest(req);
-  let fileUrl = browserPath(browserBase, `api/attachments/${encodeURIComponent(record.artifact)}/${record.attachmentId}/file`);
-  if (typeof req.query.token === 'string' && req.query.token) {
-    fileUrl = `${fileUrl}?${new URLSearchParams({ token: req.query.token }).toString()}`;
-  }
+  const fileUrl = browserPath(browserBase, `api/attachments/${encodeURIComponent(record.artifact)}/${record.attachmentId}/file`);
   return {
     attachmentId: record.attachmentId,
     artifact: record.artifact,

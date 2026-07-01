@@ -271,37 +271,29 @@ test('state API CSRF checks mutating requests only', async () => {
   });
 });
 
-test('state API allows share-token CRUD for the matching artifact', async () => {
+test('state API rejects legacy share-token CRUD for the matching artifact', async () => {
   const token = createShare('shared-state', '24h', { allowPermanent: false }).token;
 
   await withServer(authConfig(), async ({ origin }) => {
-    let res = await fetch(`${origin}/api/state/shared-state?token=${encodeURIComponent(token)}`);
-    assert.equal(res.status, 200);
-    assert.equal(res.headers.get('cache-control'), 'no-store');
-    assert.equal(res.headers.get('referrer-policy'), 'no-referrer');
-    assert.deepEqual(await res.json(), { ok: true, state: {} });
+    let res = await fetch(`${origin}/api/state/shared-state?token=${encodeURIComponent(token)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
 
     res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`, {
       method: 'PUT',
+      redirect: 'manual',
       headers: sameOriginHeaders(origin),
       body: JSON.stringify({ value: { done: true } }),
     });
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
-
-    res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`);
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
+    expectLoginRedirect(res);
 
     res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`, {
       method: 'DELETE',
+      redirect: 'manual',
       headers: { Origin: origin },
     });
-    assert.equal(res.status, 200);
-    assert.deepEqual(await res.json(), { ok: true });
-
-    res = await fetch(`${origin}/api/state/shared-state/checklist?token=${encodeURIComponent(token)}`);
-    assert.equal(res.status, 404);
+    expectLoginRedirect(res);
   });
 });
 
@@ -357,30 +349,31 @@ test('state API share-token scope mismatch falls through to auth wall', async ()
   });
 });
 
-test('state API still enforces CSRF for share-token mutating requests', async () => {
+test('state API rejects legacy share-token mutating requests before CSRF handling', async () => {
   const token = createShare('share-csrf', '24h', { allowPermanent: false }).token;
 
   await withServer(authConfig(), async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
       method: 'PUT',
+      redirect: 'manual',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: true }),
     });
-    assert.equal(res.status, 403);
-    assert.deepEqual(await res.json(), { error: 'CSRF validation failed: missing Origin/Referer' });
+    expectLoginRedirect(res);
 
     res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
       method: 'PUT',
+      redirect: 'manual',
       headers: sameOriginHeaders(origin),
       body: JSON.stringify({ value: true }),
     });
-    assert.equal(res.status, 200);
+    expectLoginRedirect(res);
 
     res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
       method: 'DELETE',
+      redirect: 'manual',
     });
-    assert.equal(res.status, 403);
-    assert.deepEqual(await res.json(), { error: 'CSRF validation failed: missing Origin/Referer' });
+    expectLoginRedirect(res);
   });
 });
 
@@ -430,7 +423,7 @@ test('state API auth wall redirects unauthenticated and malformed-token API requ
   });
 });
 
-test('share tokens do not grant access to raw API and page share bypass still works', async () => {
+test('legacy share tokens do not grant access to raw API or pages', async () => {
   const token = createShare('shared-page', '24h', { allowPermanent: false }).token;
   const app = express();
   setupAuth(app, authConfig());
@@ -440,9 +433,10 @@ test('share tokens do not grant access to raw API and page share bypass still wo
   });
 
   await withApp(app, async ({ origin }) => {
-    let res = await fetch(`${origin}/shared-page?token=${encodeURIComponent(token)}`);
-    assert.equal(res.status, 200);
-    assert.equal(await res.text(), 'share-viewer');
+    let res = await fetch(`${origin}/shared-page?token=${encodeURIComponent(token)}`, {
+      redirect: 'manual',
+    });
+    expectLoginRedirect(res);
 
     res = await fetch(`${origin}/api/raw/shared-page?token=${encodeURIComponent(token)}`, {
       redirect: 'manual',

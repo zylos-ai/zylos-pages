@@ -323,13 +323,10 @@ test('share viewers can list and read matching artifact attachments but cannot m
       });
       assert.equal(res.status, 403);
 
-      res = await fetch(`${origin}/api/attachments/renovation-checklist/share-log?token=${encodeURIComponent(share.token)}`);
-      assert.equal(res.status, 200);
-      const legacyList = await res.json();
-      assert.match(legacyList.attachments[0].fileUrl, /\?token=/);
-
-      res = await fetch(`${origin}${legacyList.attachments[0].fileUrl}`, { redirect: 'manual' });
-      assert.equal(res.status, 200);
+      res = await fetch(`${origin}/api/attachments/renovation-checklist/share-log?token=${encodeURIComponent(share.token)}`, {
+        redirect: 'manual',
+      });
+      expectLoginRedirect(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -398,7 +395,7 @@ test('existing short share cookie sessions cannot be upgraded to attachment writ
   }
 });
 
-test('legacy tokens remain read-only even when created with deprecated write permission', async () => {
+test('legacy tokens no longer authorize attachment access', async () => {
   const contentDir = await makeContentDir();
   try {
     const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
@@ -407,17 +404,19 @@ test('legacy tokens remain read-only even when created with deprecated write per
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       let res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-readonly?token=${encodeURIComponent(readOnly.token)}`, {
         method: 'POST',
+        redirect: 'manual',
         headers: { Origin: origin },
         body: formData(JPEG),
       });
-      assert.equal(res.status, 403);
+      expectLoginRedirect(res);
 
       res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-editable?token=${encodeURIComponent(editable.token)}`, {
         method: 'POST',
+        redirect: 'manual',
         headers: { Origin: origin },
         body: formData(JPEG),
       });
-      assert.equal(res.status, 403);
+      expectLoginRedirect(res);
 
       res = await fetch(`${origin}/api/attachments/notes/legacy-wrong?token=${encodeURIComponent(editable.token)}`, {
         method: 'POST',
@@ -429,9 +428,10 @@ test('legacy tokens remain read-only even when created with deprecated write per
 
       res = await fetch(`${origin}/api/attachments/renovation-checklist/not-found?token=${encodeURIComponent(readOnly.token)}`, {
         method: 'DELETE',
+        redirect: 'manual',
         headers: { Origin: origin },
       });
-      assert.equal(res.status, 403);
+      expectLoginRedirect(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
