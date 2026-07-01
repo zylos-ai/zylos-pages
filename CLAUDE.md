@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-zylos-pages is a Markdown-to-HTML rendering component for zylos. It serves `.md` files as styled web pages with code highlighting, dark/light theme, table of contents, and TODO kanban boards.
+zylos-pages is a Markdown-to-HTML rendering component for zylos. It serves `.md` files as styled web pages with code highlighting, dark/light theme, and table of contents.
 
 - **Runtime:** Node.js (ESM), Express
 - **Service:** PM2 (`zylos-pages`)
@@ -15,14 +15,13 @@ zylos-pages is a Markdown-to-HTML rendering component for zylos. It serves `.md`
 src/
   index.js          # Entry point, Express app setup
   lib/              # Config loading
-  routes/           # Express route handlers (index, todo-api, todo-page)
-  templates/        # HTML template generators (indexTemplate, todoTemplate)
+  routes/           # Express route handlers
+  templates/        # HTML template generators
   markdown/         # Markdown rendering pipeline
   security/         # Auth, headers (CSP), sanitization
   cache/            # LRU cache with singleflight
   sharing/          # Share token manager
   services/         # File watcher
-  todos/            # Todo board manager
   utils/            # Helpers
 assets/             # Static files (CSS, JS, images) served at /_assets/
 hooks/              # Lifecycle hooks (post-install, pre/post-upgrade)
@@ -32,7 +31,7 @@ hooks/              # Lifecycle hooks (post-install, pre/post-upgrade)
 
 - **CSP:** `script-src 'self'` — all JavaScript must be in external files under `assets/`. Never use inline `<script>` tags in templates.
 - **Auth:** Cookie-based session with scrypt password hashing, brute-force protection.
-- **Input sanitization:** `escapeHtml()` for all user content, `isSafeUrl()` for links, `sanitizeTodoInput()` for todo items.
+- **Input sanitization:** `escapeHtml()` for all user content and `isSafeUrl()` for links.
 - Always run new features through code review (request via HXA to Jinglever).
 
 ## Release Checklist

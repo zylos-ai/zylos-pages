@@ -130,23 +130,6 @@ export function resolveSafePath(slug, contentRoot) {
   return resolveCandidate(slug, contentRoot, '.md');
 }
 
-const PAGE_EXTENSIONS = new Set(['.md', '.html']);
-
-/**
- * Resolve a slug to a page link path within the content root using the given
- * extension. Only the renderable page extensions (.md, .html) are permitted,
- * so an external HTML source links to `<slug>.html` and is served as an HTML
- * artifact rather than through the Markdown path.
- */
-export function resolvePagePath(slug, contentRoot, extension) {
-  validateSlug(slug);
-  const ext = String(extension).toLowerCase();
-  if (!PAGE_EXTENSIONS.has(ext)) {
-    throw new PathViolationError('Invalid path: only .md or .html files allowed');
-  }
-  return resolveCandidate(slug, contentRoot, ext);
-}
-
 /**
  * Resolve an allowlisted static asset path within the content root.
  */

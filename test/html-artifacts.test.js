@@ -11,7 +11,7 @@ process.env.PAGES_DATA_DIR = dataDir;
 const express = (await import('express')).default;
 const { initCache } = await import('../src/cache/pageCache.js');
 const { getPage } = await import('../src/services/pageService.js');
-const { indexRoute, scanPages } = await import('../src/routes/index.js');
+const { scanPages } = await import('../src/pages/navigation.js');
 const { pageRoute } = await import('../src/routes/pages.js');
 const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
@@ -57,7 +57,6 @@ async function withServer(config, fn) {
   setupAuth(app, config.auth || { enabled: false, password: null });
   setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
   setupRawApi(app, config);
-  app.get('/', indexRoute(config));
   app.get('/:slug(*)', pageRoute(config));
 
   const server = await new Promise((resolve) => {

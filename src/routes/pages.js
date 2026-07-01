@@ -5,7 +5,7 @@ import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
 import { injectShareViewer, injectNavSidebar, htmlArtifactTemplate } from '../templates/pageTemplate.js';
 import { rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
-import { scanPages } from './index.js';
+import { scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { HTML_ARTIFACT_CSP } from '../security/headers.js';
