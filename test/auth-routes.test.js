@@ -15,12 +15,21 @@ test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function makeServer() {
+function makeServer(authConfig = {
+  enabled: true,
+  password: hashPassword('secret'),
+}) {
   const app = express();
-  setupAuth(app, {
-    enabled: true,
-    password: hashPassword('secret'),
-  });
+  setupAuth(app, authConfig);
+  app.get('/_assets/style.css', (_req, res) => res.type('text/css').send('body{}'));
+  app.get('/s/:tokenId', (_req, res) => res.send('share'));
+  app.get('/assets/:uri(*)', (_req, res) => res.send('signed asset'));
+  app.get('/api/raw/:slug(*)', (_req, res) => res.send('raw'));
+  app.get('/api/state/:artifact(*)', (_req, res) => res.json({ ok: true }));
+  app.get('/api/attachments/:artifact/:key', (_req, res) => res.json({ attachments: [] }));
+  app.get('/api/pages', (_req, res) => res.json({ pages: [] }));
+  app.get('/api/shares/:slug(*)', (_req, res) => res.json({ shares: [] }));
+  app.post('/api/share', (_req, res) => res.json({ ok: true }));
   app.get('/', (_req, res) => res.send('root'));
   app.get('/:slug(*)', (req, res) => res.send(`page:${req.params.slug || req.params[0]}`));
 
@@ -32,6 +41,56 @@ function makeServer() {
     });
   });
 }
+
+test('auth enabled without password fails closed while allowing only public assets and explicit share paths', async () => {
+  const { server, origin } = await makeServer({ enabled: true, password: null });
+  try {
+    const allowed = [
+      '/_assets/style.css',
+      '/s/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      '/assets/docs/page?path=diagram.png&exp=9999999999999&sig=test',
+    ];
+
+    for (const requestPath of allowed) {
+      const response = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
+      assert.equal(response.status, 200, `${requestPath} should be allowed`);
+    }
+
+    const protectedGets = [
+      '/',
+      '/docs/page',
+      '/image.jpg',
+      '/login',
+      '/api/raw/docs/page',
+      '/api/state/docs/page',
+      '/api/attachments/docs/page/key',
+      '/api/pages',
+      '/api/shares/docs/page',
+    ];
+
+    for (const requestPath of protectedGets) {
+      const response = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
+      assert.equal(response.status, 503, `${requestPath} should fail closed`);
+      assert.equal(await response.text(), 'Authentication is not configured.');
+    }
+
+    const shareCreate = await fetch(`${origin}/api/share`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { Origin: origin },
+    });
+    assert.equal(shareCreate.status, 503);
+
+    const logout = await fetch(`${origin}/logout`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { Origin: origin },
+    });
+    assert.equal(logout.status, 503);
+  } finally {
+    server.close();
+  }
+});
 
 test('login route uses root-relative paths for direct local access', async () => {
   const { server, origin } = await makeServer();

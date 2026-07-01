@@ -25,7 +25,7 @@ function cookieHeader(setCookie) {
     .join('; ');
 }
 
-function makeServer({ auth = false, sharingEnabled = true, shareViewer = false } = {}) {
+function makeServer({ auth = false, authConfig = null, sharingEnabled = true, shareViewer = false } = {}) {
   const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-share-content-'));
   fs.mkdirSync(path.join(contentDir, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(contentDir, 'docs', 'page.html'), '<!doctype html><head><title>Shared page</title></head><h1>Shared page</h1>');
@@ -36,8 +36,8 @@ function makeServer({ auth = false, sharingEnabled = true, shareViewer = false }
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
   };
-  if (auth) {
-    setupAuth(app, {
+  if (auth || authConfig) {
+    setupAuth(app, authConfig || {
       enabled: true,
       password: hashPassword('secret'),
     }, { enabled: sharingEnabled });
@@ -274,6 +274,22 @@ test('short share URL sets access cookie and renders clean page in place', async
     assert.match(setCookie, /__Host-share_access=/);
     assert.doesNotMatch(setCookie, /__Host-share_scope=/);
     assert.match(await redirect.text(), /<base href="\/docs\/page">/);
+  } finally {
+    server.close();
+  }
+});
+
+test('short share URL remains accessible when auth is enabled without password', async () => {
+  const share = createShare('docs/page', '24h', { allowPermanent: false });
+  const { server, origin } = await makeServer({
+    authConfig: { enabled: true, password: null },
+  });
+  try {
+    const response = await fetch(`${origin}/s/${share.tokenId}`);
+    assert.equal(response.status, 200);
+    const body = await response.text();
+    assert.match(body, /Shared page/);
+    assert.doesNotMatch(body, /Authentication is not configured/);
   } finally {
     server.close();
   }
