@@ -50,6 +50,7 @@ export const DEFAULT_CONFIG = {
   sharing: {
     enabled: true,
     allowPermanent: false,
+    legacyTokenAccess: true,
   },
   attachments: {
     maxFileSizeBytes: 5 * 1024 * 1024,
