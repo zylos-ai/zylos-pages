@@ -22,6 +22,43 @@
   var listItems = modal.querySelector('.share-list-items');
   var editableInput = modal.querySelector('.share-editable-input');
 
+  function escapeAttr(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function copyText(text, button, resetText) {
+    var originalText = resetText || button.textContent;
+
+    function markCopied() {
+      button.textContent = 'Copied!';
+      setTimeout(function () { button.textContent = originalText; }, 2000);
+    }
+
+    function fallbackCopy() {
+      var input = document.createElement('textarea');
+      input.value = text;
+      input.setAttribute('readonly', '');
+      input.style.position = 'fixed';
+      input.style.left = '-9999px';
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      markCopied();
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(markCopied).catch(fallbackCopy);
+    } else {
+      fallbackCopy();
+    }
+  }
+
   // Open modal
   shareBtn.addEventListener('click', function () {
     modal.hidden = false;
@@ -76,17 +113,7 @@
 
   // Copy link
   copyBtn.addEventListener('click', function () {
-    linkInput.select();
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(linkInput.value).then(function () {
-        copyBtn.textContent = 'Copied!';
-        setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
-      });
-    } else {
-      document.execCommand('copy');
-      copyBtn.textContent = 'Copied!';
-      setTimeout(function () { copyBtn.textContent = 'Copy'; }, 2000);
-    }
+    copyText(linkInput.value, copyBtn, 'Copy');
   });
 
   // Load active shares for this slug
@@ -117,6 +144,7 @@
           html += '<input type="checkbox" class="share-permission-toggle" data-token-id="' + s.tokenId + '"' + (s.canWriteAttachments ? ' checked' : '') + '>';
           html += '<span>Allow photo upload/delete</span>';
           html += '</label>';
+          html += '<button class="share-copy-btn share-item-copy-btn" data-short-url="' + escapeAttr(s.shortUrl) + '">Copy link</button>';
           html += '<button class="share-revoke-btn" data-token-id="' + s.tokenId + '">Revoke</button>';
           html += '</div>';
           html += '</div>';
@@ -128,6 +156,13 @@
         listItems.querySelectorAll('.share-permission-toggle').forEach(function (input) {
           input.addEventListener('change', function () {
             updateSharePermission(input, input.checked);
+          });
+        });
+
+        // Bind copy buttons
+        listItems.querySelectorAll('.share-item-copy-btn').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            copyText(btn.dataset.shortUrl, btn, 'Copy link');
           });
         });
 
