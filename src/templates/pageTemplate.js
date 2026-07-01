@@ -6,6 +6,21 @@ import { buildPageTree } from '../utils/pageTree.js';
 // Stable cache version — generated once per process start
 const ASSET_VERSION = Date.now();
 
+const ICONS = {
+  sidebar: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  document: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+};
+
+function icon(name, className = 'i') {
+  return `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
 /**
  * Generate a complete HTML page from rendered content.
  * The HTML is cached per slug — viewer-specific adjustments (share vs auth)
@@ -35,25 +50,26 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
 <body>
   <header class="page-header">
     <div class="header-left">
-      <button class="nav-toggle auth-only" aria-label="Toggle pages list">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M2 4h14v1.5H2zm0 4.25h14v1.5H2zm0 4.25h14v1.5H2z"/></svg>
+      <button class="nav-toggle icon-btn auth-only" aria-label="Toggle pages list">
+        ${icon('sidebar')}
       </button>
       ${renderBreadcrumb({ baseUrl, slug, title })}
     </div>
     <div class="header-actions">
-      <button class="copy-raw-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Copy raw Markdown">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M5 1.5A1.5 1.5 0 0 1 6.5 0h6A1.5 1.5 0 0 1 14 1.5v8A1.5 1.5 0 0 1 12.5 11h-6A1.5 1.5 0 0 1 5 9.5zm1.5-.25a.25.25 0 0 0-.25.25v8c0 .138.112.25.25.25h6a.25.25 0 0 0 .25-.25v-8a.25.25 0 0 0-.25-.25zM2 4.5A1.5 1.5 0 0 1 3.5 3H4v1.25h-.5a.25.25 0 0 0-.25.25v8c0 .138.112.25.25.25h6a.25.25 0 0 0 .25-.25V12H11v.5A1.5 1.5 0 0 1 9.5 14h-6A1.5 1.5 0 0 1 2 12.5z"/></svg>
+      <button class="copy-raw-btn btn btn-secondary auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Copy raw Markdown">
+        ${icon('copy')}
         <span class="copy-raw-label">Copy Markdown</span>
       </button>
-      <button class="share-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/></svg>
+      <button class="share-btn btn btn-primary auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
+        ${icon('share')}
         Share
       </button>
-      <button class="theme-toggle" aria-label="Toggle dark mode">
-        <span class="theme-icon"></span>
+      <button class="theme-toggle icon-btn" aria-label="Toggle dark mode">
+        <span class="theme-icon theme-icon-moon">${icon('moon')}</span>
+        <span class="theme-icon theme-icon-sun">${icon('sun')}</span>
       </button>
       <form method="POST" action="${baseUrl}/logout" class="logout-form auth-only">
-        <button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button>
+        <button type="submit" class="logout-btn icon-btn" aria-label="Sign out" title="Sign out">${icon('logout')}</button>
       </form>
     </div>
   </header>
@@ -141,21 +157,22 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
 <body class="html-artifact-page">
   <header class="page-header">
     <div class="header-left">
-      <button class="nav-toggle auth-only" aria-label="Toggle pages list">
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M2 4h14v1.5H2zm0 4.25h14v1.5H2zm0 4.25h14v1.5H2z"/></svg>
+      <button class="nav-toggle icon-btn auth-only" aria-label="Toggle pages list">
+        ${icon('sidebar')}
       </button>
       ${renderBreadcrumb({ baseUrl, slug, title })}
     </div>
     <div class="header-actions">
-      <button class="share-btn auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2.5a2.5 2.5 0 1 1 .603 1.628l-6.718 3.12a2.5 2.5 0 0 1 0 1.504l6.718 3.12a2.5 2.5 0 1 1-.488.876l-6.718-3.12a2.5 2.5 0 1 1 0-3.256l6.718-3.12A2.5 2.5 0 0 1 11 2.5z"/></svg>
+      <button class="share-btn btn btn-primary auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
+        ${icon('share')}
         Share
       </button>
-      <button class="theme-toggle" aria-label="Toggle dark mode">
-        <span class="theme-icon"></span>
+      <button class="theme-toggle icon-btn" aria-label="Toggle dark mode">
+        <span class="theme-icon theme-icon-moon">${icon('moon')}</span>
+        <span class="theme-icon theme-icon-sun">${icon('sun')}</span>
       </button>
       <form method="POST" action="${baseUrl}/logout" class="logout-form auth-only">
-        <button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button>
+        <button type="submit" class="logout-btn icon-btn" aria-label="Sign out" title="Sign out">${icon('logout')}</button>
       </form>
     </div>
   </header>
@@ -229,14 +246,16 @@ export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
 
 function renderNavSidebar(pages, currentSlug, baseUrl) {
   const pageTree = buildPageTree(pages);
-  let html = '<aside class="nav-sidebar auth-only"><nav class="page-nav"><h4>Pages</h4><ul class="page-nav-list">';
+  let html = `<aside class="nav-sidebar auth-only"><nav class="page-nav">
+    <div class="nav-brand"><span class="nav-brand-mark">${icon('document')}</span><b>Pages</b></div>
+    <h4>Workspace</h4><ul class="page-nav-list">`;
   for (const page of pageTree.topLevel) {
     html += renderNavPageItem(page, currentSlug, baseUrl);
   }
 
   for (const folder of pageTree.folders) {
-    const isOpen = folder.pages.some(page => page.slug === currentSlug);
-    html += `<li class="nav-folder"><details${isOpen ? ' open' : ''}><summary><span class="nav-folder-name">${escapeHtml(folder.label)}</span><span class="nav-folder-count">${folder.pages.length}</span></summary><ul class="nav-folder-list">`;
+    const isOpen = folder.pages.some(page => isCurrentPageSlug(page.slug, currentSlug));
+    html += `<li class="nav-folder"><details${isOpen ? ' open' : ''}><summary>${icon('folder')}<span class="nav-folder-name">${escapeHtml(folder.label)}</span><span class="nav-folder-count">${folder.pages.length}</span></summary><ul class="nav-folder-list">`;
     for (const page of folder.pages) {
       html += renderNavPageItem(page, currentSlug, baseUrl);
     }
@@ -248,8 +267,12 @@ function renderNavSidebar(pages, currentSlug, baseUrl) {
 }
 
 function renderNavPageItem(page, currentSlug, baseUrl) {
-  const active = page.slug === currentSlug ? ' class="active"' : '';
-  return `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${escapeHtml(page.title)}</a></li>`;
+  const active = isCurrentPageSlug(page.slug, currentSlug) ? ' class="active"' : '';
+  return `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${icon('document')}<span>${escapeHtml(page.title)}</span></a></li>`;
+}
+
+function isCurrentPageSlug(pageSlug, currentSlug) {
+  return pageSlug === currentSlug || pageSlug === `p/${currentSlug}` || `p/${pageSlug}` === currentSlug;
 }
 
 function renderBreadcrumb({ baseUrl, slug, title }) {

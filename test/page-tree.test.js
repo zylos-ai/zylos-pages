@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -87,10 +87,40 @@ test('injectNavSidebar expands active folder and escapes folder labels', () => {
     { slug: 'safe/<script>/page', title: 'Unsafe Folder', date: '2026-06-12' },
   ], 'daily-digest/a', '/pages');
 
-  assert.match(html, /<details open><summary><span class="nav-folder-name">daily-digest<\/span>/);
-  assert.match(html, /<li class="active"><a href="\/pages\/daily-digest\/a">Daily A<\/a><\/li>/);
+  assert.match(html, /<details open><summary><svg class="i"[^>]*stroke="currentColor"[^>]*><path d="M3 7/);
+  assert.match(html, /<span class="nav-folder-name">daily-digest<\/span>/);
+  assert.match(html, /<li class="active"><a href="\/pages\/daily-digest\/a"><svg class="i"[^>]*stroke="currentColor"[^>]*><path d="M15 2/);
+  assert.match(html, /<span>Daily A<\/span><\/a><\/li>/);
   assert.match(html, /safe \/ &lt;script&gt;/);
   assert.doesNotMatch(html, /<span class="nav-folder-name">safe \/ <script>/);
+});
+
+test('injectNavSidebar highlights p-prefixed logical pages for canonical routes', () => {
+  const html = injectNavSidebar('<html><body><!-- NAV_SIDEBAR --></body></html>', [
+    { slug: 'p/visual', title: 'Visual', date: '2026-07-01' },
+  ], 'visual', '/pages');
+
+  assert.match(html, /<li class="active"><a href="\/pages\/p\/visual">/);
+});
+
+test('viewer chrome uses inline SVG icons and no emoji theme fallback', async () => {
+  const html = pageTemplate({
+    title: 'Icons',
+    description: '',
+    date: '',
+    tags: [],
+    bodyHtml: '<p>Body</p>',
+    tocItems: [],
+    baseUrl: '/pages',
+    slug: 'icons',
+  });
+  const css = await readFile(new URL('../assets/style.css', import.meta.url), 'utf8');
+
+  assert.match(html, /<button class="theme-toggle icon-btn" aria-label="Toggle dark mode">/);
+  assert.match(html, /<span class="theme-icon theme-icon-moon"><svg class="i"[^>]*stroke="currentColor"/);
+  assert.match(html, /<span class="theme-icon theme-icon-sun"><svg class="i"[^>]*stroke="currentColor"/);
+  const legacyThemeIconPattern = new RegExp('\\u{1f319}|\\u{2600}\\u{fe0f}|theme-icon' + '::before', 'u');
+  assert.doesNotMatch(css, legacyThemeIconPattern);
 });
 
 test('injectShareViewer marks share pages and exposes attachment edit flag', () => {
