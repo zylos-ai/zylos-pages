@@ -212,6 +212,22 @@ export function searchLogicalPages(query = '') {
   }));
 }
 
+export function listLogicalPagesForNavigation() {
+  initPageStore();
+  const rows = db.prepare(`
+    SELECT * FROM logical_pages
+    ORDER BY uri ASC
+  `).all();
+  return rows.map(record => ({
+    slug: `p/${record.uri}`,
+    title: record.title,
+    description: '',
+    date: new Date(record.updated_at).toISOString().split('T')[0],
+    tags: [],
+    type: record.source_ext === '.html' ? 'html' : 'markdown',
+  }));
+}
+
 export function recordAccessLog({ pageUri, viewerType = 'auth', shareTokenId = null, requestPath = '', status = 200 }) {
   initPageStore();
   db.prepare(`
@@ -241,4 +257,3 @@ export function pruneAccessLogs({ maxAgeDays = 30, maxRows = 10000 } = {}) {
   }
   return { ageDeleted, rowDeleted };
 }
-

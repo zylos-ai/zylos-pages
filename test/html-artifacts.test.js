@@ -289,17 +289,31 @@ test('raw API returns markdown when both html and markdown exist, and share view
   }
 });
 
-test('scanPages lists html pages and deduplicates same-slug markdown fallback', async () => {
+test('scanPages lists registered logical pages instead of bare content files', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'html-only.html'), '<!doctype html><title>HTML Title</title><h1>HTML</h1>');
-    await writeFile(path.join(contentDir, 'both.md'), '---\ntitle: Markdown Title\n---\n# Markdown\n');
-    await writeFile(path.join(contentDir, 'both.html'), '<!doctype html><title>HTML Priority</title>');
+    const registeredHtml = path.join(contentDir, 'registered.html');
+    const bareHtml = path.join(contentDir, 'bare.html');
+    await writeFile(registeredHtml, '<!doctype html><title>Registered HTML</title><h1>HTML</h1>');
+    await writeFile(bareHtml, '<!doctype html><title>Bare HTML</title>');
+    const { registerLogicalPage } = await import('../src/pages/page-store.js');
+    registerLogicalPage({
+      uri: 'docs/registered',
+      title: 'Registered HTML',
+      sourcePath: registeredHtml,
+      component: 'content',
+    }, {
+      contentDir,
+      externalFiles: {
+        allowedSources: {
+          content: contentDir,
+        },
+      },
+    });
 
     const pages = await scanPages(contentDir);
-    assert.deepEqual(pages.map(page => [page.slug, page.title, page.type]).sort(), [
-      ['both', 'HTML Priority', 'html'],
-      ['html-only', 'HTML Title', 'html'],
+    assert.deepEqual(pages.map(page => [page.slug, page.title, page.type]), [
+      ['p/docs/registered', 'Registered HTML', 'html'],
     ]);
   } finally {
     await rm(contentDir, { recursive: true, force: true });
