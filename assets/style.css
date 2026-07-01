@@ -1324,9 +1324,28 @@ svg { display: block; }
     gap: 2px;
   }
 
+  .header-actions .copy-raw-btn,
+  .header-actions .theme-toggle,
+  .header-actions .logout-btn {
+    width: var(--control-height);
+    height: var(--control-height);
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+    color: var(--color-text-secondary);
+  }
+
+  .header-actions .copy-raw-btn:hover:not(:disabled),
+  .header-actions .theme-toggle:hover,
+  .header-actions .logout-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+
   .header-actions .share-btn {
-    width: 44px;
-    height: 44px;
+    width: var(--control-height);
+    height: var(--control-height);
     margin-left: 0;
     padding: 0;
   }
