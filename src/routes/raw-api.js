@@ -3,6 +3,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { resolveSafePath } from '../security/pathGuard.js';
+import { getLogicalPage } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
@@ -24,7 +25,14 @@ export function setupRawApi(app, config) {
 
     try {
       slug = normalizeSlug(rawSlug);
-      filePath = resolveSafePath(slug, config.contentDir);
+      resolveSafePath(slug, config.contentDir);
+      const pageUri = slug.startsWith('p/') ? slug.slice(2) : slug;
+      const logicalPage = getLogicalPage(pageUri);
+      if (!logicalPage || logicalPage.sourceExt !== '.md') {
+        logger.info('raw markdown not found', { path: slug });
+        return res.status(404).json({ error: 'Page not found' });
+      }
+      filePath = logicalPage.sourcePath;
     } catch (err) {
       const status = err.statusCode || 400;
       logger.warn('raw markdown path rejected', { path: rawSlug, status, err: err.message });

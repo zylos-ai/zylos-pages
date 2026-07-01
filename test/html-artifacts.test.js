@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,7 @@ const express = (await import('express')).default;
 const { initCache } = await import('../src/cache/pageCache.js');
 const { getPage } = await import('../src/services/pageService.js');
 const { scanPages } = await import('../src/pages/navigation.js');
+const { registerLogicalPage } = await import('../src/pages/page-store.js');
 const { pageRoute } = await import('../src/routes/pages.js');
 const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
@@ -36,6 +37,7 @@ function baseConfig(contentDir) {
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
     auth: { enabled: false, password: null },
+    externalFiles: { allowedSources: { content: contentDir } },
   };
 }
 
@@ -48,6 +50,15 @@ function cookieHeader(setCookie) {
 
 async function makeContentDir() {
   return mkdtemp(path.join(os.tmpdir(), 'zylos-pages-html-content-'));
+}
+
+function registerPage(config, uri, sourcePath, title = uri) {
+  return registerLogicalPage({
+    uri,
+    title,
+    sourcePath,
+    component: 'content',
+  }, config);
 }
 
 async function withServer(config, fn) {
@@ -80,28 +91,31 @@ test('normalizeSlug strips html and markdown extensions', () => {
   assert.equal(normalizeSlug('/foo'), 'foo');
 });
 
-test('resolvePageDescriptor selects html priority and preserves markdown resolver ownership', async () => {
+test('resolvePageDescriptor serves registered logical pages only', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'html-only.html'), '<title>HTML</title>');
-    await writeFile(path.join(contentDir, 'markdown-only.md'), '# Markdown\n');
-    await writeFile(path.join(contentDir, 'both.html'), '<title>Both</title>');
-    await writeFile(path.join(contentDir, 'both.md'), '# Both Markdown\n');
+    const config = baseConfig(contentDir);
+    const htmlPath = path.join(contentDir, 'html-only.html');
+    const markdownPath = path.join(contentDir, 'markdown-only.md');
+    const barePath = path.join(contentDir, 'bare.md');
+    await writeFile(htmlPath, '<title>HTML</title>');
+    await writeFile(markdownPath, '# Markdown\n');
+    await writeFile(barePath, '# Bare\n');
+    registerPage(config, 'html-only', htmlPath, 'HTML');
+    registerPage(config, 'markdown-only', markdownPath, 'Markdown');
 
     const htmlOnly = await resolvePageDescriptor('html-only', contentDir);
     assert.equal(htmlOnly.type, 'html');
-    assert.equal(htmlOnly.filePath, path.join(contentDir, 'html-only.html'));
+    assert.equal(htmlOnly.filePath, await realpath(htmlPath));
+    assert.equal(htmlOnly.logical, true);
 
     const markdownOnly = await resolvePageDescriptor('markdown-only', contentDir);
     assert.equal(markdownOnly.type, 'markdown');
-    assert.equal(markdownOnly.filePath, path.join(contentDir, 'markdown-only.md'));
+    assert.equal(markdownOnly.filePath, await realpath(markdownPath));
+    assert.equal(markdownOnly.logical, true);
+    assert.equal(resolveSafePath('markdown-only', contentDir), markdownPath);
 
-    const both = await resolvePageDescriptor('both', contentDir);
-    assert.equal(both.type, 'html');
-    assert.equal(both.filePath, path.join(contentDir, 'both.html'));
-    assert.equal(both.companionPath, path.join(contentDir, 'both.md'));
-    assert.equal(resolveSafePath('both', contentDir), path.join(contentDir, 'both.md'));
-
+    await assert.rejects(() => resolvePageDescriptor('bare', contentDir), { code: 'ENOENT' });
     await assert.rejects(() => resolvePageDescriptor('missing', contentDir), { code: 'ENOENT' });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -122,16 +136,27 @@ test('resolvePageDescriptor rejects html traversal and null byte slugs', async (
 test('page route serves markdown with default CSP and html artifacts wrapped with iframe', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'foo.md'), '# Foo Markdown\n');
-    await writeFile(path.join(contentDir, 'artifact.html'), '<!doctype html><title>Artifact</title><script>window.ok=true</script><h1>Artifact</h1>');
-    await writeFile(path.join(contentDir, 'both.md'), '# Both Markdown\n');
-    await writeFile(path.join(contentDir, 'both.html'), '<!doctype html><title>Both HTML</title><script>window.ok=true</script><h1>Both HTML</h1>');
+    const config = baseConfig(contentDir);
+    const fooPath = path.join(contentDir, 'foo.md');
+    const artifactPath = path.join(contentDir, 'artifact.html');
+    const bothPath = path.join(contentDir, 'both.html');
+    const barePath = path.join(contentDir, 'bare.md');
+    await writeFile(fooPath, '# Foo Markdown\n');
+    await writeFile(artifactPath, '<!doctype html><title>Artifact</title><script>window.ok=true</script><h1>Artifact</h1>');
+    await writeFile(bothPath, '<!doctype html><title>Both HTML</title><script>window.ok=true</script><h1>Both HTML</h1>');
+    await writeFile(barePath, '# Bare Markdown\n');
+    registerPage(config, 'foo', fooPath, 'Foo');
+    registerPage(config, 'artifact', artifactPath, 'Artifact');
+    registerPage(config, 'both', bothPath, 'Both HTML');
 
-    await withServer(baseConfig(contentDir), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       const markdown = await fetch(`${origin}/foo`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
       assert.match(await markdown.text(), /Foo Markdown/);
+
+      const unregistered = await fetch(`${origin}/bare`);
+      assert.equal(unregistered.status, 404);
 
       // Default HTML artifact response: wrapper template with iframe
       const html = await fetch(`${origin}/artifact`);
@@ -180,13 +205,18 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
 test('shared html artifacts render directly while shared markdown keeps page header', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><title>Shared</title><h1>Shared HTML</h1>');
-    await writeFile(path.join(contentDir, 'shared-markdown.md'), '# Shared Markdown\n');
+    const config = baseConfig(contentDir);
+    const sharedPath = path.join(contentDir, 'shared.html');
+    const sharedMarkdownPath = path.join(contentDir, 'shared-markdown.md');
+    await writeFile(sharedPath, '<!doctype html><title>Shared</title><h1>Shared HTML</h1>');
+    await writeFile(sharedMarkdownPath, '# Shared Markdown\n');
+    registerPage(config, 'shared', sharedPath, 'Shared');
+    registerPage(config, 'shared-markdown', sharedMarkdownPath, 'Shared Markdown');
     const htmlToken = createShare('shared', '24h', { allowPermanent: false }).token;
     const markdownToken = createShare('shared-markdown', '24h', { allowPermanent: false }).token;
 
     await withServer({
-      ...baseConfig(contentDir),
+      ...config,
       auth: { enabled: true, password: hashPassword('secret') },
     }, async ({ origin }) => {
       const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlToken)}`, { redirect: 'manual' });
@@ -222,10 +252,13 @@ test('shared html artifacts render directly while shared markdown keeps page hea
 test('html pages require auth when no valid share token is present', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'private.html'), '<!doctype html><title>Private</title>');
+    const config = baseConfig(contentDir);
+    const privatePath = path.join(contentDir, 'private.html');
+    await writeFile(privatePath, '<!doctype html><title>Private</title>');
+    registerPage(config, 'private', privatePath, 'Private');
 
     await withServer({
-      ...baseConfig(contentDir),
+      ...config,
       auth: { enabled: true, password: hashPassword('secret') },
     }, async ({ origin }) => {
       const res = await fetch(`${origin}/private`, { redirect: 'manual' });
@@ -240,12 +273,15 @@ test('html pages require auth when no valid share token is present', async () =>
 test('raw API returns markdown when both html and markdown exist, and share viewers remain blocked', async () => {
   const contentDir = await makeContentDir();
   try {
+    const config = baseConfig(contentDir);
+    const sourcePath = path.join(contentDir, 'source.md');
     await writeFile(path.join(contentDir, 'source.html'), '<!doctype html><title>HTML</title>');
-    await writeFile(path.join(contentDir, 'source.md'), '# Markdown Source\n');
+    await writeFile(sourcePath, '# Markdown Source\n');
+    registerPage(config, 'source', sourcePath, 'Source');
     const token = createShare('source', '24h', { allowPermanent: false }).token;
 
     await withServer({
-      ...baseConfig(contentDir),
+      ...config,
       auth: { enabled: true, password: hashPassword('secret') },
     }, async ({ origin }) => {
       const rawAsShare = await fetch(`${origin}/api/raw/source?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
@@ -269,7 +305,7 @@ test('raw API returns markdown when both html and markdown exist, and share view
       res.locals.viewerType = 'share';
       next();
     });
-    setupRawApi(app, baseConfig(contentDir));
+    setupRawApi(app, config);
     const server = await new Promise((resolve) => {
       const s = http.createServer(app);
       s.listen(0, '127.0.0.1', () => resolve(s));
@@ -311,9 +347,10 @@ test('scanPages lists registered logical pages instead of bare content files', a
     });
 
     const pages = await scanPages(contentDir);
-    assert.deepEqual(pages.map(page => [page.slug, page.title, page.type]), [
-      ['p/docs/registered', 'Registered HTML', 'html'],
-    ]);
+    assert.ok(pages.some(page => page.slug === 'p/docs/registered'
+      && page.title === 'Registered HTML'
+      && page.type === 'html'));
+    assert.equal(pages.some(page => page.slug === 'p/bare'), false);
   } finally {
     await rm(contentDir, { recursive: true, force: true });
   }
@@ -324,29 +361,34 @@ test('page cache switches between markdown and html descriptors and updates html
   try {
     initCache({ maxEntries: 10, ttlSeconds: 60 });
     const config = baseConfig(contentDir);
-    await writeFile(path.join(contentDir, 'switch.md'), '# Markdown First\n');
+    const markdownPath = path.join(contentDir, 'switch.md');
+    const htmlPath = path.join(contentDir, 'switch.html');
+    await writeFile(markdownPath, '# Markdown First\n');
+    registerPage(config, 'switch', markdownPath, 'Switch Markdown');
 
     const markdown = await getPage('switch', config);
     assert.equal(markdown.type, 'markdown');
     assert.match(markdown.html, /Markdown First/);
 
-    await writeFile(path.join(contentDir, 'switch.html'), '<!doctype html><title>HTML First</title><h1>HTML First</h1>');
+    await writeFile(htmlPath, '<!doctype html><title>HTML First</title><h1>HTML First</h1>');
+    registerPage(config, 'switch', htmlPath, 'Switch HTML');
     const html = await getPage('switch', config);
     assert.equal(html.type, 'html');
     assert.match(html.html, /HTML First/);
 
-    await unlink(path.join(contentDir, 'switch.html'));
+    registerPage(config, 'switch', markdownPath, 'Switch Markdown');
     const fallback = await getPage('switch', config);
     assert.equal(fallback.type, 'markdown');
     assert.match(fallback.html, /Markdown First/);
 
-    await writeFile(path.join(contentDir, 'switch.html'), '<!doctype html><title>HTML Two</title><h1>HTML Two</h1>');
+    await writeFile(htmlPath, '<!doctype html><title>HTML Two</title><h1>HTML Two</h1>');
+    registerPage(config, 'switch', htmlPath, 'Switch HTML');
     const htmlTwo = await getPage('switch', config);
     assert.match(htmlTwo.html, /HTML Two/);
     const firstEtag = htmlTwo.etag;
 
     await new Promise(resolve => setTimeout(resolve, 20));
-    await writeFile(path.join(contentDir, 'switch.html'), '<!doctype html><title>HTML Three</title><h1>HTML Three</h1>');
+    await writeFile(htmlPath, '<!doctype html><title>HTML Three</title><h1>HTML Three</h1>');
     const htmlThree = await getPage('switch', config);
     assert.match(htmlThree.html, /HTML Three/);
     assert.notEqual(htmlThree.etag, firstEtag);

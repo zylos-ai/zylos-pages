@@ -36,7 +36,17 @@ function baseConfig(contentDir, auth = { enabled: false, password: null }) {
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
     auth,
+    externalFiles: { allowedSources: { content: contentDir } },
   };
+}
+
+function registerPage(config, uri, sourcePath, title = uri) {
+  return registerLogicalPage({
+    uri,
+    title,
+    sourcePath,
+    component: 'content',
+  }, config);
 }
 
 async function makeContentDir() {
@@ -317,15 +327,18 @@ test('authenticated /p view resolves out-of-directory assets within allowed root
 test('share page access renders in place and signs referenced assets', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'renovation-checklist.html'), '<!doctype html><img src="kitchen-ref.jpg">');
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const pagePath = path.join(contentDir, 'renovation-checklist.html');
+    await writeFile(pagePath, '<!doctype html><img src="kitchen-ref.jpg">');
     await writeFile(path.join(contentDir, 'kitchen-ref.jpg'), 'kitchen image');
     await writeFile(path.join(contentDir, 'direct-token.jpg'), 'direct token image');
     await mkdir(path.join(contentDir, 'docs'));
     await writeFile(path.join(contentDir, 'docs', 'nested.jpg'), 'nested image');
+    registerPage(config, 'renovation-checklist', pagePath, 'Renovation checklist');
     const share = createShare('renovation-checklist', '24h', { allowPermanent: false });
     const assetToken = createShare('direct-token.jpg', '24h', { allowPermanent: false }).token;
 
-    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
       assert.equal(redirect.status, 200);
       assert.equal(redirect.headers.get('location'), null);
@@ -366,18 +379,21 @@ test('share page access renders in place and signs referenced assets', async () 
 test('signed share assets allow page assets while isolating unsigned siblings', async () => {
   const contentDir = await makeContentDir();
   try {
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
     await mkdir(path.join(contentDir, 'docs'));
     await mkdir(path.join(contentDir, 'other'));
     await mkdir(path.join(contentDir, 'shared'));
-    await writeFile(path.join(contentDir, 'docs', 'guide.html'), '<!doctype html><img src="diagram.png"><img src="../shared/logo.png">');
+    const pagePath = path.join(contentDir, 'docs', 'guide.html');
+    await writeFile(pagePath, '<!doctype html><img src="diagram.png"><img src="../shared/logo.png">');
     await writeFile(path.join(contentDir, 'docs', 'diagram.png'), 'diagram');
     await writeFile(path.join(contentDir, 'shared', 'logo.png'), 'logo');
     await writeFile(path.join(contentDir, 'shared', 'secret.png'), 'secret');
     await writeFile(path.join(contentDir, 'root.png'), 'root');
     await writeFile(path.join(contentDir, 'other', 'secret.png'), 'secret');
+    registerPage(config, 'docs/guide', pagePath, 'Guide');
     const token = createShare('docs/guide', '24h', { allowPermanent: false }).token;
 
-    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       const page = await fetch(`${origin}/docs/guide?token=${encodeURIComponent(token)}`);
       assert.equal(page.status, 200);
       const body = await page.text();
@@ -438,11 +454,14 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
 test('revoked share invalidates existing signed asset URLs', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><img src="asset.jpg">');
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const pagePath = path.join(contentDir, 'shared.html');
+    await writeFile(pagePath, '<!doctype html><img src="asset.jpg">');
     await writeFile(path.join(contentDir, 'asset.jpg'), 'asset');
+    registerPage(config, 'shared', pagePath, 'Shared');
     const share = createShare('shared', '24h', { allowPermanent: false });
 
-    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       const page = await fetch(`${origin}/shared?token=${encodeURIComponent(share.token)}`);
       assert.equal(page.status, 200);
       const signedPath = signedAssetPath(await page.text(), 'asset.jpg');
@@ -490,10 +509,13 @@ test('asset route rejects traversal, null byte, and double-encoded traversal', a
 test('login clears legacy share-scope cookie without overwriting session cookie', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'shared.html'), '<!doctype html><h1>Shared</h1>');
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const pagePath = path.join(contentDir, 'shared.html');
+    await writeFile(pagePath, '<!doctype html><h1>Shared</h1>');
+    registerPage(config, 'shared', pagePath, 'Shared');
     const token = createShare('shared', '24h', { allowPermanent: false }).token;
 
-    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
       const legacy = createShareScopeCookie('shared', createShare('shared', '24h', { allowPermanent: false }).tokenId, Date.now() + 3600_000).value;
       const shareCookie = `${SHARE_SCOPE_COOKIE_NAME}=${legacy}`;
@@ -510,10 +532,15 @@ test('login clears legacy share-scope cookie without overwriting session cookie'
 test('markdown, html artifact, extension redirects, and state API still work with asset route registered', async () => {
   const contentDir = await makeContentDir();
   try {
-    await writeFile(path.join(contentDir, 'foo.md'), '# Foo\n');
-    await writeFile(path.join(contentDir, 'artifact.html'), '<!doctype html><head><title>A</title></head><h1>A</h1>');
+    const config = baseConfig(contentDir);
+    const fooPath = path.join(contentDir, 'foo.md');
+    const artifactPath = path.join(contentDir, 'artifact.html');
+    await writeFile(fooPath, '# Foo\n');
+    await writeFile(artifactPath, '<!doctype html><head><title>A</title></head><h1>A</h1>');
+    registerPage(config, 'foo', fooPath, 'Foo');
+    registerPage(config, 'artifact', artifactPath, 'Artifact');
 
-    await withServer(baseConfig(contentDir), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       let res = await fetch(`${origin}/foo`);
       assert.equal(res.status, 200);
       assert.match(await res.text(), /Foo/);

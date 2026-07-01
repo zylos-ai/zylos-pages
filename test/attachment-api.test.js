@@ -16,6 +16,7 @@ const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
 const { getAttachment } = await import('../src/attachments/attachment-store.js');
+const { registerLogicalPage } = await import('../src/pages/page-store.js');
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -29,6 +30,8 @@ async function makeContentDir() {
   const contentDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-attachment-content-'));
   await writeFile(path.join(contentDir, 'renovation-checklist.html'), '<!doctype html><h1>Checklist</h1>');
   await writeFile(path.join(contentDir, 'notes.md'), '# Notes\n');
+  registerContentPage(contentDir, 'renovation-checklist');
+  registerContentPage(contentDir, 'notes');
   return contentDir;
 }
 
@@ -42,7 +45,18 @@ function baseConfig(contentDir, auth = authConfig(), extra = {}) {
     auth,
     sharing: { enabled: true, allowPermanent: false },
     attachments: { maxFileSizeBytes: 128, ...(extra.attachments || {}) },
+    externalFiles: { allowedSources: { content: contentDir } },
   };
+}
+
+function registerContentPage(contentDir, uri, title = uri) {
+  const ext = uri === 'notes' ? '.md' : '.html';
+  return registerLogicalPage({
+    uri,
+    title,
+    sourcePath: path.join(contentDir, `${uri}${ext}`),
+    component: 'content',
+  }, baseConfig(contentDir));
 }
 
 async function withServer(config, fn, options = {}) {
@@ -497,6 +511,7 @@ test('failed uploads clean temporary and final files without durable metadata', 
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'cleanup-artifact.html'), '<!doctype html><h1>Cleanup</h1>');
+    registerContentPage(contentDir, 'cleanup-artifact');
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       const cookie = await login(origin);
       let res = await upload(origin, 'cleanup-artifact', 'cleanup-rejected', cookie, Buffer.from('bad'), 'image/jpeg', 'bad.jpg');
@@ -538,6 +553,7 @@ test('delete succeeds when stored file is missing and returns 404 when metadata 
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'delete-artifact.html'), '<!doctype html><h1>Delete</h1>');
+    registerContentPage(contentDir, 'delete-artifact');
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       const cookie = await login(origin);
       let res = await upload(origin, 'delete-artifact', 'delete-missing-file', cookie);

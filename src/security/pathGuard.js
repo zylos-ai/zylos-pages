@@ -1,7 +1,6 @@
 // Path traversal protection (P0-1)
 
 import { resolve, relative, extname } from 'node:path';
-import { access } from 'node:fs/promises';
 import { getMimeType, isAssetExtension } from '../utils/mime.js';
 import { getLogicalPage } from '../pages/page-store.js';
 
@@ -65,19 +64,9 @@ function resolveCandidate(slug, contentRoot, extension) {
   return candidate;
 }
 
-async function exists(filePath) {
-  try {
-    await access(filePath);
-    return true;
-  } catch (err) {
-    if (err.code === 'ENOENT') return false;
-    throw err;
-  }
-}
-
 /**
  * Resolve a slug to the page representation that should be served to humans.
- * HTML artifacts take priority over markdown, but only these two extensions are considered.
+ * Only registered logical pages are served; unregistered contentDir files 404.
  */
 export async function resolvePageDescriptor(slug, contentRoot) {
   validateSlug(slug);
@@ -90,29 +79,6 @@ export async function resolvePageDescriptor(slug, contentRoot) {
       logical: true,
       title: logicalPage.title,
       accessMode: logicalPage.accessMode,
-    };
-  }
-
-  const htmlPath = resolveCandidate(slug, contentRoot, '.html');
-  const markdownPath = resolveCandidate(slug, contentRoot, '.md');
-
-  if (await exists(htmlPath)) {
-    const descriptor = {
-      type: 'html',
-      filePath: htmlPath,
-      slug,
-    };
-    if (await exists(markdownPath)) {
-      descriptor.companionPath = markdownPath;
-    }
-    return descriptor;
-  }
-
-  if (await exists(markdownPath)) {
-    return {
-      type: 'markdown',
-      filePath: markdownPath,
-      slug,
     };
   }
 

@@ -16,6 +16,7 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi, RAW_BODY_LIMIT_BYTES, VALUE_JSON_LIMIT_BYTES } = await import('../src/routes/state-api.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
+const { registerLogicalPage } = await import('../src/pages/page-store.js');
 const {
   deleteStateValue,
   getArtifactState,
@@ -49,10 +50,17 @@ async function withServer(authConfig, fn) {
   const app = express();
   const config = {
     contentDir,
+    externalFiles: { allowedSources: { content: contentDir } },
     security: { allowRawHtml: false, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
   };
+  registerLogicalPage({
+    uri: 'short-state',
+    title: 'Short state',
+    sourcePath: path.join(contentDir, 'short-state.html'),
+    component: 'content',
+  }, config);
   setupAuth(app, authConfig || { enabled: false, password: null });
   setupShareApi(app, { enabled: true, allowPermanent: false }, config);
   setupStateApi(app);
