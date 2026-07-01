@@ -446,6 +446,32 @@ test('signed share assets allow page assets while isolating unsigned siblings', 
   }
 });
 
+test('signed share assets work for p-prefixed logical page shares', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    await mkdir(path.join(contentDir, 'docs'));
+    const pagePath = path.join(contentDir, 'docs', 'prefixed.html');
+    await writeFile(pagePath, '<!doctype html><img src="hero.png">');
+    await writeFile(path.join(contentDir, 'docs', 'hero.png'), 'hero');
+    registerPage(config, 'docs/prefixed', pagePath, 'Prefixed');
+    const share = createShare('p/docs/prefixed', '24h', { allowPermanent: false });
+
+    await withServer(config, async ({ origin }) => {
+      const page = await fetch(`${origin}/s/${share.tokenId}`);
+      assert.equal(page.status, 200);
+      const signedPath = signedAssetPath(await page.text(), 'hero.png');
+
+      const res = await fetch(`${origin}${signedPath}`);
+      assert.equal(res.status, 200);
+      assert.equal(await res.text(), 'hero');
+      assert.equal(res.headers.get('cache-control'), 'no-store');
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('expired and tampered share-scope cookies fall through to auth wall', async () => {
   const contentDir = await makeContentDir();
   try {

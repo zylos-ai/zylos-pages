@@ -260,6 +260,11 @@ function computeShareAssetHmac(uri, realPath, expiresAt, tokenId, secret) {
     .digest('hex');
 }
 
+function normalizeShareAssetSlug(slug) {
+  const normalized = normalizeSlug(slug);
+  return normalized.startsWith('p/') ? normalized.slice(2) : normalized;
+}
+
 function isAssetWithinScope(assetPath, directory) {
   const normalizedAsset = normalizeSlug(assetPath);
   const assetDir = directoryScope(normalizedAsset);
@@ -470,7 +475,7 @@ export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, s
   if (!isTokenId(actualTokenId)) return { valid: false };
   if (nowMs() > exp) return { valid: false };
   const record = activeShareRecord(actualTokenId);
-  if (!record || normalizeSlug(record.slug) !== normalizeSlug(uri)) return { valid: false };
+  if (!record || normalizeShareAssetSlug(record.slug) !== normalizeShareAssetSlug(uri)) return { valid: false };
   if (record.expiresAt !== 0 && exp > record.expiresAt) return { valid: false };
 
   const expected = computeShareAssetHmac(uri, realPath, exp, actualTokenId, getSecret());
