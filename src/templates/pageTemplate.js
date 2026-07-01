@@ -42,6 +42,9 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
       ${renderBreadcrumb({ baseUrl, slug, title })}
     </div>
     <div class="header-actions">
+      <a class="console-link icon-btn auth-only" href="${baseUrl}/" aria-label="Back to console" title="Back to console">
+        ${icon('grid')}
+      </a>
       <button class="copy-raw-btn btn btn-secondary auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Copy raw Markdown">
         ${icon('copy')}
         <span class="copy-raw-label">Copy Markdown</span>
@@ -149,6 +152,9 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
       ${renderBreadcrumb({ baseUrl, slug, title })}
     </div>
     <div class="header-actions">
+      <a class="console-link icon-btn auth-only" href="${baseUrl}/" aria-label="Back to console" title="Back to console">
+        ${icon('grid')}
+      </a>
       <button class="share-btn btn btn-primary auth-only" data-slug="${escapeHtml(slug || '')}" data-base-url="${escapeHtml(baseUrl)}" aria-label="Share this page">
         ${icon('share')}
         Share

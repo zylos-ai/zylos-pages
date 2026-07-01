@@ -10,6 +10,7 @@
   --color-border: #ededf0;
   --color-border-strong: #e3e4e8;
   --color-hover: #f4f4f6;
+  --color-hover-bg: #f0f1f4;
   --color-link: #5b57e8;
   --color-link-hover: #4f46e5;
   --color-code-bg: #1a1c23;
@@ -20,6 +21,8 @@
   --color-header-bg: rgba(255, 255, 255, 0.82);
   --color-tag-bg: #eef0fe;
   --color-tag-text: #6366f1;
+  --color-status-bg: #f1f2f4;
+  --color-status-text: #5f6673;
   --color-table-border: #e3e4e8;
   --color-table-row-alt: #fbfbfc;
   --color-success: #1a7f37;
@@ -71,7 +74,7 @@
   flex-shrink: 0;
   font-size: 0.8rem;
   color: var(--color-text-secondary);
-  background: var(--color-code-bg);
+  background: transparent;
   border: 1px solid var(--color-border);
   border-radius: 999px;
   padding: 5px 12px;
@@ -121,9 +124,9 @@
 .btn-primary { background: var(--color-link); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: var(--color-link-hover); }
 .btn-secondary { background: var(--color-bg); color: var(--color-text); border-color: var(--color-border); }
-.btn-secondary:hover:not(:disabled) { background: var(--color-code-bg); }
+.btn-secondary:hover:not(:disabled) { background: var(--color-hover-bg); }
 .btn-ghost { background: transparent; color: var(--color-text-secondary); border-color: transparent; }
-.btn-ghost:hover:not(:disabled) { background: var(--color-code-bg); color: var(--color-text); }
+.btn-ghost:hover:not(:disabled) { background: var(--color-hover-bg); color: var(--color-text); }
 .copy-btn.is-copied { color: var(--color-success); }
 
 /* Form */
@@ -210,7 +213,7 @@
   color: var(--color-text-secondary); font-size: 1.1rem; line-height: 1;
   padding: 2px 6px; border-radius: 6px;
 }
-.search-clear:hover { background: var(--color-code-bg); color: var(--color-text); }
+.search-clear:hover { background: var(--color-hover-bg); color: var(--color-text); }
 
 /* Page list */
 .admin-list { display: grid; gap: 10px; }
@@ -252,7 +255,7 @@
   font-size: 0.72rem; font-weight: 600; line-height: 1.4;
 }
 .badge-neutral { background: var(--color-tag-bg); color: var(--color-tag-text); }
-.badge-private { background: var(--color-code-bg); color: var(--color-text-secondary); border: 1px solid var(--color-border); }
+.badge-private { background: var(--color-status-bg); color: var(--color-status-text); border: 1px solid var(--color-border); }
 .badge-shared { background: rgba(31, 136, 61, 0.12); color: var(--color-success); }
 
 /* Share control */
@@ -287,7 +290,7 @@
 .empty-icon {
   width: 44px; height: 44px; border-radius: 12px;
   display: flex; align-items: center; justify-content: center;
-  background: var(--color-code-bg); color: var(--color-text-secondary);
+  background: var(--color-hover-bg); color: var(--color-text-secondary);
   margin-bottom: 6px;
 }
 .empty-icon .i { width: 22px; height: 22px; }
@@ -333,6 +336,7 @@
   --color-border: #1d1f27;
   --color-border-strong: #262933;
   --color-hover: #181a22;
+  --color-hover-bg: #20222b;
   --color-link: #a6a4f7;
   --color-link-hover: #c3c1fb;
   --color-code-bg: #07080c;
@@ -343,6 +347,8 @@
   --color-header-bg: rgba(17, 18, 25, 0.82);
   --color-tag-bg: #191b2b;
   --color-tag-text: #7c7ff2;
+  --color-status-bg: #22242c;
+  --color-status-text: #b6bcc9;
   --color-table-border: #262933;
   --color-table-row-alt: #13151c;
   --color-success: #3fb950;
@@ -1190,7 +1196,7 @@ svg { display: block; }
 }
 
 .page-folder summary:hover {
-  background: var(--color-code-bg);
+  background: var(--color-hover-bg);
 }
 
 .page-folder-name {
@@ -1534,7 +1540,7 @@ svg { display: block; }
   white-space: nowrap;
 }
 
-.share-copy-btn:hover { background: var(--color-code-bg); }
+.share-copy-btn:hover { background: var(--color-hover-bg); }
 
 .share-item-copy-btn {
   padding: 3px 8px;
