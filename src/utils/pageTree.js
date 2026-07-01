@@ -7,13 +7,14 @@ export function buildPageTree(pages) {
   const folderMap = new Map();
 
   for (const page of pages) {
-    const slashIndex = page.slug.lastIndexOf('/');
+    const treeSlug = page.slug?.startsWith('p/') ? page.slug.slice(2) : page.slug;
+    const slashIndex = treeSlug.lastIndexOf('/');
     if (slashIndex === -1) {
       topLevel.push(page);
       continue;
     }
 
-    const path = page.slug.substring(0, slashIndex);
+    const path = treeSlug.substring(0, slashIndex);
     let folder = folderMap.get(path);
     if (!folder) {
       folder = {

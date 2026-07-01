@@ -37,30 +37,47 @@ test('buildPageTree sorts folders by path and folder pages by newest date', () =
   assert.deepEqual(tree.folders[1].pages.map(page => page.slug), ['z/new', 'z/old']);
 });
 
-test('scanPages and buildPageTree preserve hidden, draft, and multi-segment behavior', async () => {
+test('scanPages lists only registered logical pages and preserves directory groups', async () => {
   const contentDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-tree-'));
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-tree-db-'));
+  const sourceRoot = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-tree-source-'));
+  process.env.PAGES_DATA_DIR = dataDir;
   try {
-    await writeFile(path.join(contentDir, 'top.md'), '---\ntitle: Top\n---\n# Top\n');
-    await writeFile(path.join(contentDir, '.hidden.md'), '# Hidden\n');
-    await writeFile(path.join(contentDir, '_underscore.md'), '# Underscore\n');
-    await writeFile(path.join(contentDir, 'draft.md'), '---\ndraft: true\n---\n# Draft\n');
-    await mkdir(path.join(contentDir, 'daily-digest'), { recursive: true });
-    await writeFile(path.join(contentDir, 'daily-digest', 'a.md'), '---\ntitle: Daily\n---\n# Daily\n');
-    await mkdir(path.join(contentDir, 'recruit', 'interview-questions'), { recursive: true });
-    await writeFile(path.join(contentDir, 'recruit', 'interview-questions', 'foo.md'), '---\ntitle: Foo\n---\n# Foo\n');
+    const config = {
+      contentDir,
+      externalFiles: {
+        allowedSources: {
+          source: sourceRoot,
+        },
+      },
+    };
+    await writeFile(path.join(contentDir, 'bare.md'), '# Bare filesystem page\n');
+    await writeFile(path.join(sourceRoot, 'top.md'), '# Top\n');
+    await mkdir(path.join(sourceRoot, 'daily-digest'), { recursive: true });
+    await writeFile(path.join(sourceRoot, 'daily-digest', 'a.md'), '# Daily\n');
+    await mkdir(path.join(sourceRoot, 'recruit', 'interview-questions'), { recursive: true });
+    await writeFile(path.join(sourceRoot, 'recruit', 'interview-questions', 'foo.md'), '# Foo\n');
+
+    const { registerLogicalPage } = await import('../src/pages/page-store.js');
+    registerLogicalPage({ uri: 'top', title: 'Top', sourcePath: path.join(sourceRoot, 'top.md'), component: 'source' }, config);
+    registerLogicalPage({ uri: 'daily-digest/a', title: 'Daily', sourcePath: path.join(sourceRoot, 'daily-digest', 'a.md'), component: 'source' }, config);
+    registerLogicalPage({ uri: 'recruit/interview-questions/foo', title: 'Foo', sourcePath: path.join(sourceRoot, 'recruit', 'interview-questions', 'foo.md'), component: 'source' }, config);
 
     const pages = await scanPages(contentDir);
     const tree = buildPageTree(pages);
 
     assert.deepEqual(pages.map(page => page.slug).sort(), [
-      'daily-digest/a',
-      'recruit/interview-questions/foo',
-      'top',
+      'p/daily-digest/a',
+      'p/recruit/interview-questions/foo',
+      'p/top',
     ]);
-    assert.deepEqual(tree.topLevel.map(page => page.slug), ['top']);
+    assert.equal(pages.some(page => page.slug === 'bare'), false);
+    assert.deepEqual(tree.topLevel.map(page => page.slug), ['p/top']);
     assert.deepEqual(tree.folders.map(folder => folder.path), ['daily-digest', 'recruit/interview-questions']);
   } finally {
     await rm(contentDir, { recursive: true, force: true });
+    await rm(dataDir, { recursive: true, force: true });
+    await rm(sourceRoot, { recursive: true, force: true });
   }
 });
 
