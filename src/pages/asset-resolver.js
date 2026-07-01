@@ -1,7 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getLogicalPage } from './page-store.js';
-import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { getMimeType, isAssetExtension } from '../utils/mime.js';
 import { normalizeSlug } from '../utils/slug.js';
 import {
@@ -93,18 +92,11 @@ export function rewriteRelativeAssetRefs(html, { baseUrl = '', pageUri }) {
 }
 
 async function pageSourceForAsset(pageUri, config = {}) {
-  const page = getLogicalPage(pageUri);
+  const normalizedUri = normalizeSlug(pageUri);
+  const logicalUri = normalizedUri.startsWith('p/') ? normalizedUri.slice(2) : normalizedUri;
+  const page = getLogicalPage(logicalUri);
   if (page) return { sourcePath: page.sourcePath };
-  if (!config.contentDir) {
-    throw new AssetResolutionError(404, 'Page not found');
-  }
-  try {
-    const descriptor = await resolvePageDescriptor(pageUri, config.contentDir);
-    return { sourcePath: descriptor.filePath };
-  } catch (err) {
-    if (err.statusCode) throw new AssetResolutionError(err.statusCode, err.message);
-    throw new AssetResolutionError(404, 'Page not found');
-  }
+  throw new AssetResolutionError(404, 'Page not found');
 }
 
 export async function resolveLogicalAsset(pageUri, rawRelativePath, options = {}) {

@@ -152,41 +152,55 @@ async function rawGet(origin, requestPath) {
   });
 }
 
-test('asset route serves allowlisted assets with MIME, ETag, 304, and size limit', async () => {
+test('logical asset route serves registered page assets with MIME, ETag, 304, and size limit', async () => {
   const contentDir = await makeContentDir();
   try {
+    const config = baseConfig(contentDir);
+    const pagePath = path.join(contentDir, 'page.md');
+    await writeFile(pagePath, '# Page\n');
     await writeFile(path.join(contentDir, 'image.jpg'), Buffer.from([0xff, 0xd8, 0xff]));
     await writeFile(path.join(contentDir, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await writeFile(path.join(contentDir, 'style.css'), 'body { color: red; }\n');
     await writeFile(path.join(contentDir, 'doc.pdf'), Buffer.from('%PDF-1.4\n'));
     await writeFile(path.join(contentDir, 'large.jpg'), Buffer.alloc(1025));
     await writeFile(path.join(contentDir, 'tool.exe'), 'not allowed');
+    registerPage(config, 'page', pagePath, 'Page');
 
-    await withServer(baseConfig(contentDir), async ({ origin }) => {
-      let res = await fetch(`${origin}/image.jpg`);
+    await withServer(config, async ({ origin }) => {
+      let res = await fetch(`${origin}/assets/page?path=image.jpg`);
       assert.equal(res.status, 200);
       assert.equal(res.headers.get('content-type'), 'image/jpeg');
       assert.equal(res.headers.get('cache-control'), 'public, max-age=3600');
       const etag = res.headers.get('etag');
       assert.ok(etag);
 
-      res = await fetch(`${origin}/image.jpg`, { headers: { 'If-None-Match': etag } });
+      res = await fetch(`${origin}/assets/p/page?path=image.jpg`);
+      assert.equal(res.status, 200);
+      assert.equal(Buffer.from(await res.arrayBuffer()).toString('hex'), 'ffd8ff');
+
+      res = await fetch(`${origin}/assets/page?path=image.jpg`, { headers: { 'If-None-Match': etag } });
       assert.equal(res.status, 304);
       assert.equal(res.headers.get('etag'), etag);
 
-      res = await fetch(`${origin}/image.png`);
+      res = await fetch(`${origin}/assets/page?path=image.png`);
       assert.equal(res.headers.get('content-type'), 'image/png');
 
-      res = await fetch(`${origin}/style.css`);
+      res = await fetch(`${origin}/assets/page?path=style.css`);
       assert.equal(res.headers.get('content-type'), 'text/css; charset=utf-8');
 
-      res = await fetch(`${origin}/doc.pdf`);
+      res = await fetch(`${origin}/assets/page?path=doc.pdf`);
       assert.equal(res.headers.get('content-type'), 'application/pdf');
 
-      res = await fetch(`${origin}/large.jpg`);
+      res = await fetch(`${origin}/assets/page?path=large.jpg`);
       assert.equal(res.status, 413);
 
-      res = await fetch(`${origin}/tool.exe`);
+      res = await fetch(`${origin}/assets/page?path=tool.exe`);
+      assert.equal(res.status, 404);
+
+      res = await fetch(`${origin}/assets/missing?path=image.jpg`);
+      assert.equal(res.status, 404);
+
+      res = await fetch(`${origin}/image.jpg`);
       assert.equal(res.status, 404);
     });
   } finally {
@@ -232,19 +246,29 @@ test('root route serves admin console and /admin is not mounted', async () => {
 test('asset route follows auth wall, session auth, and method boundaries', async () => {
   const contentDir = await makeContentDir();
   try {
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const pagePath = path.join(contentDir, 'private.md');
+    await writeFile(pagePath, '# Private\n');
     await writeFile(path.join(contentDir, 'private.jpg'), 'private');
+    registerPage(config, 'private', pagePath, 'Private');
 
-    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
+    await withServer(config, async ({ origin }) => {
       let res = await fetch(`${origin}/private.jpg`, { redirect: 'manual' });
       expectAssetDenied(res);
 
+      res = await fetch(`${origin}/assets/private?path=private.jpg`, { redirect: 'manual' });
+      expectLoginRedirect(res);
+
       const cookie = sessionCookie(await login(origin));
-      res = await fetch(`${origin}/private.jpg`, { headers: { Cookie: cookie } });
+      res = await fetch(`${origin}/assets/private?path=private.jpg`, { headers: { Cookie: cookie } });
       assert.equal(res.status, 200);
       assert.equal(await res.text(), 'private');
 
-      res = await fetch(`${origin}/private.jpg`, { method: 'PUT', redirect: 'manual' });
-      expectAssetDenied(res);
+      res = await fetch(`${origin}/private.jpg`, { headers: { Cookie: cookie } });
+      assert.equal(res.status, 404);
+
+      res = await fetch(`${origin}/assets/private?path=private.jpg`, { method: 'PUT', redirect: 'manual' });
+      expectLoginRedirect(res);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -483,16 +507,20 @@ test('revoked share invalidates existing signed asset URLs', async () => {
 test('asset route rejects traversal, null byte, and double-encoded traversal', async () => {
   const contentDir = await makeContentDir();
   try {
+    const config = baseConfig(contentDir);
+    const pagePath = path.join(contentDir, 'page.md');
+    await writeFile(pagePath, '# Page\n');
+    registerPage(config, 'page', pagePath, 'Page');
     const share = createShare('page', '24h', { allowPermanent: false });
     const cookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('page', share.tokenId, Date.now() + 3600_000).value}`;
-    await withServer(baseConfig(contentDir), async ({ origin }) => {
-      let res = await rawGet(origin, '/%2e%2e/secret.jpg');
+    await withServer(config, async ({ origin }) => {
+      let res = await rawGet(origin, '/assets/page?path=%2e%2e%2Fsecret.jpg');
       assert.equal(res.statusCode, 400);
 
-      res = await rawGet(origin, '/bad%00slug.jpg');
+      res = await rawGet(origin, '/assets/page?path=bad%00slug.jpg');
       assert.equal(res.statusCode, 400);
 
-      res = await rawGet(origin, '/%252e%252e/secret.jpg');
+      res = await rawGet(origin, '/assets/page?path=%252e%252e%2Fsecret.jpg');
       assert.equal(res.statusCode, 400);
 
       res = await fetch(`${origin}/%E0%A4%A.jpg`, {
