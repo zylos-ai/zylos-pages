@@ -13,7 +13,6 @@ import {
   clearShareAccessCookieHeader,
   clearShareScopeCookieHeader,
   createShareAccessCookie,
-  verifyShare,
   verifyShareAccessCookie,
 } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
@@ -27,7 +26,6 @@ const SESSION_IDLE_MS = 3_600_000;            // 60 minutes
 const REMEMBER_ABSOLUTE_MS = 30 * 86_400_000; // 30 days
 const REMEMBER_IDLE_MS = 7 * 86_400_000;      // 7 days
 const CLEANUP_INTERVAL_MS = 300_000;          // 5 minutes
-const LEGACY_SHARE_TOKEN_REMOVAL_DATE = '2026-10-01';
 
 // --- SQLite session store ---
 
@@ -230,18 +228,6 @@ function acceptShareViewer(res, result, options = {}) {
   }
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
-}
-
-function logLegacyShareTokenAccepted(req, surface, artifact, result) {
-  logger.warn('legacy share token accepted', {
-    path: req.path,
-    surface,
-    artifact,
-    tokenId: result.tokenId,
-    ip: getClientIp(req),
-    deprecation: '?token= share access is deprecated; use /s/<tokenId> short share links',
-    removalDate: LEGACY_SHARE_TOKEN_REMOVAL_DATE,
-  });
 }
 
 // --- Brute-force protection ---
@@ -593,7 +579,6 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     if (authDisabled) return next();
 
     const shortShareEnabled = sharingConfig?.enabled !== false;
-    const legacyTokenAccessEnabled = shortShareEnabled && sharingConfig?.legacyTokenAccess !== false;
     if (req.path.startsWith('/_assets')
         || (shortShareEnabled && /^\/s\/[a-f0-9]{32}$/.test(req.path))
         || req.path === loginPath || req.path === logoutPath) {
@@ -624,23 +609,6 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       }
     }
 
-    // Legacy long-token bypass. This is retained only for old links; new share
-    // creation and short-link access no longer expose or require this URL shape.
-    if (legacyTokenAccessEnabled
-        && (req.method === 'GET' || req.method === 'HEAD') && req.query.token
-        && !req.path.startsWith('/api/')
-        && !isAssetPath(req.path)
-        && req.path !== '/') {
-      const slug = req.path.slice(1);
-      const result = verifyShare(req.query.token, slug);
-      if (result.valid) {
-        logLegacyShareTokenAccepted(req, 'page', slug, result);
-        acceptShareViewer(res, result, { refreshAccessCookie: true });
-        return next();
-      }
-      logger.info('share token invalid', { path: req.path, ip: getClientIp(req) });
-    }
-
     if (req.path.startsWith('/api/state/') || isAttachmentApi(req)) {
       const artifact = artifactFromApiPath(req.path);
       let result = { valid: false };
@@ -651,21 +619,6 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
         acceptShareViewer(res, result);
         return next();
       }
-    }
-
-    if (legacyTokenAccessEnabled
-        && req.query.token && (req.path.startsWith('/api/state/') || isAttachmentApi(req))) {
-      const artifact = artifactFromApiPath(req.path);
-      let result = { valid: false };
-      try {
-        if (artifact) result = verifyShare(req.query.token, artifact);
-      } catch { /* malformed encoding — treat as invalid */ }
-      if (result.valid) {
-        logLegacyShareTokenAccepted(req, req.path.startsWith('/api/state/') ? 'state-api' : 'attachment-api', artifact, result);
-        acceptShareViewer(res, result);
-        return next();
-      }
-      logger.info('api share token invalid', { path: req.path, ip: getClientIp(req) });
     }
 
     if (validateSession(getSessionCookie(req))) {

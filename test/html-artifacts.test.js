@@ -212,22 +212,22 @@ test('shared html artifacts render directly while shared markdown keeps page hea
     await writeFile(sharedMarkdownPath, '# Shared Markdown\n');
     registerPage(config, 'shared', sharedPath, 'Shared');
     registerPage(config, 'shared-markdown', sharedMarkdownPath, 'Shared Markdown');
-    const htmlToken = createShare('shared', '24h', { allowPermanent: false }).token;
-    const markdownToken = createShare('shared-markdown', '24h', { allowPermanent: false }).token;
+    const htmlShare = createShare('shared', '24h', { allowPermanent: false });
+    const markdownShare = createShare('shared-markdown', '24h', { allowPermanent: false });
 
     await withServer({
       ...config,
       auth: { enabled: true, password: hashPassword('secret') },
     }, async ({ origin }) => {
-      const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlToken)}`, { redirect: 'manual' });
-      assert.equal(redirect.status, 301);
-      assert.equal(redirect.headers.get('location'), `/shared?token=${encodeURIComponent(htmlToken)}`);
+      const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
+      assert.equal(redirect.status, 302);
+      assert.match(redirect.headers.get('location'), /^\/login\?/);
 
-      const uppercaseRedirect = await fetch(`${origin}/shared.HTML?token=${encodeURIComponent(htmlToken)}`, { redirect: 'manual' });
-      assert.equal(uppercaseRedirect.status, 301);
-      assert.equal(uppercaseRedirect.headers.get('location'), `/shared?token=${encodeURIComponent(htmlToken)}`);
+      const uppercaseRedirect = await fetch(`${origin}/shared.HTML?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
+      assert.equal(uppercaseRedirect.status, 302);
+      assert.match(uppercaseRedirect.headers.get('location'), /^\/login\?/);
 
-      const shared = await fetch(`${origin}/shared?token=${encodeURIComponent(htmlToken)}`);
+      const shared = await fetch(`${origin}/s/${htmlShare.tokenId}`);
       assert.equal(shared.status, 200);
       assert.equal(shared.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
       const sharedBody = await shared.text();
@@ -236,7 +236,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
       assert.doesNotMatch(sharedBody, /html-artifact-frame/);
       assert.doesNotMatch(sharedBody, /theme-toggle/);
 
-      const markdown = await fetch(`${origin}/shared-markdown?token=${encodeURIComponent(markdownToken)}`);
+      const markdown = await fetch(`${origin}/s/${markdownShare.tokenId}`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
       const markdownBody = await markdown.text();

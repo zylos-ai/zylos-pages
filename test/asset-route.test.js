@@ -415,10 +415,10 @@ test('signed share assets allow page assets while isolating unsigned siblings', 
     await writeFile(path.join(contentDir, 'root.png'), 'root');
     await writeFile(path.join(contentDir, 'other', 'secret.png'), 'secret');
     registerPage(config, 'docs/guide', pagePath, 'Guide');
-    const token = createShare('docs/guide', '24h', { allowPermanent: false }).token;
+    const share = createShare('docs/guide', '24h', { allowPermanent: false });
 
     await withServer(config, async ({ origin }) => {
-      const page = await fetch(`${origin}/docs/guide?token=${encodeURIComponent(token)}`);
+      const page = await fetch(`${origin}/s/${share.tokenId}`);
       assert.equal(page.status, 200);
       const body = await page.text();
       const signedPath = signedAssetPath(body, 'diagram.png');
@@ -512,7 +512,7 @@ test('revoked share invalidates existing signed asset URLs', async () => {
     const share = createShare('shared', '24h', { allowPermanent: false });
 
     await withServer(config, async ({ origin }) => {
-      const page = await fetch(`${origin}/shared?token=${encodeURIComponent(share.token)}`);
+      const page = await fetch(`${origin}/s/${share.tokenId}`);
       assert.equal(page.status, 200);
       const signedPath = signedAssetPath(await page.text(), 'asset.jpg');
 
