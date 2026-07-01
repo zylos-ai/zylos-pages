@@ -13,6 +13,7 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
+const { registerLogicalPage } = await import('../src/pages/page-store.js');
 
 test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -32,10 +33,17 @@ function makeServer({ auth = false, authConfig = null, sharingEnabled = true, sh
   const app = express();
   const config = {
     contentDir,
+    externalFiles: { allowedSources: { content: contentDir } },
     security: { allowRawHtml: false, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
   };
+  registerLogicalPage({
+    uri: 'docs/page',
+    title: 'Shared page',
+    sourcePath: path.join(contentDir, 'docs', 'page.html'),
+    component: 'content',
+  }, config);
   if (auth || authConfig) {
     setupAuth(app, authConfig || {
       enabled: true,
@@ -51,7 +59,7 @@ function makeServer({ auth = false, authConfig = null, sharingEnabled = true, sh
   if (sharingEnabled) {
     setupShareApi(app, { enabled: true, allowPermanent: false }, config);
   }
-  app.get('/docs/page', (req, res) => {
+  app.get(['/docs/page', '/p/docs/page'], (req, res) => {
     if (req.query.locals === '1') {
       return res.status(200).json({
         viewerType: res.locals.viewerType || null,
@@ -93,7 +101,7 @@ async function createShareViaApi(origin, cookie, body = {}) {
       'X-Forwarded-Proto': 'http',
       ...(cookie ? { Cookie: cookie } : {}),
     },
-    body: JSON.stringify({ slug: 'docs/page', duration: '24h', ...body }),
+    body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', ...body }),
   });
   assert.equal(response.status, 200);
   return response.json();
@@ -121,7 +129,7 @@ test('create share returns short URL only', async () => {
         Origin: origin,
         'X-Forwarded-Proto': 'http',
       },
-      body: JSON.stringify({ slug: 'docs/page', duration: '24h' }),
+      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h' }),
     });
 
     assert.equal(response.status, 200);
@@ -147,7 +155,7 @@ test('create share ignores deprecated attachment write requests', async () => {
         Origin: origin,
         'X-Forwarded-Proto': 'http',
       },
-      body: JSON.stringify({ slug: 'docs/page', duration: '24h', canWriteAttachments: true }),
+      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', canWriteAttachments: true }),
     });
 
     assert.equal(response.status, 200);
@@ -155,7 +163,7 @@ test('create share ignores deprecated attachment write requests', async () => {
     assert.equal(body.ok, true);
     assert.equal(body.canWriteAttachments, false);
 
-    const list = await fetch(`${origin}/api/shares/docs/page`, {
+    const list = await fetch(`${origin}/api/shares/p/docs/page`, {
       headers: { 'X-Forwarded-Proto': 'http' },
     });
     assert.equal(list.status, 200);
@@ -164,6 +172,26 @@ test('create share ignores deprecated attachment write requests', async () => {
     assert.ok(created);
     assert.equal(created.canWriteAttachments, false);
     assert.equal(created.shortUrl, `${origin}/s/${created.tokenId}`);
+  } finally {
+    server.close();
+  }
+});
+
+test('create share rejects unregistered content slugs', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const response = await fetch(`${origin}/api/share`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: origin,
+        'X-Forwarded-Proto': 'http',
+      },
+      body: JSON.stringify({ slug: 'p/docs/missing', duration: '24h' }),
+    });
+
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: 'Page not found' });
   } finally {
     server.close();
   }
@@ -180,7 +208,7 @@ test('patch cannot upgrade share attachment permission and can keep read-only st
     let body = await response.json();
     assert.deepEqual(body, { error: 'Public attachment writes are deprecated' });
 
-    let list = await fetch(`${origin}/api/shares/docs/page`, { headers: { Cookie: cookie } });
+    let list = await fetch(`${origin}/api/shares/p/docs/page`, { headers: { Cookie: cookie } });
     assert.equal(list.status, 200);
     let listed = await list.json();
     let updated = listed.shares.find(share => share.tokenId === readOnly.tokenId);
@@ -195,7 +223,7 @@ test('patch cannot upgrade share attachment permission and can keep read-only st
     assert.equal(body.tokenId, editable.tokenId);
     assert.equal(body.canWriteAttachments, false);
 
-    list = await fetch(`${origin}/api/shares/docs/page`, { headers: { Cookie: cookie } });
+    list = await fetch(`${origin}/api/shares/p/docs/page`, { headers: { Cookie: cookie } });
     assert.equal(list.status, 200);
     listed = await list.json();
     updated = listed.shares.find(share => share.tokenId === editable.tokenId);
@@ -263,7 +291,7 @@ test('short share URL sets access cookie and renders clean page in place', async
         Origin: origin,
         'X-Forwarded-Proto': 'http',
       },
-      body: JSON.stringify({ slug: 'docs/page', duration: '24h' }),
+      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h' }),
     });
     const share = await create.json();
 
@@ -273,7 +301,7 @@ test('short share URL sets access cookie and renders clean page in place', async
     const setCookie = redirect.headers.get('set-cookie');
     assert.match(setCookie, /__Host-share_access=/);
     assert.doesNotMatch(setCookie, /__Host-share_scope=/);
-    assert.match(await redirect.text(), /<base href="\/docs\/page">/);
+    assert.match(await redirect.text(), /<base href="\/p\/docs\/page">/);
   } finally {
     server.close();
   }
@@ -315,7 +343,7 @@ test('auth middleware allows short share URL cookies to access target page', asy
         'X-Forwarded-Proto': 'http',
         Cookie: cookie,
       },
-      body: JSON.stringify({ slug: 'docs/page', duration: '24h' }),
+      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h' }),
     });
     assert.equal(create.status, 200);
     const share = await create.json();
@@ -325,7 +353,7 @@ test('auth middleware allows short share URL cookies to access target page', asy
     assert.doesNotMatch(await direct.text(), /login/);
     const cookies = cookieHeader(direct.headers.get('set-cookie'));
 
-    const page = await fetch(`${origin}/docs/page`, {
+    const page = await fetch(`${origin}/p/docs/page`, {
       redirect: 'manual',
       headers: { Cookie: cookies },
     });
@@ -355,7 +383,7 @@ test('auth middleware keeps short share cookies read-only', async () => {
         'X-Forwarded-Proto': 'http',
         Cookie: cookie,
       },
-      body: JSON.stringify({ slug: 'docs/page', duration: '24h', canWriteAttachments: true }),
+      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', canWriteAttachments: true }),
     });
     assert.equal(create.status, 200);
     const share = await create.json();
@@ -364,7 +392,7 @@ test('auth middleware keeps short share cookies read-only', async () => {
     assert.equal(direct.status, 200);
     const cookies = cookieHeader(direct.headers.get('set-cookie'));
 
-    const appCheck = await fetch(`${origin}/docs/page?locals=1`, {
+    const appCheck = await fetch(`${origin}/p/docs/page?locals=1`, {
       headers: { Cookie: cookies },
     });
     assert.equal(appCheck.status, 200);

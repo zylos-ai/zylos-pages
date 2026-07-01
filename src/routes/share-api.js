@@ -17,6 +17,8 @@ import {
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { renderSharePage } from './pages.js';
+import { getLogicalPage } from '../pages/page-store.js';
+import { normalizeSlug } from '../utils/slug.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
@@ -99,6 +101,15 @@ function appendSetCookie(res, cookie) {
   }
 }
 
+function registeredShareSlug(rawSlug) {
+  const normalized = normalizeSlug(rawSlug);
+  const pageUri = normalized.startsWith('p/') ? normalized.slice(2) : normalized;
+  if (!pageUri || !getLogicalPage(pageUri)) {
+    throw Object.assign(new Error('Page not found'), { statusCode: 404 });
+  }
+  return `p/${pageUri}`;
+}
+
 /**
  * Register share API routes on the Express app.
  * Must be called AFTER auth middleware so that only authenticated users reach these.
@@ -150,7 +161,8 @@ export function setupShareApi(app, sharingConfig, config = {}) {
         return res.status(400).json({ error: 'Missing duration' });
       }
 
-      const result = createShare(slug, duration, sharingConfig, { canWriteAttachments });
+      const shareSlug = registeredShareSlug(slug);
+      const result = createShare(shareSlug, duration, sharingConfig, { canWriteAttachments });
 
       const share = formatShareResponse(req, result);
 

@@ -299,13 +299,32 @@ test('page service renders root-internal and forwarded-prefix browser bases sepa
   const fixture = makeFixture();
   const nestedDir = path.join(fixture.contentDir, 'docs');
   fs.mkdirSync(nestedDir, { recursive: true });
-  fs.writeFileSync(path.join(nestedDir, 'nested.md'), '# Nested Page\n');
+  const source = path.join(nestedDir, 'nested.md');
+  fs.writeFileSync(source, '# Nested Page\n');
+  runPagesCli(fixture, [
+    'allow-root',
+    'add',
+    fixture.contentDir,
+    '--name',
+    'content',
+    '--json',
+  ]);
+  runPagesCli(fixture, [
+    'register',
+    '--component',
+    'content',
+    '--uri',
+    'docs/nested',
+    '--source',
+    source,
+    '--json',
+  ]);
 
-  const direct = await getPage('docs/nested', configFor(fixture), '');
+  const direct = await getPage('p/docs/nested', configFor(fixture), '');
   assert.match(direct.html, /href="\/_assets\/style\.css/);
   assert.match(direct.html, /data-base-url=""/);
 
-  const proxied = await getPage('docs/nested', configFor(fixture), '/pages');
+  const proxied = await getPage('p/docs/nested', configFor(fixture), '/pages');
   assert.match(proxied.html, /href="\/pages\/_assets\/style\.css/);
   assert.match(proxied.html, /data-base-url="\/pages"/);
 });
