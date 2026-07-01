@@ -1,7 +1,6 @@
 // Path traversal protection (P0-1)
 
 import { resolve, relative, extname } from 'node:path';
-import { getMimeType, isAssetExtension } from '../utils/mime.js';
 import { getLogicalPage } from '../pages/page-store.js';
 
 export class PathViolationError extends Error {
@@ -94,33 +93,4 @@ export async function resolvePageDescriptor(slug, contentRoot) {
 export function resolveSafePath(slug, contentRoot) {
   validateSlug(slug);
   return resolveCandidate(slug, contentRoot, '.md');
-}
-
-/**
- * Resolve an allowlisted static asset path within the content root.
- */
-export function resolveAssetPath(slug, contentRoot) {
-  validateSlug(slug);
-
-  const extension = extname(slug).toLowerCase();
-  if (!isAssetExtension(extension)) {
-    const err = new Error('Asset not found');
-    err.code = 'ENOENT';
-    throw err;
-  }
-
-  const candidate = resolve(contentRoot, slug);
-  const rel = relative(contentRoot, candidate);
-  if (rel.startsWith('..') || resolve(contentRoot, rel) !== candidate) {
-    throw new PathViolationError('Invalid path: outside content root');
-  }
-
-  if (extname(candidate).toLowerCase() !== extension) {
-    throw new PathViolationError('Invalid path: extension mismatch');
-  }
-
-  return {
-    filePath: candidate,
-    mimeType: getMimeType(extension),
-  };
 }
