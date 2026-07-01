@@ -73,7 +73,14 @@ function Toast({ toast, onDismiss }) {
   );
 }
 
-function CopyButton({ text }) {
+function encodeSlugPath(slug) {
+  return String(slug || '')
+    .split('/')
+    .map(part => encodeURIComponent(part))
+    .join('/');
+}
+
+function CopyButton({ text, label = 'Copy' }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -87,16 +94,60 @@ function CopyButton({ text }) {
   return (
     <button type="button" className={`btn btn-sm btn-ghost copy-btn ${copied ? 'is-copied' : ''}`} onClick={copy}>
       <Icon name={copied ? 'check' : 'copy'} />
-      {copied ? 'Copied' : 'Copy'}
+      {copied ? 'Copied' : label}
     </button>
   );
 }
 
-function ShareControl({ uri, onShare }) {
+function ActiveSharesList({ shares, loading }) {
+  return (
+    <div className="share-list">
+      <h4>Active shares</h4>
+      {loading ? (
+        <div className="share-empty">Loading shares...</div>
+      ) : shares.length === 0 ? (
+        <div className="share-empty">No active shares.</div>
+      ) : (
+        shares.map(share => (
+          <div className="share-item" key={share.tokenId}>
+            <div className="share-item-info">
+              <a href={share.shortUrl} target="_blank" rel="noreferrer">{share.shortUrl}</a>
+              <span>{share.expiresAt ? `Expires ${new Date(Number(share.expiresAt)).toLocaleString()}` : 'Never expires'}</span>
+            </div>
+            <div className="share-item-actions">
+              <CopyButton text={share.shortUrl} label="Copy link" />
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function ShareControl({ uri, onShare, onError }) {
   const [open, setOpen] = useState(false);
   const [duration, setDuration] = useState('7d');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [activeShares, setActiveShares] = useState([]);
+  const [loadingShares, setLoadingShares] = useState(false);
+
+  const loadActiveShares = useCallback(async () => {
+    setLoadingShares(true);
+    try {
+      const data = await api(`/api/shares/${encodeSlugPath(`p/${uri}`)}`);
+      setActiveShares(data.shares || []);
+    } catch (err) {
+      onError(err);
+    } finally {
+      setLoadingShares(false);
+    }
+  }, [onError, uri]);
+
+  useEffect(() => {
+    if (!open && !result) return;
+    loadActiveShares();
+  }, [loadActiveShares, open, result]);
 
   async function submit() {
     setBusy(true);
@@ -122,6 +173,7 @@ function ShareControl({ uri, onShare }) {
           </span>
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setResult(null); setOpen(false); }}>Done</button>
         </div>
+        <ActiveSharesList shares={activeShares} loading={loadingShares} />
       </div>
     );
   }
@@ -146,11 +198,12 @@ function ShareControl({ uri, onShare }) {
         {busy ? 'Creating…' : 'Create link'}
       </button>
       <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
+      <ActiveSharesList shares={activeShares} loading={loadingShares} />
     </div>
   );
 }
 
-function PageCard({ page, onShare }) {
+function PageCard({ page, onShare, onError }) {
   return (
     <article className="page-card">
       <div className="page-card-body">
@@ -168,7 +221,7 @@ function PageCard({ page, onShare }) {
       </div>
       <div className="page-card-actions">
         <a className="btn btn-sm btn-secondary" href={page.url}><Icon name="eye" /> View</a>
-        <ShareControl uri={page.uri} onShare={onShare} />
+        <ShareControl uri={page.uri} onShare={onShare} onError={onError} />
       </div>
     </article>
   );
@@ -366,7 +419,7 @@ function AdminApp() {
                 )}
               </div>
             ) : (
-              pages.map(page => <PageCard key={page.uri} page={page} onShare={createShare} />)
+              pages.map(page => <PageCard key={page.uri} page={page} onShare={createShare} onError={err => notify('error', err.message)} />)
             )}
           </div>
         </section>
