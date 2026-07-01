@@ -1,5 +1,5 @@
 import { browserBaseFromRequest } from '../lib/browser-base.js';
-import { themeToggleIcons } from '../templates/icons.js';
+import { icon, themeToggleIcons } from '../templates/icons.js';
 
 const ASSET_VERSION = Date.now();
 
@@ -24,7 +24,7 @@ export function adminRoute() {
       <button class="theme-toggle icon-btn" aria-label="Toggle dark mode">
         ${themeToggleIcons()}
       </button>
-      <form method="POST" action="${baseUrl}/logout" class="logout-form"><button type="submit" class="logout-btn" aria-label="Sign out">Sign out</button></form>
+      <form method="POST" action="${baseUrl}/logout" class="logout-form"><button type="submit" class="logout-btn icon-btn" aria-label="Sign out" title="Sign out">${icon('logout')}</button></form>
     </div>
   </header>
   <main class="admin-page">

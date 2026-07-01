@@ -11,6 +11,82 @@ import { postProcessMermaid } from '../markdown/mermaid.js';
 
 const { filePath, config } = workerData;
 
+const CALLOUTS = {
+  NOTE: {
+    tone: 'info',
+    label: 'Note',
+    icon: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/>',
+  },
+  TIP: {
+    tone: 'tip',
+    label: 'Tip',
+    icon: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5a5 5 0 1 0-7 0c.8.8 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
+  },
+  WARNING: {
+    tone: 'warn',
+    label: 'Warning',
+    icon: '<path d="m21.7 18-8.5-15a1.4 1.4 0 0 0-2.4 0L2.3 18a1.4 1.4 0 0 0 1.2 2h17a1.4 1.4 0 0 0 1.2-2Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  },
+  CAUTION: {
+    tone: 'warn',
+    label: 'Warning',
+    icon: '<path d="m21.7 18-8.5-15a1.4 1.4 0 0 0-2.4 0L2.3 18a1.4 1.4 0 0 0 1.2 2h17a1.4 1.4 0 0 0 1.2-2Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  },
+  IMPORTANT: {
+    tone: 'warn',
+    label: 'Important',
+    icon: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M5 7.2A8 8 0 0 1 12 3a8 8 0 0 1 7 4.2c.7 1.2.7 2.7 0 3.9L12 21 5 11.1a3.8 3.8 0 0 1 0-3.9Z"/>',
+  },
+  OK: {
+    tone: 'ok',
+    label: 'OK',
+    icon: '<path d="M20 6 9 17l-5-5"/>',
+  },
+  SUCCESS: {
+    tone: 'ok',
+    label: 'Success',
+    icon: '<path d="M20 6 9 17l-5-5"/>',
+  },
+};
+
+function escapeAttr(value) {
+  return String(value).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+function humanizeLanguage(lang) {
+  if (!lang) return 'Text';
+  const aliases = { javascript: 'JavaScript', js: 'JavaScript', jsx: 'JSX', typescript: 'TypeScript', ts: 'TypeScript', tsx: 'TSX', py: 'Python', sh: 'Shell', bash: 'Bash', yml: 'YAML', md: 'Markdown' };
+  return aliases[lang] || lang.charAt(0).toUpperCase() + lang.slice(1);
+}
+
+function codeBlockChrome(attrs, body) {
+  const classMatch = attrs.match(/class="[^"]*\blanguage-([^"\s]+)[^"]*"/);
+  const lang = classMatch ? classMatch[1].toLowerCase() : 'text';
+  const label = humanizeLanguage(lang);
+  return `<div class="code-block" data-language="${escapeAttr(lang)}"><div class="code-block-header"><span class="code-block-language">${escapeAttr(label)}</span><button type="button" class="code-copy-btn" aria-label="Copy ${escapeAttr(label)} code">Copy</button></div>${body}</div>`;
+}
+
+function enhanceCodeBlocks(html) {
+  html = html.replace(/<pre><code([^>]*)>(<pre class="shiki[\s\S]*?<\/pre>)\s*<\/code><\/pre>/g, (_full, attrs, shikiPre) => {
+    return codeBlockChrome(attrs, shikiPre);
+  });
+
+  return html.replace(/<pre><code([^>]*)>([\s\S]*?)<\/code><\/pre>/g, (full, attrs, inner) => {
+    if (/class="mermaid"/.test(full)) return full;
+    return codeBlockChrome(attrs, `<pre><code${attrs}>${inner}</code></pre>`);
+  });
+}
+
+function enhanceCallouts(html) {
+  return html.replace(/<blockquote>\s*<p>\[!(NOTE|TIP|WARNING|CAUTION|IMPORTANT|OK|SUCCESS)\](?:<br\s*\/?>|\n)([\s\S]*?)<\/p>\s*<\/blockquote>/gi, (_full, type, content) => {
+    const spec = CALLOUTS[type.toUpperCase()];
+    if (!spec) return _full;
+    return `<aside class="callout callout-${spec.tone}"><div class="callout-title"><svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${spec.icon}</svg><span>${spec.label}</span></div><div class="callout-body">${content}</div></aside>`;
+  });
+}
+
 async function render() {
   const { readFile, stat } = await import('node:fs/promises');
   const { createHash } = await import('node:crypto');
@@ -105,6 +181,8 @@ async function render() {
       allowedSchemes: ['http', 'https', 'mailto'],
     });
   }
+
+  bodyHtml = enhanceCallouts(enhanceCodeBlocks(bodyHtml));
 
   // Strip leading H1 only if its text matches the frontmatter title (avoid duplicate)
   if (meta.title) {
