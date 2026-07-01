@@ -454,13 +454,24 @@ function loginPageHtml(baseUrl, error, next) {
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
 export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
-  if (authConfig.enabled && authConfig.password) {
+  migratePasswordIfNeeded(authConfig);
+
+  const authDisabled = authConfig.enabled === false;
+  const authPasswordConfigured = typeof authConfig.password === 'string' && authConfig.password.length > 0;
+  const authMisconfigured = !authDisabled && !authPasswordConfigured;
+
+  if (!authDisabled && authPasswordConfigured) {
     initSessionStore();
   }
-  migratePasswordIfNeeded(authConfig);
 
   const loginPath = '/login';
   const logoutPath = '/logout';
+
+  function rejectAuthMisconfigured(req, res) {
+    logger.error('auth misconfigured', { path: req.path, reason: 'missing_password' });
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(503).send('Authentication is not configured.');
+  }
 
   // Parse URL-encoded bodies for login form
   function parseLoginBody(req, res, next) {
@@ -480,6 +491,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
 
   // GET /login — show login page
   function loginGet(req, res) {
+    if (authMisconfigured) return rejectAuthMisconfigured(req, res);
     const browserBase = browserBaseFromRequest(req);
     if (validateSession(getSessionCookie(req))) {
       return res.redirect(browserRoot(browserBase));
@@ -492,6 +504,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
 
   // POST /login — authenticate
   function loginPost(req, res) {
+    if (authMisconfigured) return rejectAuthMisconfigured(req, res);
     const browserBase = browserBaseFromRequest(req);
     const ip = getClientIp(req);
 
@@ -527,6 +540,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
 
   // POST /logout — same-host CSRF protection
   function logoutPost(req, res) {
+    if (authMisconfigured) return rejectAuthMisconfigured(req, res);
     const expectedHost = req.headers.host;
     const origin = req.headers.origin;
     const referer = req.headers.referer;
@@ -563,13 +577,24 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
   // Auth middleware — protect all other routes
   app.use((req, res, next) => {
     const browserBase = browserBaseFromRequest(req);
-    if (!authConfig.enabled || !authConfig.password) return next();
+    if (authDisabled) return next();
 
     const shortShareEnabled = sharingConfig?.enabled !== false;
     if (req.path.startsWith('/_assets')
         || (shortShareEnabled && /^\/s\/[a-f0-9]{32}$/.test(req.path))
         || req.path === loginPath || req.path === logoutPath) {
       return next();
+    }
+
+    if ((req.method === 'GET' || req.method === 'HEAD')
+        && req.path.startsWith('/assets/')
+        && typeof req.query.exp === 'string'
+        && typeof req.query.sig === 'string') {
+      return next();
+    }
+
+    if (authMisconfigured) {
+      return rejectAuthMisconfigured(req, res);
     }
 
     // Share access session bypass for pages and raw HTML artifacts.
@@ -623,13 +648,6 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
         return next();
       }
       logger.info('api share token invalid', { path: req.path, ip: getClientIp(req) });
-    }
-
-    if ((req.method === 'GET' || req.method === 'HEAD')
-        && req.path.startsWith('/assets/')
-        && typeof req.query.exp === 'string'
-        && typeof req.query.sig === 'string') {
-      return next();
     }
 
     if (validateSession(getSessionCookie(req))) {
