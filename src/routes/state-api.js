@@ -30,7 +30,7 @@ function jsonByteLength(value) {
 
 /**
  * CSRF validation via Origin/Referer headers.
- * Same approach as todo-api.js.
+ * Same approach as the attachment API.
  */
 function csrfCheck(req, res) {
   const expectedHost = req.headers.host;

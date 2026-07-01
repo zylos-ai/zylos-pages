@@ -60,10 +60,6 @@ export const DEFAULT_CONFIG = {
       recruit: path.join(HOME, 'zylos/components/recruit'),
     },
   },
-  todo: {
-    enabled: false,
-    boards: {},
-  },
 };
 
 let config = null;

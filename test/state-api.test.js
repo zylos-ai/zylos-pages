@@ -14,7 +14,6 @@ const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi, RAW_BODY_LIMIT_BYTES, VALUE_JSON_LIMIT_BYTES } = await import('../src/routes/state-api.js');
-const { setupTodoApi } = await import('../src/routes/todo-api.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
 const {
@@ -423,12 +422,11 @@ test('state API auth wall redirects unauthenticated and malformed-token API requ
   });
 });
 
-test('share tokens do not grant access to other APIs and page share bypass still works', async () => {
+test('share tokens do not grant access to raw API and page share bypass still works', async () => {
   const token = createShare('shared-page', '24h', { allowPermanent: false }).token;
   const app = express();
   setupAuth(app, authConfig());
   setupRawApi(app, { contentDir: dataDir });
-  setupTodoApi(app, { todo: { enabled: true, boards: { main: path.join(dataDir, 'todo.md') } } });
   app.get('/shared-page', (req, res) => {
     res.status(200).send(res.locals.viewerType === 'share' ? 'share-viewer' : 'auth-viewer');
   });
@@ -439,11 +437,6 @@ test('share tokens do not grant access to other APIs and page share bypass still
     assert.equal(await res.text(), 'share-viewer');
 
     res = await fetch(`${origin}/api/raw/shared-page?token=${encodeURIComponent(token)}`, {
-      redirect: 'manual',
-    });
-    expectLoginRedirect(res);
-
-    res = await fetch(`${origin}/api/todo/main?token=${encodeURIComponent(token)}`, {
       redirect: 'manual',
     });
     expectLoginRedirect(res);

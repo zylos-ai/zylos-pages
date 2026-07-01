@@ -3,8 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { scanPages } from '../src/routes/index.js';
-import { indexTemplate } from '../src/templates/indexTemplate.js';
+import { scanPages } from '../src/pages/navigation.js';
 import { injectNavSidebar, injectShareViewer, pageTemplate } from '../src/templates/pageTemplate.js';
 import { buildPageTree } from '../src/utils/pageTree.js';
 
@@ -79,23 +78,6 @@ test('scanPages lists only registered logical pages and preserves directory grou
     await rm(dataDir, { recursive: true, force: true });
     await rm(sourceRoot, { recursive: true, force: true });
   }
-});
-
-test('indexTemplate renders escaped folder details and page counts', () => {
-  const html = indexTemplate({
-    topLevel: [{ slug: 'top', title: 'Top', date: '2026-06-14' }],
-    folders: [{
-      path: 'safe/<script>',
-      label: 'safe / <script>',
-      pages: [{ slug: 'safe/<script>/page', title: 'Nested', date: '2026-06-13' }],
-    }],
-  }, '/pages');
-
-  assert.match(html, /2 pages/);
-  assert.match(html, /<details class="page-folder">/);
-  assert.match(html, /safe \/ &lt;script&gt;/);
-  assert.match(html, /1 page/);
-  assert.doesNotMatch(html, /<script><\/script>/);
 });
 
 test('injectNavSidebar expands active folder and escapes folder labels', () => {

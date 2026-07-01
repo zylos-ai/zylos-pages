@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * pages agent CLI — local DB operations for logical pages plus legacy template helpers.
+ * pages agent CLI — local DB operations for logical pages.
  */
 
 import fs from 'node:fs';
@@ -9,12 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
 import { getLogicalPage, registerLogicalPage, searchLogicalPages } from '../pages/page-store.js';
-import { resolveSafePath } from '../security/pathGuard.js';
 import { createShare, listSharesForSlug, revokeAllForSlug } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TEMPLATES_DIR = path.resolve(__dirname, '../../templates/html');
 
 class CliError extends Error {
   constructor(code, message) {
@@ -35,10 +31,6 @@ Usage:
   node pages.js unshare <uri> [--json]
   node pages.js allow-root add <path> [--name <name>] [--json]
   node pages.js status [--json]
-
-Template helpers:
-  node pages.js templates
-  node pages.js create --template <name> --slug <path>
 
 Examples:
   node pages.js register --source /abs/report.md --uri reports/q3 --title "Q3 Report"
@@ -142,23 +134,10 @@ function getBaseUrl(config = getConfig()) {
   return String(configured).replace(/\/$/, '');
 }
 
-function staticPageExists(uri, config) {
-  try {
-    resolveSafePath(uri, config.contentDir);
-  } catch {
-    return false;
-  }
-  return fs.existsSync(path.join(config.contentDir, `${uri}.html`)) ||
-    fs.existsSync(path.join(config.contentDir, `${uri}.md`));
-}
-
-function shareSlugForUri(uri, config, options = {}) {
+function shareSlugForUri(uri) {
   const normalized = normalizeUri(uri);
   if (getLogicalPage(normalized)) return `p/${normalized}`;
-  if (options.requireExistingContent && !staticPageExists(normalized, config)) {
-    throw new CliError('page_missing', `page not found: ${normalized}`);
-  }
-  return normalized;
+  throw new CliError('page_missing', `logical page not found: ${normalized}`);
 }
 
 function formatShare(share, config = getConfig()) {
@@ -268,7 +247,7 @@ function commandShare(args) {
   if (config.sharing?.enabled === false) {
     throw new CliError('sharing_disabled', 'sharing is disabled in config (sharing.enabled=false)');
   }
-  const slug = shareSlugForUri(uri, config, { requireExistingContent: true });
+  const slug = shareSlugForUri(uri);
   const result = createShare(slug, duration, config.sharing || {});
   output({
     ok: true,
@@ -286,14 +265,14 @@ function commandShare(args) {
 function commandShares(args) {
   const uri = normalizeUri(args._[0] || args.uri || args.slug);
   const config = getConfig();
-  const slug = shareSlugForUri(uri, config);
+  const slug = shareSlugForUri(uri);
   const shares = listSharesForSlug(slug).map(share => formatShare(share, config));
   output({ ok: true, command: 'shares', uri, slug, shares }, args.json);
 }
 
 function commandUnshare(args) {
   const uri = normalizeUri(args._[0] || args.uri || args.slug);
-  const slug = shareSlugForUri(uri, getConfig());
+  const slug = shareSlugForUri(uri);
   const revoked = revokeAllForSlug(slug);
   output({ ok: true, command: 'unshare', uri, slug, revoked }, args.json);
 }
@@ -344,37 +323,6 @@ function commandAllowRoot(args) {
   output({ ok: true, command: 'allow-root', name, path: realPath, configPath: CONFIG_PATH }, args.json);
 }
 
-function listTemplates() {
-  if (!fs.existsSync(TEMPLATES_DIR)) {
-    throw new CliError('templates_missing', `templates directory not found: ${TEMPLATES_DIR}`);
-  }
-  const templates = fs.readdirSync(TEMPLATES_DIR)
-    .filter(file => file.endsWith('.html'))
-    .map(file => file.replace('.html', ''))
-    .sort();
-  console.log(templates.join('\n') || 'no templates found');
-}
-
-function createPage(args) {
-  if (!args.template) throw new CliError('invalid_args', '--template is required');
-  const slug = normalizeUri(args.slug);
-  const templateFile = path.join(TEMPLATES_DIR, `${args.template}.html`);
-  if (!fs.existsSync(templateFile)) {
-    throw new CliError('template_missing', `template not found: ${args.template}`);
-  }
-  const config = getConfig();
-  try {
-    resolveSafePath(slug, config.contentDir);
-  } catch (err) {
-    throw new CliError('invalid_slug', err.message);
-  }
-  const outPath = path.join(config.contentDir, `${slug}.html`);
-  fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  if (fs.existsSync(outPath)) throw new CliError('exists', `file already exists: ${outPath}`);
-  fs.copyFileSync(templateFile, outPath);
-  output({ ok: true, command: 'create', path: outPath, template: args.template, slug }, args.json);
-}
-
 export function main(argv) {
   const args = parseArgs(argv);
   switch (args.command) {
@@ -392,10 +340,6 @@ export function main(argv) {
       return commandUnshare(args);
     case 'allow-root':
       return commandAllowRoot(args);
-    case 'templates':
-      return listTemplates(args);
-    case 'create':
-      return createPage(args);
     case undefined:
     case '--help':
     case 'help':

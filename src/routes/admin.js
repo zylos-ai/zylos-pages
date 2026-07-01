@@ -1,5 +1,7 @@
 import { browserBaseFromRequest } from '../lib/browser-base.js';
 
+const ASSET_VERSION = Date.now();
+
 export function adminRoute() {
   return (req, res) => {
     const baseUrl = browserBaseFromRequest(req);
@@ -11,8 +13,8 @@ export function adminRoute() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pages</title>
-  <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
-  <script src="${baseUrl}/_assets/theme.js"></script>
+  <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
+  <script src="${baseUrl}/_assets/theme.js?v=${ASSET_VERSION}"></script>
 </head>
 <body>
   <header class="page-header">
@@ -25,7 +27,7 @@ export function adminRoute() {
   <main class="admin-page">
     <div id="pages-admin-root" data-base-url="${baseUrl}"></div>
   </main>
-  <script type="module" src="${baseUrl}/_assets/admin.js"></script>
+  <script type="module" src="${baseUrl}/_assets/admin.js?v=${ASSET_VERSION}"></script>
 </body>
 </html>`);
   };
