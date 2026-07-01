@@ -26,7 +26,7 @@ function cookieHeader(setCookie) {
     .join('; ');
 }
 
-function makeServer({ auth = false, authConfig = null, sharingEnabled = true, shareViewer = false } = {}) {
+function makeServer({ auth = false, authConfig = null, sharingEnabled = true, legacyTokenAccess = true, shareViewer = false } = {}) {
   const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-share-content-'));
   fs.mkdirSync(path.join(contentDir, 'docs'), { recursive: true });
   fs.writeFileSync(path.join(contentDir, 'docs', 'page.html'), '<!doctype html><head><title>Shared page</title></head><h1>Shared page</h1>');
@@ -48,7 +48,7 @@ function makeServer({ auth = false, authConfig = null, sharingEnabled = true, sh
     setupAuth(app, authConfig || {
       enabled: true,
       password: hashPassword('secret'),
-    }, { enabled: sharingEnabled });
+    }, { enabled: sharingEnabled, legacyTokenAccess });
   }
   if (shareViewer) {
     app.use((_req, res, next) => {
@@ -400,6 +400,28 @@ test('auth middleware keeps short share cookies read-only', async () => {
       viewerType: 'share',
       shareCanWriteAttachments: false,
     });
+  } finally {
+    server.close();
+  }
+});
+
+test('legacy long share token bypass can be disabled while short links still work', async () => {
+  const { server, origin } = await makeServer({ auth: true, legacyTokenAccess: false });
+  try {
+    const share = createShare('docs/page', '24h', { allowPermanent: false });
+
+    let response = await fetch(`${origin}/docs/page?token=${encodeURIComponent(share.token)}`, {
+      redirect: 'manual',
+    });
+    assert.equal(response.status, 302);
+    assert.equal(
+      response.headers.get('location'),
+      `/login?next=${encodeURIComponent(`/docs/page?token=${encodeURIComponent(share.token)}`)}`
+    );
+
+    response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('set-cookie'), /__Host-share_access=/);
   } finally {
     server.close();
   }
