@@ -155,12 +155,15 @@ test('create share ignores deprecated attachment write requests', async () => {
     assert.equal(body.ok, true);
     assert.equal(body.canWriteAttachments, false);
 
-    const list = await fetch(`${origin}/api/shares/docs/page`);
+    const list = await fetch(`${origin}/api/shares/docs/page`, {
+      headers: { 'X-Forwarded-Proto': 'http' },
+    });
     assert.equal(list.status, 200);
     const listed = await list.json();
     const created = listed.shares.find(share => share.tokenId === body.tokenId);
     assert.ok(created);
     assert.equal(created.canWriteAttachments, false);
+    assert.equal(created.shortUrl, `${origin}/s/${created.tokenId}`);
   } finally {
     server.close();
   }

@@ -79,6 +79,15 @@ function absoluteUrl(req, path) {
   return `${proto}://${host}${path}`;
 }
 
+function formatShareResponse(req, share) {
+  const browserBase = browserBaseFromRequest(req);
+  const shortUrl = absoluteUrl(req, browserPath(browserBase, `s/${share.tokenId}`));
+  return {
+    ...share,
+    shortUrl,
+  };
+}
+
 function appendSetCookie(res, cookie) {
   const current = res.getHeader('Set-Cookie');
   if (!current) {
@@ -143,16 +152,15 @@ export function setupShareApi(app, sharingConfig, config = {}) {
 
       const result = createShare(slug, duration, sharingConfig, { canWriteAttachments });
 
-      const browserBase = browserBaseFromRequest(req);
-      const shortUrl = absoluteUrl(req, browserPath(browserBase, `s/${result.tokenId}`));
+      const share = formatShareResponse(req, result);
 
       res.json({
         ok: true,
-        tokenId: result.tokenId,
-        expiresAt: result.expiresAt,
-        canWriteAttachments: result.canWriteAttachments,
-        url: shortUrl,
-        shortUrl,
+        tokenId: share.tokenId,
+        expiresAt: share.expiresAt,
+        canWriteAttachments: share.canWriteAttachments,
+        url: share.shortUrl,
+        shortUrl: share.shortUrl,
       });
     } catch (err) {
       const status = err.statusCode || 500;
@@ -230,7 +238,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     }
 
     const rawSlug = req.params.slug || req.params[0] || '';
-    const shares = listSharesForSlug(rawSlug);
+    const shares = listSharesForSlug(rawSlug).map(share => formatShareResponse(req, share));
     res.json({ ok: true, shares });
   });
 
