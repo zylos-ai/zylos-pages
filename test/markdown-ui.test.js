@@ -62,6 +62,8 @@ test('viewer CSS protects narrow sticky header and styles code/callout UI', asyn
   assert.match(css, /\.breadcrumb-folder,\s*\.breadcrumb a,\s*\.breadcrumb \.sep\s*\{\s*display: none;/);
   assert.match(css, /\.header-actions\s*\{[\s\S]*?flex-shrink: 0;/);
   assert.match(css, /\.header-left\s*\{[\s\S]*?flex: 1;/);
+  assert.match(css, /\.header-actions \.copy-raw-btn,\s*\.header-actions \.theme-toggle,\s*\.header-actions \.logout-btn\s*\{[\s\S]*?width: var\(--control-height\);[\s\S]*?height: var\(--control-height\);[\s\S]*?border-color: transparent;[\s\S]*?background: transparent;/);
+  assert.match(css, /\.header-actions \.share-btn\s*\{[\s\S]*?width: var\(--control-height\);[\s\S]*?height: var\(--control-height\);/);
   assert.match(css, /\.markdown-body \.code-block-header/);
   assert.match(css, /\.markdown-body \.code-copy-btn\.is-copied/);
   assert.match(css, /\.markdown-body \.callout-info/);
