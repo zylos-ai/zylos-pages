@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { scanPages } from '../src/pages/navigation.js';
+import { adminRoute } from '../src/routes/admin.js';
 import { injectNavSidebar, injectShareViewer, pageTemplate } from '../src/templates/pageTemplate.js';
 import { buildPageTree } from '../src/utils/pageTree.js';
 
@@ -121,6 +122,30 @@ test('viewer chrome uses inline SVG icons and no emoji theme fallback', async ()
   assert.match(html, /<span class="theme-icon theme-icon-sun"><svg class="i"[^>]*stroke="currentColor"/);
   const legacyThemeIconPattern = new RegExp('\\u{1f319}|\\u{2600}\\u{fe0f}|theme-icon' + '::before', 'u');
   assert.doesNotMatch(css, legacyThemeIconPattern);
+});
+
+test('admin chrome uses inline SVG theme icons', () => {
+  let html = '';
+  const handler = adminRoute();
+  handler({
+    protocol: 'http',
+    headers: {},
+    get() {
+      return 'example.test';
+    },
+    originalUrl: '/',
+    baseUrl: '',
+  }, {
+    setHeader() {},
+    send(body) {
+      html = body;
+    },
+  });
+
+  assert.match(html, /<button class="theme-toggle icon-btn" aria-label="Toggle dark mode">/);
+  assert.match(html, /<span class="theme-icon theme-icon-moon"><svg class="i"[^>]*stroke="currentColor"/);
+  assert.match(html, /<span class="theme-icon theme-icon-sun"><svg class="i"[^>]*stroke="currentColor"/);
+  assert.doesNotMatch(html, /<span class="theme-icon"><\/span>/);
 });
 
 test('injectShareViewer marks share pages and exposes attachment edit flag', () => {
