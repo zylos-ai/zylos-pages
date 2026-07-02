@@ -33,7 +33,10 @@
   --color-accent-hover: #4f46e5;
   --color-accent-soft: #eef0fe;
   --color-accent-line: #e0e2fb;
-  --font-body: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", "PingFang SC", Helvetica, Arial, sans-serif;
+  /* System-first stack: each platform renders its native UI face (SF Pro +
+     PingFang on macOS, Segoe + YaHei on Windows) so mixed CJK/Latin runs share
+     the metrics the OS designed to pair. No webfont — zero load cost. */
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", Helvetica, Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --content-width: 800px;
   --toc-width: 220px;
@@ -444,6 +447,7 @@ body {
   background: var(--color-bg);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   transition: background 0.25s ease, color 0.25s ease;
 }
 
