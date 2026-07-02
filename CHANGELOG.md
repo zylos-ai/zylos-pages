@@ -1,12 +1,29 @@
 # Changelog
 
-## [Unreleased]
+## [0.7.0] - 2026-07-02
 
 ### Added
-- **Local DB agent CLI for Pages registration/sharing**: `src/cli/pages.js` now provides one agent-facing CLI for `register`, `list`, `share`, `shares`, `unshare`, and `allow-root add`, with JSON output and compatibility forwarding from `external-files.js`. Registration continues to use the shared `registerLogicalPage()` four-gate validation path, and `allow-root add` preserves existing config fields while extending `externalFiles.allowedSources`.
+- **Feishu-style document management console** (#95): the authenticated console's page-card grid is replaced by a folder tree + row list derived purely from `uri` path prefixes. Supports drag-to-move (native HTML5 DnD, changes the uri prefix), inline title rename (title only, decoupled from uri), and client-side New folder (materializes when a document is dropped in; empty folders are not persisted). The Register page button and dialog are removed — registration is CLI-only via `pages.js register`.
+- **Local DB agent CLI for Pages registration/sharing** (#77, #78): `src/cli/pages.js` provides one agent-facing CLI for `register`, `list`, `share`, `shares`, `unshare`, and `allow-root add`, with JSON output and compatibility forwarding from `external-files.js`. Registration uses the shared `registerLogicalPage()` four-gate validation path; the share URL base is configurable (`config.publicBaseUrl`).
+- **`PATCH /api/pages/:pageId`** (#95): admin-authenticated move (uri change, uniqueness-checked) and rename (title change) endpoint; the pages list API now returns `pageId`.
+- **Back to console** icon button on the authenticated doc viewer top bar (#94) — hidden on share pages and for unauthenticated visitors.
+- **Copy-link actions** for active shares in the console (#80) and in the page share dialog (#88).
+- **Viewer markdown upgrades** (#92): fenced code blocks get a header bar with language label + copy button; four-tone callouts (`> [!NOTE]`-style info / tip / warn / ok) with Lucide SVG icons.
 
 ### Changed
-- **Pages console registration is tucked behind a top-bar action**: the authenticated console now presents the page list/search as the primary view, removes Admin branding, and opens the path-based registration form only from the Register page button with private-by-default wording.
+- **BREAKING — stable `page_id` primary key** (#95): `logical_pages` is rebuilt around an internal `page_id` (uuid) primary key with `uri` demoted to a mutable unique column; `shares`/`share_sessions` are re-keyed from slug to `page_id`, so **share links survive page moves and renames**. A one-time idempotent startup migration backfills uuids; **legacy slug-keyed share rows are dropped** (not convertible) and the legacy `shares.json` import is removed. Source files on disk never move — move/rename only updates DB state.
+- **Viewer UI modernization** (#91, #92, #93): left navigation sidebar + top toolbar redesign on the doc viewer, sticky glass header with responsive narrow-screen (375px) convergence, and a unified 34×34 icon-button family across viewer and admin (theme / logout / copy actions).
+- **Console recolor** (#94): near-black pills and hover states (a `--color-code-bg` leak into UI surfaces) replaced with new `--color-status-bg` / `--color-hover-bg` tokens; the console now uses a single indigo accent.
+- **Sidebar navigation sources from the logical page registry** (#79) instead of scanning the filesystem.
+
+### Fixed
+- Owner direct views resolve shared assets (#76).
+- Share asset signature slug normalization — fixes share-image 403s from the `p/` prefix mismatch (#89).
+
+### Security
+- **Auth fails closed when no password is configured** (#82).
+- **Page serving and asset resolution are restricted to registered pages** (#83, #84).
+- **Legacy `?token=` share tokens deprecated and the bypass removed** (#86, #90); legacy pages routes cleaned up (#81).
 
 ## [0.6.0] - 2026-06-30
 
