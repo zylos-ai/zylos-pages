@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.2] - 2026-07-02
+
+### Changed
+- **Console UI refinements** (#99): console top bar now uses the same indigo mark + wordmark brand as the viewer sidebar, with a muted version caption read from `package.json` at startup; doc row titles drop to weight 500 (hierarchy via color depth) and folder names to 600 for cleaner CJK rendering; the admin container widens adaptively to `min(1200px, 100% - 48px)` while ≤600px keeps the prior full-width layout.
+- **Viewer sidebar version caption + system-first font stack** (#100): the viewer sidebar brand shows the same version caption, with the version read shared via `src/lib/app-version.js`; `--font-body` now leads with `system-ui` and adds a full CJK fallback chain (`PingFang SC` → `Hiragino Sans GB` → `Microsoft YaHei` → `Noto Sans SC`), dropping the machine-dependent `Inter` entry and fixing Windows CJK falling through to SimSun; adds `-moz-osx-font-smoothing: grayscale`.
+
 ## [0.7.1] - 2026-07-02
 
 ### Added
