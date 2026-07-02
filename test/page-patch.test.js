@@ -11,6 +11,7 @@ process.env.PAGES_DATA_DIR = tmpDir;
 const express = (await import('express')).default;
 const { setupPageApi } = await import('../src/routes/page-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
+const { getPagesDb } = await import('../src/db/pages-db.js');
 const { getLogicalPage, getLogicalPageById, registerLogicalPage } = await import('../src/pages/page-store.js');
 const { getActiveShare, listSharesForSlug } = await import('../src/sharing/share-manager.js');
 
@@ -58,6 +59,17 @@ function patchPage(origin, pageId, body) {
   });
 }
 
+function deletePage(origin, pageId, headers = {}) {
+  return fetch(`${origin}/api/pages/${pageId}`, {
+    method: 'DELETE',
+    headers: {
+      Origin: origin,
+      'X-Forwarded-Proto': 'http',
+      ...headers,
+    },
+  });
+}
+
 test('PATCH renames title without touching uri', async () => {
   const { server, origin, contentDir, config } = await makeServer();
   try {
@@ -102,6 +114,67 @@ test('PATCH returns 404 for unknown pageId', async () => {
     const response = await patchPage(origin, 'no-such-page-id', { title: 'X' });
     assert.equal(response.status, 404);
     assert.equal((await response.json()).error, 'Page not found');
+  } finally {
+    server.close();
+  }
+});
+
+test('DELETE unregisters a page, removes page-id keyed share rows, and keeps source file', async () => {
+  const { server, origin, contentDir, config } = await makeServer();
+  try {
+    const page = registerPage(config, contentDir, 'delete/me', 'Delete Me');
+    const sourcePath = getLogicalPageById(page.pageId).sourcePath;
+
+    const create = await fetch(`${origin}/api/share`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: origin,
+        'X-Forwarded-Proto': 'http',
+      },
+      body: JSON.stringify({ slug: 'p/delete/me', duration: '24h' }),
+    });
+    assert.equal(create.status, 200);
+    const share = await create.json();
+
+    const db = getPagesDb();
+    db.prepare(`
+      INSERT INTO share_sessions (token_hash, token_id, page_id, created_at, last_activity_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('api-delete-session', share.tokenId, page.pageId, Date.now(), Date.now(), Date.now() + 3600_000);
+
+    const response = await deletePage(origin, page.pageId);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.pageId, page.pageId);
+    assert.equal(body.uri, 'delete/me');
+    assert.equal(body.removedShares, 1);
+    assert.equal(body.removedSessions, 1);
+
+    assert.equal(getLogicalPage('delete/me'), null);
+    assert.equal(getLogicalPageById(page.pageId), null);
+    assert.equal(getActiveShare(share.tokenId), null);
+    assert.deepEqual(listSharesForSlug('delete/me'), []);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM shares WHERE page_id = ?').get(page.pageId).count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM share_sessions WHERE page_id = ?').get(page.pageId).count, 0);
+    assert.equal(fs.existsSync(sourcePath), true);
+  } finally {
+    server.close();
+  }
+});
+
+test('DELETE returns page_missing for unknown pageId and enforces CSRF', async () => {
+  const { server, origin, contentDir, config } = await makeServer();
+  try {
+    const missing = await deletePage(origin, 'missing-page-id');
+    assert.equal(missing.status, 404);
+    assert.deepEqual(await missing.json(), { error: 'Page not found', code: 'page_missing' });
+
+    const page = registerPage(config, contentDir, 'delete/csrf', 'CSRF');
+    const crossOrigin = await deletePage(origin, page.pageId, { Origin: 'https://evil.example' });
+    assert.equal(crossOrigin.status, 403);
+    assert.equal(getLogicalPageById(page.pageId).uri, 'delete/csrf');
   } finally {
     server.close();
   }

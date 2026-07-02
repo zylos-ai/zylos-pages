@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.1] - 2026-07-02
+
+### Added
+- **Logical page unregister** (#97): `src/cli/pages.js unregister <uri> [--json]` removes the logical page registration and returns `page_missing` for absent pages.
+- **`DELETE /api/pages/:pageId`** (#97): owner-authenticated endpoint reuses the same unregister service path for admin deletion.
+
+### Changed
+- Unregister/delete removes `share_sessions` and `shares` rows directly by stable `page_id` in the same transaction as the `logical_pages` delete, leaving the source file on disk untouched.
+
 ## [0.7.0] - 2026-07-02
 
 ### Added

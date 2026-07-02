@@ -237,6 +237,54 @@ export function getLogicalPageById(pageId) {
   return mapPageRecord(db.prepare('SELECT * FROM logical_pages WHERE page_id = ?').get(pageId));
 }
 
+function tableExists(name) {
+  return Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?").get(name));
+}
+
+function unregisterLogicalPageRecord(page) {
+  if (!page) {
+    throw Object.assign(new Error('Page not found'), { statusCode: 404, code: 'page_missing' });
+  }
+  initPageStore();
+  const remove = db.transaction(() => {
+    const removedSessions = tableExists('share_sessions')
+      ? db.prepare('DELETE FROM share_sessions WHERE page_id = ?').run(page.pageId).changes
+      : 0;
+    const removedShares = tableExists('shares')
+      ? db.prepare('DELETE FROM shares WHERE page_id = ?').run(page.pageId).changes
+      : 0;
+    const removedPages = db.prepare('DELETE FROM logical_pages WHERE page_id = ?').run(page.pageId).changes;
+    return { removedSessions, removedShares, removedPages };
+  });
+  const result = remove();
+  if (result.removedPages === 0) {
+    throw Object.assign(new Error('Page not found'), { statusCode: 404, code: 'page_missing' });
+  }
+  logger.info('logical page unregistered', {
+    pageId: page.pageId,
+    uri: page.uri,
+    removedShares: result.removedShares,
+    removedSessions: result.removedSessions,
+  });
+  return {
+    page,
+    removedShares: result.removedShares,
+    removedSessions: result.removedSessions,
+  };
+}
+
+export function unregisterLogicalPage(uri) {
+  initPageStore();
+  const normalizedUri = normalizeSlug(uri);
+  const page = getLogicalPage(normalizedUri);
+  return unregisterLogicalPageRecord(page);
+}
+
+export function unregisterLogicalPageById(pageId) {
+  initPageStore();
+  return unregisterLogicalPageRecord(getLogicalPageById(pageId));
+}
+
 function validatedUpdateUri(rawUri) {
   let normalized;
   try {

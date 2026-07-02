@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.7.0
+version: 0.7.1
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
@@ -62,6 +62,10 @@ node $PAGES_DIR/src/cli/pages.js list
 node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
 node $PAGES_DIR/src/cli/pages.js shares reports/q3
 node $PAGES_DIR/src/cli/pages.js unshare reports/q3
+
+# Remove a logical page registration and page-id keyed share/session rows.
+# The source file on disk is left untouched.
+node $PAGES_DIR/src/cli/pages.js unregister reports/q3
 
 # Add a local directory to the allowed source roots.
 node $PAGES_DIR/src/cli/pages.js allow-root add /absolute/reports --name reports
