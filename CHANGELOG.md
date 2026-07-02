@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.3] - 2026-07-02
+
+### Fixed
+- **Login session takes precedence over share-access cookies** (#102): the auth middleware now checks the login session before the share-access cookie bypass, so an authenticated user always gets the authenticated (shell) view on `/p/<uri>` even when the browser still carries a `__Host-share_access` cookie from a previously opened share link. Previously the share bypass ran first and misclassified logged-in owners as share visitors, serving the shell-less raw view. The share-access cookie remains the unauthenticated fallback and deliberately keeps matching `/p/` logical routes — share views carry `<base href=".../p/<uri>">`, so anchor/TOC navigation from a share depends on it.
+
 ## [0.7.2] - 2026-07-02
 
 ### Changed
