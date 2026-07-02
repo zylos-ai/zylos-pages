@@ -596,7 +596,27 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       return rejectAuthMisconfigured(req, res);
     }
 
-    // Share access session bypass for pages and raw HTML artifacts.
+    // Login session takes precedence over share-access cookies: an
+    // authenticated user always gets the authenticated (shell) view, even if
+    // the browser still carries a share-access cookie from a previously
+    // opened share link (#102).
+    if (validateSession(getSessionCookie(req))) {
+      res.locals.authenticated = true;
+      const origSetHeader = res.setHeader.bind(res);
+      res.setHeader = function(name, value) {
+        if (name.toLowerCase() === 'cache-control' && res.locals.authenticated) {
+          return origSetHeader('Cache-Control', 'no-store');
+        }
+        return origSetHeader(name, value);
+      };
+      res.setHeader('Cache-Control', 'no-store');
+      return next();
+    }
+
+    // Share access session bypass for pages and raw HTML artifacts —
+    // unauthenticated fallback only. Must keep matching /p/<uri>: share views
+    // carry <base href=".../p/<uri>">, so anchor/TOC navigation from a share
+    // lands on the logical route and relies on this bypass.
     if ((req.method === 'GET' || req.method === 'HEAD')
         && !req.path.startsWith('/api/')
         && !isAssetPath(req.path)
@@ -619,19 +639,6 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
         acceptShareViewer(res, result);
         return next();
       }
-    }
-
-    if (validateSession(getSessionCookie(req))) {
-      res.locals.authenticated = true;
-      const origSetHeader = res.setHeader.bind(res);
-      res.setHeader = function(name, value) {
-        if (name.toLowerCase() === 'cache-control' && res.locals.authenticated) {
-          return origSetHeader('Cache-Control', 'no-store');
-        }
-        return origSetHeader(name, value);
-      };
-      res.setHeader('Cache-Control', 'no-store');
-      return next();
     }
 
     if (isAssetPath(req.path)) {
