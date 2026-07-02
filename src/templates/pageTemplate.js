@@ -1,5 +1,6 @@
 // HTML page template with SEO meta, TOC, theme support, and sharing
 
+import { APP_VERSION } from '../lib/app-version.js';
 import { escapeHtml } from '../security/sanitize.js';
 import { buildPageTree } from '../utils/pageTree.js';
 import { icon, themeToggleIcons } from './icons.js';
@@ -238,7 +239,7 @@ export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
 function renderNavSidebar(pages, currentSlug, baseUrl) {
   const pageTree = buildPageTree(pages);
   let html = `<aside class="nav-sidebar auth-only"><nav class="page-nav">
-    <div class="nav-brand"><span class="nav-brand-mark">${icon('document')}</span><b>Pages</b></div>
+    <div class="nav-brand"><span class="nav-brand-mark">${icon('document')}</span><b>Pages</b>${APP_VERSION ? `<span class="header-version">v${APP_VERSION}</span>` : ''}</div>
     <h4>Workspace</h4><ul class="page-nav-list">`;
   for (const page of pageTree.topLevel) {
     html += renderNavPageItem(page, currentSlug, baseUrl);
