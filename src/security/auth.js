@@ -212,8 +212,8 @@ function clearShareAccessCookie(res) {
   appendSetCookie(res, clearShareAccessCookieHeader());
 }
 
-function setShareAccessCookie(res, slug, tokenId, tokenExpiresAt) {
-  const cookie = createShareAccessCookie(slug, tokenId, tokenExpiresAt);
+function setShareAccessCookie(res, pageId, tokenId, tokenExpiresAt) {
+  const cookie = createShareAccessCookie(pageId, tokenId, tokenExpiresAt);
   appendSetCookie(res, cookie.header);
 }
 
@@ -224,7 +224,7 @@ function acceptShareViewer(res, result, options = {}) {
   res.locals.shareCanWriteAttachments = result.canWriteAttachments === true;
   res.locals.shareContext = result;
   if (options.refreshAccessCookie) {
-    setShareAccessCookie(res, result.slug, result.tokenId, result.expiresAt);
+    setShareAccessCookie(res, result.pageId, result.tokenId, result.expiresAt);
   }
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');

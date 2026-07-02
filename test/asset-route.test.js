@@ -364,14 +364,14 @@ test('share page access renders in place and signs referenced assets', async () 
     await writeFile(path.join(contentDir, 'docs', 'nested.jpg'), 'nested image');
     registerPage(config, 'renovation-checklist', pagePath, 'Renovation checklist');
     const share = createShare('renovation-checklist', '24h', { allowPermanent: false });
-    const assetToken = createShare('direct-token.jpg', '24h', { allowPermanent: false }).token;
+    assert.throws(() => createShare('direct-token.jpg', '24h', { allowPermanent: false }), /Page not found/);
 
     await withServer(config, async ({ origin }) => {
       const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
       assert.equal(redirect.status, 200);
       assert.equal(redirect.headers.get('location'), null);
       const body = await redirect.text();
-      assert.match(body, /<base href="\/renovation-checklist">/);
+      assert.match(body, /<base href="\/p\/renovation-checklist">/);
       const setCookie = redirect.headers.get('set-cookie');
       assert.match(setCookie, /__Host-share_access=/);
       assert.doesNotMatch(setCookie, /__Host-share_scope=/);
@@ -390,7 +390,7 @@ test('share page access renders in place and signs referenced assets', async () 
       res = await fetch(`${origin}/kitchen-ref.jpg?token=${encodeURIComponent(share.token)}`, { redirect: 'manual' });
       expectAssetDenied(res);
 
-      res = await fetch(`${origin}/direct-token.jpg?token=${encodeURIComponent(assetToken)}`, { redirect: 'manual' });
+      res = await fetch(`${origin}/direct-token.jpg?token=${encodeURIComponent(share.token)}`, { redirect: 'manual' });
       expectAssetDenied(res);
 
       res = await fetch(`${origin}/docs/nested.jpg`, {

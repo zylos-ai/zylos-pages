@@ -1,15 +1,14 @@
-// DB-backed share manager. Short links are the primary access model; legacy
-// long HMAC tokens are verified only for backwards compatibility.
+// DB-backed share manager. Shares are keyed by page_id so links survive page
+// moves and renames; callers pass uris (slugs) which are resolved at this
+// boundary. Short links are the primary access model; long HMAC tokens are
+// verified only for backwards compatibility.
 
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import { getPagesDb } from '../db/pages-db.js';
-import { DATA_DIR } from '../lib/config.js';
+import { getLogicalPage, getLogicalPageById } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
-const SHARES_PATH = path.join(DATA_DIR, 'shares.json');
 const SECRET_BYTES = 32;
 const TOKEN_ID_BYTES = 16;
 const SHARE_ACCESS_BYTES = 32;
@@ -34,8 +33,8 @@ let _setMeta;
 let _insertShare;
 let _getShare;
 let _revokeShare;
-let _revokeAllForSlug;
-let _listSharesForSlug;
+let _revokeAllForPage;
+let _listSharesForPage;
 let _deleteExpiredShares;
 let _insertShareSession;
 let _getShareSession;
@@ -56,9 +55,22 @@ function isTokenId(value) {
   return /^[a-f0-9]{32}$/.test(value || '');
 }
 
+// Legacy slug-keyed share rows are not convertible to page_id keys — drop them.
+function dropSlugKeyedShareTables() {
+  const hasSlugColumn = (table) =>
+    db.prepare(`PRAGMA table_info(${table})`).all().some(column => column.name === 'slug');
+  const drops = [];
+  if (hasSlugColumn('share_sessions')) drops.push('DROP TABLE share_sessions');
+  if (hasSlugColumn('shares')) drops.push('DROP TABLE IF EXISTS share_sessions', 'DROP TABLE shares');
+  if (drops.length === 0) return;
+  db.exec([...new Set(drops)].join('; '));
+  logger.info('legacy slug-keyed share tables dropped');
+}
+
 function initShareStore() {
   if (initialized) return;
   db = getPagesDb();
+  dropSlugKeyedShareTables();
   db.exec(`
     CREATE TABLE IF NOT EXISTS share_meta (
       key TEXT PRIMARY KEY,
@@ -66,18 +78,18 @@ function initShareStore() {
     );
     CREATE TABLE IF NOT EXISTS shares (
       token_id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL,
+      page_id TEXT NOT NULL,
       expires_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL,
       can_write_attachments INTEGER NOT NULL DEFAULT 0,
       revoked INTEGER NOT NULL DEFAULT 0,
       revoked_at INTEGER
     );
-    CREATE INDEX IF NOT EXISTS idx_shares_slug_created ON shares(slug, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_shares_page_created ON shares(page_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS share_sessions (
       token_hash TEXT PRIMARY KEY,
       token_id TEXT NOT NULL,
-      slug TEXT NOT NULL,
+      page_id TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       last_activity_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
@@ -85,26 +97,25 @@ function initShareStore() {
     );
     CREATE INDEX IF NOT EXISTS idx_share_sessions_token_id ON share_sessions(token_id);
   `);
-  ensureSharePermissionColumn();
 
   _getMeta = db.prepare('SELECT value FROM share_meta WHERE key = ?');
   _setMeta = db.prepare('INSERT OR REPLACE INTO share_meta (key, value) VALUES (?, ?)');
   _insertShare = db.prepare(`
-    INSERT OR IGNORE INTO shares (token_id, slug, expires_at, created_at, can_write_attachments, revoked, revoked_at)
-    VALUES (@tokenId, @slug, @expiresAt, @createdAt, @canWriteAttachments, @revoked, @revokedAt)
+    INSERT OR IGNORE INTO shares (token_id, page_id, expires_at, created_at, can_write_attachments, revoked, revoked_at)
+    VALUES (@tokenId, @pageId, @expiresAt, @createdAt, @canWriteAttachments, @revoked, @revokedAt)
   `);
   _getShare = db.prepare('SELECT * FROM shares WHERE token_id = ?');
   _revokeShare = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE token_id = ? AND revoked = 0');
-  _revokeAllForSlug = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE slug = ? AND revoked = 0');
-  _listSharesForSlug = db.prepare(`
+  _revokeAllForPage = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE page_id = ? AND revoked = 0');
+  _listSharesForPage = db.prepare(`
     SELECT token_id, expires_at, created_at, can_write_attachments
     FROM shares
-    WHERE slug = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)
+    WHERE page_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
   `);
   _deleteExpiredShares = db.prepare('DELETE FROM shares WHERE expires_at != 0 AND expires_at <= ?');
   _insertShareSession = db.prepare(`
-    INSERT OR REPLACE INTO share_sessions (token_hash, token_id, slug, created_at, last_activity_at, expires_at)
+    INSERT OR REPLACE INTO share_sessions (token_hash, token_id, page_id, created_at, last_activity_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `);
   _getShareSession = db.prepare(`
@@ -125,63 +136,10 @@ function initShareStore() {
       AND (expires_at = 0 OR expires_at > ?)
   `);
 
-  importLegacySharesJson();
-  initialized = true;
-}
-
-function ensureSharePermissionColumn() {
-  const columns = db.prepare('PRAGMA table_info(shares)').all().map(column => column.name);
-  if (!columns.includes('can_write_attachments')) {
-    db.exec('ALTER TABLE shares ADD COLUMN can_write_attachments INTEGER NOT NULL DEFAULT 0');
-  }
-}
-
-function readLegacyState() {
-  try {
-    if (!fs.existsSync(SHARES_PATH)) return null;
-    const raw = fs.readFileSync(SHARES_PATH, 'utf-8');
-    const state = JSON.parse(raw);
-    if (!state || typeof state !== 'object' || !state.secret || !state.shares) return null;
-    return state;
-  } catch (err) {
-    logger.warn('legacy shares.json unreadable, skipping import', { err: err.message });
-    return null;
-  }
-}
-
-function importLegacySharesJson() {
-  const imported = _getMeta.get('legacy_shares_json_imported')?.value;
-  const legacy = readLegacyState();
-
   if (!_getMeta.get('secret')?.value) {
-    const secret = legacy?.secret || crypto.randomBytes(SECRET_BYTES).toString('hex');
-    _setMeta.run('secret', secret);
+    _setMeta.run('secret', crypto.randomBytes(SECRET_BYTES).toString('hex'));
   }
-
-  if (imported || !legacy) return;
-
-  const insertMany = db.transaction((shares) => {
-    for (const [tokenId, record] of Object.entries(shares)) {
-      if (!isTokenId(tokenId) || !record || typeof record !== 'object') continue;
-      try {
-        _insertShare.run({
-          tokenId,
-          slug: normalizeSlug(record.slug),
-          expiresAt: Number(record.expiresAt) || 0,
-          createdAt: Number(record.createdAt) || nowMs(),
-          canWriteAttachments: 0,
-          revoked: record.revoked ? 1 : 0,
-          revokedAt: record.revokedAt ? Number(record.revokedAt) : null,
-        });
-      } catch (err) {
-        logger.warn('legacy share skipped during import', { tokenId, err: err.message });
-      }
-    }
-    _setMeta.run('legacy_shares_json_imported', String(nowMs()));
-  });
-
-  insertMany(legacy.shares);
-  logger.info('legacy shares.json imported into DB', { count: Object.keys(legacy.shares).length });
+  initialized = true;
 }
 
 function getSecret() {
@@ -194,30 +152,41 @@ function getSecret() {
   return secret;
 }
 
+function pageUriFromSlug(slug) {
+  const normalized = normalizeSlug(slug);
+  return normalized.startsWith('p/') ? normalized.slice(2) : normalized;
+}
+
+// Resolve a share row to its page's current uri. Shares whose page row is gone
+// resolve to null (the share 404s).
 function activeShareRecord(tokenId) {
   if (!isTokenId(tokenId)) return null;
   initShareStore();
   const record = _getShare.get(tokenId);
   if (!record || record.revoked) return null;
   if (record.expires_at !== 0 && nowMs() > record.expires_at) return null;
+  const page = getLogicalPageById(record.page_id);
+  if (!page) return null;
   return {
     tokenId: record.token_id,
-    slug: record.slug,
+    pageId: record.page_id,
+    uri: page.uri,
+    slug: `p/${page.uri}`,
     expiresAt: record.expires_at,
     createdAt: record.created_at,
     canWriteAttachments: record.can_write_attachments === 1,
   };
 }
 
-function computeHmac(slug, expiresAt, tokenId, secret) {
-  const payload = `${slug}:${expiresAt}:${tokenId}`;
+function computeHmac(pageId, expiresAt, tokenId, secret) {
+  const payload = `${pageId}:${expiresAt}:${tokenId}`;
   return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
     .update(payload)
     .digest();
 }
 
-function encodeToken(slug, expiresAt, tokenId, hmac) {
-  const raw = `${slug}:${expiresAt}:${tokenId}:${hmac.toString('hex')}`;
+function encodeToken(pageId, expiresAt, tokenId, hmac) {
+  const raw = `${pageId}:${expiresAt}:${tokenId}:${hmac.toString('hex')}`;
   return Buffer.from(raw).toString('base64url');
 }
 
@@ -229,17 +198,17 @@ function decodeToken(token) {
     const hmacHex = parts.pop();
     const tokenId = parts.pop();
     const expiresAt = parts.pop();
-    const slug = parts.join(':');
-    if (!slug || !expiresAt || !tokenId || !hmacHex) return null;
-    return { slug, expiresAt: Number(expiresAt), tokenId, hmac: Buffer.from(hmacHex, 'hex') };
+    const pageId = parts.join(':');
+    if (!pageId || !expiresAt || !tokenId || !hmacHex) return null;
+    return { pageId, expiresAt: Number(expiresAt), tokenId, hmac: Buffer.from(hmacHex, 'hex') };
   } catch {
     return null;
   }
 }
 
 function legacyTokenFor(record) {
-  const hmac = computeHmac(record.slug, record.expiresAt, record.tokenId, getSecret());
-  return encodeToken(record.slug, record.expiresAt, record.tokenId, hmac);
+  const hmac = computeHmac(record.pageId, record.expiresAt, record.tokenId, getSecret());
+  return encodeToken(record.pageId, record.expiresAt, record.tokenId, hmac);
 }
 
 function directoryScope(slug) {
@@ -260,11 +229,6 @@ function computeShareAssetHmac(uri, realPath, expiresAt, tokenId, secret) {
     .digest('hex');
 }
 
-function normalizeShareAssetSlug(slug) {
-  const normalized = normalizeSlug(slug);
-  return normalized.startsWith('p/') ? normalized.slice(2) : normalized;
-}
-
 function isAssetWithinScope(assetPath, directory) {
   const normalizedAsset = normalizeSlug(assetPath);
   const assetDir = directoryScope(normalizedAsset);
@@ -280,7 +244,11 @@ function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
 
 export function createShare(slug, duration, sharingConfig = {}, options = {}) {
   initShareStore();
-  const normalizedSlug = normalizeSlug(slug);
+  const uri = pageUriFromSlug(slug);
+  const page = getLogicalPage(uri);
+  if (!page) {
+    throw Object.assign(new Error('Page not found'), { statusCode: 404 });
+  }
   const canWriteAttachments = false;
 
   if (duration === 'permanent' && !sharingConfig.allowPermanent) {
@@ -295,11 +263,11 @@ export function createShare(slug, duration, sharingConfig = {}, options = {}) {
   const tokenId = crypto.randomBytes(TOKEN_ID_BYTES).toString('hex');
   const createdAt = nowMs();
   const expiresAt = durationMs === 0 ? 0 : createdAt + durationMs;
-  const record = { tokenId, slug: normalizedSlug, expiresAt, createdAt, canWriteAttachments };
+  const record = { tokenId, pageId: page.pageId, expiresAt, createdAt, canWriteAttachments };
 
   _insertShare.run({
     tokenId,
-    slug: normalizedSlug,
+    pageId: page.pageId,
     expiresAt,
     createdAt,
     canWriteAttachments: canWriteAttachments ? 1 : 0,
@@ -307,8 +275,8 @@ export function createShare(slug, duration, sharingConfig = {}, options = {}) {
     revokedAt: null,
   });
 
-  logger.info('share created', { slug: normalizedSlug, tokenId, duration, expiresAt, canWriteAttachments });
-  return { token: legacyTokenFor(record), tokenId, expiresAt, canWriteAttachments };
+  logger.info('share created', { pageId: page.pageId, uri: page.uri, tokenId, duration, expiresAt, canWriteAttachments });
+  return { token: legacyTokenFor(record), tokenId, pageId: page.pageId, expiresAt, canWriteAttachments };
 }
 
 export function getActiveShare(tokenId) {
@@ -321,13 +289,13 @@ export function getActiveShareToken(tokenId) {
   return { ...record, token: legacyTokenFor(record) };
 }
 
-export function createShareAccessCookie(slug, tokenId, tokenExpiresAt) {
+export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt) {
   initShareStore();
   const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SESSION_MAX_AGE_SECONDS);
   const token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
   const createdAt = nowMs();
   const expiresAt = createdAt + maxAge * 1000;
-  _insertShareSession.run(sha256(token), tokenId, normalizeSlug(slug), createdAt, createdAt, expiresAt);
+  _insertShareSession.run(sha256(token), tokenId, pageId, createdAt, createdAt, expiresAt);
   return {
     value: token,
     maxAge,
@@ -354,13 +322,18 @@ export function verifyShareAccessCookie(cookieValue, requestSlug) {
     return { valid: false };
   }
 
-  const normalizedRequest = normalizeSlug(requestSlug);
-  if (normalizeSlug(session.slug) !== normalizedRequest) return { valid: false };
+  // The session pins a page_id; access follows the page's *current* uri so
+  // share links keep working after a move or rename.
+  const page = getLogicalPageById(session.page_id);
+  if (!page) return { valid: false };
+  if (pageUriFromSlug(requestSlug) !== page.uri) return { valid: false };
 
   _touchShareSession.run(current, hash);
   return {
     valid: true,
-    slug: session.slug,
+    slug: `p/${page.uri}`,
+    uri: page.uri,
+    pageId: session.page_id,
     tokenId: session.token_id,
     expiresAt: session.share_expires_at,
     viewerType: 'share',
@@ -372,23 +345,23 @@ export function verifyShare(token, requestSlug) {
   const decoded = decodeToken(token);
   if (!decoded) return { valid: false };
 
-  const normalizedRequest = normalizeSlug(requestSlug);
-  const normalizedToken = normalizeSlug(decoded.slug);
-  if (normalizedToken !== normalizedRequest) return { valid: false };
   if (decoded.expiresAt !== 0 && nowMs() > decoded.expiresAt) return { valid: false };
   if (!isTokenId(decoded.tokenId)) return { valid: false };
 
-  const expected = computeHmac(normalizedToken, decoded.expiresAt, decoded.tokenId, getSecret());
+  const expected = computeHmac(decoded.pageId, decoded.expiresAt, decoded.tokenId, getSecret());
   if (expected.length !== decoded.hmac.length) return { valid: false };
   if (!crypto.timingSafeEqual(expected, decoded.hmac)) return { valid: false };
 
   const record = activeShareRecord(decoded.tokenId);
   if (!record) return { valid: false };
-  if (record.slug !== normalizedToken || record.expiresAt !== decoded.expiresAt) return { valid: false };
+  if (record.pageId !== decoded.pageId || record.expiresAt !== decoded.expiresAt) return { valid: false };
+  if (pageUriFromSlug(requestSlug) !== record.uri) return { valid: false };
 
   return {
     valid: true,
-    slug: normalizedToken,
+    slug: record.slug,
+    uri: record.uri,
+    pageId: record.pageId,
     tokenId: decoded.tokenId,
     expiresAt: decoded.expiresAt,
     viewerType: 'share',
@@ -475,7 +448,7 @@ export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, s
   if (!isTokenId(actualTokenId)) return { valid: false };
   if (nowMs() > exp) return { valid: false };
   const record = activeShareRecord(actualTokenId);
-  if (!record || normalizeShareAssetSlug(record.slug) !== normalizeShareAssetSlug(uri)) return { valid: false };
+  if (!record || record.uri !== pageUriFromSlug(uri)) return { valid: false };
   if (record.expiresAt !== 0 && exp > record.expiresAt) return { valid: false };
 
   const expected = computeShareAssetHmac(uri, realPath, exp, actualTokenId, getSecret());
@@ -493,17 +466,18 @@ export function revokeShare(tokenId) {
   if (!record) return false;
   const result = _revokeShare.run(nowMs(), tokenId);
   if (result.changes > 0) {
-    logger.info('share revoked', { tokenId, slug: record.slug });
+    logger.info('share revoked', { tokenId, pageId: record.page_id });
   }
   return result.changes > 0;
 }
 
 export function revokeAllForSlug(slug) {
   initShareStore();
-  const normalizedSlug = normalizeSlug(slug);
-  const result = _revokeAllForSlug.run(nowMs(), normalizedSlug);
+  const page = getLogicalPage(pageUriFromSlug(slug));
+  if (!page) return 0;
+  const result = _revokeAllForPage.run(nowMs(), page.pageId);
   if (result.changes > 0) {
-    logger.info('shares revoked for slug', { slug: normalizedSlug, count: result.changes });
+    logger.info('shares revoked for page', { pageId: page.pageId, uri: page.uri, count: result.changes });
   }
   return result.changes;
 }
@@ -527,8 +501,9 @@ export function updateShareAttachmentPermission(tokenId, canWriteAttachments) {
 
 export function listSharesForSlug(slug) {
   initShareStore();
-  const normalizedSlug = normalizeSlug(slug);
-  return _listSharesForSlug.all(normalizedSlug, nowMs()).map(record => ({
+  const page = getLogicalPage(pageUriFromSlug(slug));
+  if (!page) return [];
+  return _listSharesForPage.all(page.pageId, nowMs()).map(record => ({
     tokenId: record.token_id,
     expiresAt: record.expires_at,
     createdAt: record.created_at,

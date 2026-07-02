@@ -41,19 +41,45 @@ function formatRelativeTime(epochMs) {
   return `${Math.round(mon / 12)} yr ago`;
 }
 
+function lastSegment(uri) {
+  const index = uri.lastIndexOf('/');
+  return index === -1 ? uri : uri.slice(index + 1);
+}
+
+function parentPath(uri) {
+  const index = uri.lastIndexOf('/');
+  return index === -1 ? '' : uri.slice(0, index);
+}
+
+function normalizeFolderPath(raw) {
+  return String(raw || '')
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .split('/')
+    .map(part => part.trim().replace(/\s+/g, '-'))
+    .filter(part => part && part !== '.' && part !== '..')
+    .join('/');
+}
+
+// Lucide-style stroke icons — single set, currentColor, uniform stroke.
+const ICON_PATHS = {
+  search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></>,
+  link: <><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></>,
+  copy: <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>,
+  check: <path d="M20 6 9 17l-5-5" />,
+  eye: <><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></>,
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />,
+  folderPlus: <><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M12 11v4M10 13h4" /></>,
+  file: <><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" /><path d="M14 2v5h5" /></>,
+  chevron: <path d="m9 18 6-6-6-6" />,
+  pencil: <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />,
+  layers: <><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z" /><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65" /><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65" /></>,
+};
+
 function Icon({ name }) {
-  const paths = {
-    layers: 'M12 2 2 7l10 5 10-5-10-5Zm0 8L2 15l10 5 10-5-10-5Z',
-    search: 'M11 4a7 7 0 1 0 4.9 12l4.3 4.3 1.4-1.4-4.3-4.3A7 7 0 0 0 11 4Zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z',
-    link: 'M3.9 12a3.1 3.1 0 0 1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7A3.1 3.1 0 0 1 3.9 12Zm4.1 1h8v-2H8v2Zm9-6h-4v1.9h4a3.1 3.1 0 0 1 0 6.2h-4V17h4a5 5 0 0 0 0-10Z',
-    copy: 'M16 1H4a2 2 0 0 0-2 2v12h2V3h12V1Zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 16H8V7h11v14Z',
-    check: 'M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z',
-    eye: 'M12 5c-7 0-10 7-10 7s3 7 10 7 10-7 10-7-3-7-10-7Zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z',
-    plus: 'M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5Z',
-  };
   return (
-    <svg className="i" viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">
-      <path d={paths[name]} fill="currentColor" />
+    <svg className="i" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {ICON_PATHS[name]}
     </svg>
   );
 }
@@ -124,110 +150,259 @@ function ActiveSharesList({ shares, loading }) {
   );
 }
 
-function ShareControl({ uri, onShare, onError }) {
-  const [open, setOpen] = useState(false);
+function ShareDialog({ page, onClose, notify }) {
   const [duration, setDuration] = useState('7d');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
   const [activeShares, setActiveShares] = useState([]);
-  const [loadingShares, setLoadingShares] = useState(false);
+  const [loadingShares, setLoadingShares] = useState(true);
 
   const loadActiveShares = useCallback(async () => {
     setLoadingShares(true);
     try {
-      const data = await api(`/api/shares/${encodeSlugPath(`p/${uri}`)}`);
+      const data = await api(`/api/shares/${encodeSlugPath(`p/${page.uri}`)}`);
       setActiveShares(data.shares || []);
     } catch (err) {
-      onError(err);
+      notify('error', err.message);
     } finally {
       setLoadingShares(false);
     }
-  }, [onError, uri]);
+  }, [notify, page.uri]);
 
-  useEffect(() => {
-    if (!open && !result) return;
-    loadActiveShares();
-  }, [loadActiveShares, open, result]);
+  useEffect(() => { loadActiveShares(); }, [loadActiveShares]);
 
-  async function submit() {
+  async function createLink() {
     setBusy(true);
     try {
-      const share = await onShare(uri, duration);
+      const share = await api('/api/share', {
+        method: 'POST',
+        body: JSON.stringify({ slug: `p/${page.uri}`, duration }),
+      });
       setResult(share);
+      notify('success', 'Share link created.');
+      await loadActiveShares();
+    } catch (err) {
+      notify('error', err.message);
     } finally {
       setBusy(false);
     }
   }
 
-  if (result) {
-    return (
-      <div className="share-result">
-        <div className="share-result-url">
-          <Icon name="link" />
-          <a href={result.shortUrl} target="_blank" rel="noreferrer">{result.shortUrl}</a>
-        </div>
-        <div className="share-result-actions">
-          <CopyButton text={result.shortUrl} />
-          <span className="share-result-meta">
-            {result.expiresAt ? `Expires ${new Date(Number(result.expiresAt)).toLocaleString()}` : 'Never expires'}
-          </span>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setResult(null); setOpen(false); }}>Done</button>
-        </div>
-        <ActiveSharesList shares={activeShares} loading={loadingShares} />
-      </div>
-    );
-  }
-
-  if (!open) {
-    return (
-      <button type="button" className="btn btn-sm btn-secondary" onClick={() => setOpen(true)}>
-        <Icon name="link" /> Share
-      </button>
-    );
-  }
-
   return (
-    <div className="share-control">
-      <label className="share-control-label">
-        Expires
-        <select value={duration} onChange={e => setDuration(e.target.value)} disabled={busy}>
-          {SHARE_DURATIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-        </select>
-      </label>
-      <button type="button" className="btn btn-sm btn-primary" onClick={submit} disabled={busy}>
-        {busy ? 'Creating…' : 'Create link'}
-      </button>
-      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpen(false)} disabled={busy}>Cancel</button>
-      <ActiveSharesList shares={activeShares} loading={loadingShares} />
+    <div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
+      <button type="button" className="admin-modal-backdrop" aria-label="Close share dialog" onClick={onClose} />
+      <section className="admin-modal-panel">
+        <div className="admin-modal-header">
+          <div>
+            <h2 id="share-dialog-title">Share “{page.title || page.uri}”</h2>
+            <p><code>{page.uri}</code></p>
+          </div>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={onClose}>Close</button>
+        </div>
+        {result ? (
+          <div className="share-result">
+            <div className="share-result-url">
+              <Icon name="link" />
+              <a href={result.shortUrl} target="_blank" rel="noreferrer">{result.shortUrl}</a>
+            </div>
+            <div className="share-result-actions">
+              <CopyButton text={result.shortUrl} />
+              <span className="share-result-meta">
+                {result.expiresAt ? `Expires ${new Date(Number(result.expiresAt)).toLocaleString()}` : 'Never expires'}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="share-control">
+            <label className="share-control-label">
+              Expires
+              <select value={duration} onChange={e => setDuration(e.target.value)} disabled={busy}>
+                {SHARE_DURATIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+              </select>
+            </label>
+            <button type="button" className="btn btn-sm btn-primary" onClick={createLink} disabled={busy}>
+              {busy ? 'Creating…' : 'Create link'}
+            </button>
+          </div>
+        )}
+        <ActiveSharesList shares={activeShares} loading={loadingShares} />
+      </section>
     </div>
   );
 }
 
-function PageCard({ page, onShare, onError }) {
+// The tree is derived purely from uri path prefixes. Folders have no backing
+// entity: client-created folders live only in memory until a doc lands in them.
+function buildTree(pages, clientFolders) {
+  const root = { path: '', name: '', folders: new Map(), docs: [] };
+  function ensureFolder(folderPath) {
+    let node = root;
+    if (!folderPath) return node;
+    let current = '';
+    for (const segment of folderPath.split('/')) {
+      current = current ? `${current}/${segment}` : segment;
+      if (!node.folders.has(segment)) {
+        node.folders.set(segment, { path: current, name: segment, folders: new Map(), docs: [] });
+      }
+      node = node.folders.get(segment);
+    }
+    return node;
+  }
+  for (const folderPath of clientFolders) ensureFolder(folderPath);
+  for (const page of pages) ensureFolder(parentPath(page.uri)).docs.push(page);
+
+  function finalize(node) {
+    const folders = Array.from(node.folders.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(finalize);
+    const docs = node.docs.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    return { path: node.path, name: node.name, folders, docs };
+  }
+  return finalize(root);
+}
+
+function countDocs(node) {
+  return node.docs.length + node.folders.reduce((total, folder) => total + countDocs(folder), 0);
+}
+
+function RenameInput({ page, onCommit, onCancel }) {
+  const [draft, setDraft] = useState(page.title || '');
+  const committed = useRef(false);
+  function commit() {
+    if (committed.current) return;
+    committed.current = true;
+    const next = draft.trim();
+    if (!next || next === page.title) {
+      onCancel();
+      return;
+    }
+    onCommit(next);
+  }
   return (
-    <article className="page-card">
-      <div className="page-card-body">
-        <div className="page-card-head">
-          <a className="page-card-title" href={page.url}>{page.title || page.uri}</a>
-          <span className={`badge badge-${page.accessMode === 'shared' ? 'shared' : 'private'}`}>
-            {page.accessMode === 'shared' ? 'Shared' : 'Private'}
-          </span>
-        </div>
-        <code className="page-card-uri">{page.uri}</code>
-        <div className="page-card-meta">
-          {page.sourceRootName ? <span className="badge badge-neutral">{page.sourceRootName}</span> : null}
-          {page.updatedAt ? <span className="page-card-time">Updated {formatRelativeTime(page.updatedAt)}</span> : null}
-        </div>
-      </div>
-      <div className="page-card-actions">
-        <a className="btn btn-sm btn-secondary" href={page.url}><Icon name="eye" /> View</a>
-        <ShareControl uri={page.uri} onShare={onShare} onError={onError} />
-      </div>
-    </article>
+    <input
+      className="tree-rename-input"
+      value={draft}
+      autoFocus
+      aria-label="Rename document"
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') {
+          committed.current = true;
+          onCancel();
+        }
+      }}
+    />
   );
 }
 
-const EMPTY_FORM = { uri: '', title: '', component: '', source_path: '' };
+function DocRow({ page, renaming, setRenaming, onRename, onShare, showFullUri = false, draggable = true }) {
+  const [dragging, setDragging] = useState(false);
+  return (
+    <div
+      className={`tree-row tree-doc${dragging ? ' is-dragging' : ''}`}
+      draggable={draggable && !renaming}
+      onDragStart={e => {
+        e.dataTransfer.setData('text/plain', page.pageId);
+        e.dataTransfer.effectAllowed = 'move';
+        setDragging(true);
+      }}
+      onDragEnd={() => setDragging(false)}
+    >
+      <span className="tree-row-icon"><Icon name="file" /></span>
+      <div className="tree-doc-main">
+        {renaming ? (
+          <RenameInput
+            page={page}
+            onCommit={title => onRename(page, title)}
+            onCancel={() => setRenaming(null)}
+          />
+        ) : (
+          <a className="tree-title" href={page.url}>{page.title || page.uri}</a>
+        )}
+        <code className="tree-uri">{showFullUri ? page.uri : lastSegment(page.uri)}</code>
+      </div>
+      <span className={`badge badge-${page.accessMode === 'shared' ? 'shared' : 'private'}`}>
+        {page.accessMode === 'shared' ? 'Shared' : 'Private'}
+      </span>
+      <div className="tree-meta">
+        {page.updatedAt ? <span className="tree-time">{formatRelativeTime(page.updatedAt)}</span> : null}
+      </div>
+      <div className="tree-actions">
+        <a className="icon-btn" href={page.url} title="View" aria-label={`View ${page.title || page.uri}`}><Icon name="eye" /></a>
+        <button type="button" className="icon-btn" title="Rename" aria-label={`Rename ${page.title || page.uri}`} onClick={() => setRenaming(page.pageId)}><Icon name="pencil" /></button>
+        <button type="button" className="icon-btn" title="Share" aria-label={`Share ${page.title || page.uri}`} onClick={() => onShare(page)}><Icon name="link" /></button>
+      </div>
+    </div>
+  );
+}
+
+function FolderNode({ node, collapsed, onToggle, onDropDoc, renaming, setRenaming, onRename, onShare }) {
+  const [dragOver, setDragOver] = useState(false);
+  const isOpen = !collapsed.has(node.path);
+  const total = countDocs(node);
+  return (
+    <div className="tree-group">
+      <div
+        className={`tree-row tree-folder${dragOver ? ' is-drop-target' : ''}`}
+        role="button"
+        tabIndex={0}
+        aria-expanded={isOpen}
+        onClick={() => onToggle(node.path)}
+        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(node.path); } }}
+        onDragOver={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragOver(false);
+          onDropDoc(e.dataTransfer.getData('text/plain'), node.path);
+        }}
+      >
+        <span className={`tree-caret${isOpen ? ' is-open' : ''}`}><Icon name="chevron" /></span>
+        <span className="tree-row-icon"><Icon name="folder" /></span>
+        <span className="tree-name">{node.name}</span>
+        <span className="tree-count">{total}</span>
+      </div>
+      {isOpen ? (
+        <div className="tree-children">
+          {node.folders.map(folder => (
+            <FolderNode
+              key={folder.path}
+              node={folder}
+              collapsed={collapsed}
+              onToggle={onToggle}
+              onDropDoc={onDropDoc}
+              renaming={renaming}
+              setRenaming={setRenaming}
+              onRename={onRename}
+              onShare={onShare}
+            />
+          ))}
+          {node.docs.map(page => (
+            <DocRow
+              key={page.pageId}
+              page={page}
+              renaming={renaming === page.pageId}
+              setRenaming={setRenaming}
+              onRename={onRename}
+              onShare={onShare}
+            />
+          ))}
+          {node.folders.length === 0 && node.docs.length === 0 ? (
+            <div className="tree-empty-folder">Empty folder — drop a document here to keep it.</div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function AdminApp() {
   const [pages, setPages] = useState([]);
@@ -235,9 +410,13 @@ function AdminApp() {
   const [searched, setSearched] = useState('');
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [registerOpen, setRegisterOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const [clientFolders, setClientFolders] = useState([]);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [renaming, setRenaming] = useState(null);
+  const [sharePage, setSharePage] = useState(null);
+  const [rootDragOver, setRootDragOver] = useState(false);
   const toastSeq = useRef(0);
 
   const notify = useCallback((kind, message) => {
@@ -260,47 +439,67 @@ function AdminApp() {
 
   useEffect(() => { loadPages(''); }, [loadPages]);
 
+  const tree = useMemo(() => buildTree(pages, clientFolders), [pages, clientFolders]);
+
   const countLabel = useMemo(() => {
     if (loading) return 'Loading…';
     const n = pages.length;
     if (searched) return `${n} match${n === 1 ? '' : 'es'} for “${searched}”`;
-    return `${n} registered page${n === 1 ? '' : 's'}`;
+    return `${n} document${n === 1 ? '' : 's'}`;
   }, [loading, pages.length, searched]);
 
-  async function registerPage(event) {
-    event.preventDefault();
-    setSubmitting(true);
+  const moveDoc = useCallback(async (pageId, folderPath) => {
+    const page = pages.find(entry => entry.pageId === pageId);
+    if (!page) return;
+    if (parentPath(page.uri) === folderPath) return;
+    const nextUri = folderPath ? `${folderPath}/${lastSegment(page.uri)}` : lastSegment(page.uri);
     try {
-      const res = await api('/api/pages', { method: 'POST', body: JSON.stringify(form) });
-      setForm(EMPTY_FORM);
-      setRegisterOpen(false);
-      setQuery('');
-      await loadPages('');
-      notify('success', `Registered “${res.page?.title || form.uri}”.`);
-    } catch (err) {
-      notify('error', err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const createShare = useCallback(async (uri, duration) => {
-    try {
-      const result = await api('/api/share', {
-        method: 'POST',
-        body: JSON.stringify({ slug: `p/${uri}`, duration }),
+      await api(`/api/pages/${encodeURIComponent(pageId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ uri: nextUri }),
       });
-      notify('success', 'Share link created.');
-      return result;
+      setClientFolders(current => current.filter(entry => entry !== folderPath));
+      await loadPages(searched);
+      notify('success', `Moved “${page.title || page.uri}” to ${folderPath || 'top level'}.`);
     } catch (err) {
       notify('error', err.message);
-      return null;
     }
-  }, [notify]);
+  }, [loadPages, notify, pages, searched]);
 
-  function updateField(event) {
-    const { name, value } = event.target;
-    setForm(current => ({ ...current, [name]: value }));
+  const renameDoc = useCallback(async (page, title) => {
+    setRenaming(null);
+    try {
+      await api(`/api/pages/${encodeURIComponent(page.pageId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title }),
+      });
+      await loadPages(searched);
+      notify('success', `Renamed to “${title}”.`);
+    } catch (err) {
+      notify('error', err.message);
+    }
+  }, [loadPages, notify, searched]);
+
+  const toggleFolder = useCallback((folderPath) => {
+    setCollapsed(current => {
+      const next = new Set(current);
+      if (next.has(folderPath)) next.delete(folderPath);
+      else next.add(folderPath);
+      return next;
+    });
+  }, []);
+
+  function createFolder(event) {
+    event.preventDefault();
+    const folderPath = normalizeFolderPath(newFolderName);
+    if (!folderPath) {
+      notify('error', 'Folder name must contain letters or digits.');
+      return;
+    }
+    setClientFolders(current => (current.includes(folderPath) ? current : [...current, folderPath]));
+    setNewFolderName('');
+    setNewFolderOpen(false);
+    notify('success', `Folder “${folderPath}” ready — drop a document in to keep it.`);
   }
 
   function onSearch(event) {
@@ -313,116 +512,139 @@ function AdminApp() {
     loadPages('');
   }
 
+  const treeIsEmpty = tree.folders.length === 0 && tree.docs.length === 0;
+
   return (
     <div className="admin-shell">
       <header className="admin-heading">
         <div>
           <h1>Pages</h1>
-          <p className="admin-subtitle">Registered pages and share links.</p>
+          <p className="admin-subtitle">Documents, folders, and share links.</p>
         </div>
         <div className="admin-heading-actions">
           <span className="admin-count">{countLabel}</span>
-          <button type="button" className="btn btn-primary" onClick={() => setRegisterOpen(true)}>
-            <Icon name="plus" /> Register page
+          <button type="button" className="btn btn-secondary" onClick={() => setNewFolderOpen(open => !open)}>
+            <Icon name="folderPlus" /> New folder
           </button>
         </div>
       </header>
 
       <Toast toast={toast} onDismiss={() => setToast(null)} />
 
-      {registerOpen ? (
-        <div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="register-page-title">
-          <button type="button" className="admin-modal-backdrop" aria-label="Close registration" onClick={() => setRegisterOpen(false)} />
-          <section className="admin-modal-panel">
-            <div className="admin-modal-header">
-              <div>
-                <h2 id="register-page-title">Register page</h2>
-                <p>Pages are private until shared.</p>
-              </div>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRegisterOpen(false)}>Close</button>
-            </div>
-          <form className="admin-form" onSubmit={registerPage}>
-            <label>
-              <span className="field-label">URI <em>required</em></span>
-              <input name="uri" required placeholder="recruit/q3-report" value={form.uri} onChange={updateField} />
-              <span className="field-hint">The logical path visitors will use, e.g. <code>/p/recruit/q3-report</code>.</span>
-            </label>
-            <label>
-              <span className="field-label">Title <em>required</em></span>
-              <input name="title" required placeholder="Q3 Recruiting Report" value={form.title} onChange={updateField} />
-              <span className="field-hint">Shown in the page list and search.</span>
-            </label>
-            <label>
-              <span className="field-label">Component <em>optional</em></span>
-              <input name="component" placeholder="recruit" value={form.component} onChange={updateField} />
-              <span className="field-hint">Which component owns this page.</span>
-            </label>
-            <label>
-              <span className="field-label">Source path <em>required</em></span>
-              <input name="source_path" required placeholder="/absolute/path/to/file.md" value={form.source_path} onChange={updateField} />
-              <span className="field-hint">Advanced path registration. Agent CLI is the normal registration path.</span>
-            </label>
-            <div className="private-default-row">
-              <span className="badge badge-private">Private by default</span>
-            </div>
-            <div className="admin-form-actions">
-              <button type="submit" className="btn btn-primary" disabled={submitting}>
-                {submitting ? 'Registering…' : 'Register page'}
-              </button>
-              <button type="button" className="btn btn-secondary" onClick={() => setRegisterOpen(false)} disabled={submitting}>Cancel</button>
-            </div>
-          </form>
-          </section>
-        </div>
+      {sharePage ? (
+        <ShareDialog page={sharePage} onClose={() => setSharePage(null)} notify={notify} />
       ) : null}
 
-        <section className="card">
-          <div className="card-header">
+      <section className="card">
+        <form className="admin-search" onSubmit={onSearch}>
+          <div className="search-input">
             <Icon name="search" />
-            <h2>Pages</h2>
+            <input
+              name="q"
+              placeholder="Search by title…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              aria-label="Search pages by title"
+            />
+            {query ? (
+              <button type="button" className="search-clear" aria-label="Clear search" onClick={clearSearch}>×</button>
+            ) : null}
           </div>
-          <form className="admin-search" onSubmit={onSearch}>
-            <div className="search-input">
-              <Icon name="search" />
-              <input
-                name="q"
-                placeholder="Search by title…"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                aria-label="Search pages by title"
-              />
-              {query ? (
-                <button type="button" className="search-clear" aria-label="Clear search" onClick={clearSearch}>×</button>
-              ) : null}
-            </div>
-            <button type="submit" className="btn btn-secondary">Search</button>
-          </form>
+          <button type="submit" className="btn btn-secondary">Search</button>
+        </form>
 
-          <div className="admin-list">
-            {loading ? (
-              <div className="admin-skeleton">
-                <div className="skeleton-row" /><div className="skeleton-row" /><div className="skeleton-row" />
-              </div>
-            ) : pages.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon"><Icon name="layers" /></div>
-                {searched ? (
-                  <>
-                    <p className="empty-title">No pages match “{searched}”.</p>
-                    <button type="button" className="btn btn-sm btn-ghost" onClick={clearSearch}>Clear search</button>
-                  </>
-                ) : (
-                  <>
-                    <p className="empty-title">No pages registered yet.</p>
-                    <p className="empty-hint">Use “Register a page” to add your first one — it’ll appear here.</p>
-                  </>
-                )}
-              </div>
-            ) : (
-              pages.map(page => <PageCard key={page.uri} page={page} onShare={createShare} onError={err => notify('error', err.message)} />)
-            )}
+        {newFolderOpen ? (
+          <form className="tree-new-folder" onSubmit={createFolder}>
+            <span className="tree-row-icon"><Icon name="folder" /></span>
+            <input
+              autoFocus
+              placeholder="folder or nested/folder"
+              value={newFolderName}
+              aria-label="New folder name"
+              onChange={e => setNewFolderName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Escape') setNewFolderOpen(false); }}
+            />
+            <button type="submit" className="btn btn-sm btn-primary">Create</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setNewFolderOpen(false)}>Cancel</button>
+          </form>
+        ) : null}
+
+        {loading ? (
+          <div className="admin-skeleton">
+            <div className="skeleton-row" /><div className="skeleton-row" /><div className="skeleton-row" />
           </div>
-        </section>
+        ) : searched ? (
+          pages.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon"><Icon name="layers" /></div>
+              <p className="empty-title">No pages match “{searched}”.</p>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={clearSearch}>Clear search</button>
+            </div>
+          ) : (
+            <div className="doc-tree">
+              {pages.map(page => (
+                <DocRow
+                  key={page.pageId}
+                  page={page}
+                  renaming={renaming === page.pageId}
+                  setRenaming={setRenaming}
+                  onRename={renameDoc}
+                  onShare={setSharePage}
+                  showFullUri
+                  draggable={false}
+                />
+              ))}
+            </div>
+          )
+        ) : treeIsEmpty ? (
+          <div className="empty-state">
+            <div className="empty-icon"><Icon name="layers" /></div>
+            <p className="empty-title">No pages registered yet.</p>
+            <p className="empty-hint">Register pages with the agent CLI — they’ll appear here.</p>
+          </div>
+        ) : (
+          <div
+            className={`doc-tree${rootDragOver ? ' is-drop-target' : ''}`}
+            onDragOver={e => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+              setRootDragOver(true);
+            }}
+            onDragLeave={e => {
+              if (e.target === e.currentTarget) setRootDragOver(false);
+            }}
+            onDrop={e => {
+              e.preventDefault();
+              setRootDragOver(false);
+              moveDoc(e.dataTransfer.getData('text/plain'), '');
+            }}
+          >
+            {tree.folders.map(folder => (
+              <FolderNode
+                key={folder.path}
+                node={folder}
+                collapsed={collapsed}
+                onToggle={toggleFolder}
+                onDropDoc={moveDoc}
+                renaming={renaming}
+                setRenaming={setRenaming}
+                onRename={renameDoc}
+                onShare={setSharePage}
+              />
+            ))}
+            {tree.docs.map(page => (
+              <DocRow
+                key={page.pageId}
+                page={page}
+                renaming={renaming === page.pageId}
+                setRenaming={setRenaming}
+                onRename={renameDoc}
+                onShare={setSharePage}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
