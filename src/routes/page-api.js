@@ -1,4 +1,4 @@
-import { registerLogicalPage, searchLogicalPages } from '../pages/page-store.js';
+import { registerLogicalPage, searchLogicalPages, updateLogicalPage } from '../pages/page-store.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { logger } from '../utils/logger.js';
 
@@ -85,6 +85,35 @@ export function setupPageApi(app, config) {
     } catch (err) {
       const status = err.statusCode || 500;
       logger.warn('page register failed', { status, err: err.message });
+      res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message, code: err.code });
+    }
+  });
+
+  // PATCH /api/pages/:pageId — move (uri) and/or rename (title). Share links
+  // stay valid because shares are keyed by page_id, not uri.
+  app.patch('/api/pages/:pageId', async (req, res) => {
+    if (!csrfCheck(req, res)) return;
+    if (!requireOwner(res)) return;
+
+    try {
+      const body = await parseJsonBody(req);
+      if (body.uri !== undefined && typeof body.uri !== 'string') {
+        return res.status(400).json({ error: 'uri must be a string' });
+      }
+      if (body.title !== undefined && typeof body.title !== 'string') {
+        return res.status(400).json({ error: 'title must be a string' });
+      }
+      const page = updateLogicalPage(req.params.pageId, { uri: body.uri, title: body.title });
+      res.json({
+        ok: true,
+        page: {
+          ...page,
+          url: browserPath(browserBaseFromRequest(req), `p/${page.uri}`),
+        },
+      });
+    } catch (err) {
+      const status = err.statusCode || 500;
+      logger.warn('page update failed', { pageId: req.params.pageId, status, err: err.message });
       res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message, code: err.code });
     }
   });

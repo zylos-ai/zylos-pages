@@ -125,7 +125,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     }
 
     const browserBase = browserBaseFromRequest(req);
-    const accessCookie = createShareAccessCookie(share.slug, share.tokenId, share.expiresAt);
+    const accessCookie = createShareAccessCookie(share.pageId, share.tokenId, share.expiresAt);
     appendSetCookie(res, accessCookie.header);
     res.setHeader('Cache-Control', 'no-store');
     try {

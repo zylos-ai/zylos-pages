@@ -24,9 +24,24 @@ const {
   setStateValue,
 } = await import('../src/state/state-store.js');
 
+const pagesDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-state-pages-'));
+
 test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
+  await rm(pagesDir, { recursive: true, force: true });
 });
+
+// Shares are keyed by page_id, so every shared artifact needs a registered page.
+async function registerStatePage(uri) {
+  const sourcePath = path.join(pagesDir, `${uri}.html`);
+  await writeFile(sourcePath, `<!doctype html><h1>${uri}</h1>`);
+  return registerLogicalPage({
+    uri,
+    title: uri,
+    sourcePath,
+    component: 'pages',
+  }, { externalFiles: { allowedSources: { pages: pagesDir } } });
+}
 
 async function withApp(app, fn) {
   const server = await new Promise((resolve) => {
@@ -111,7 +126,7 @@ async function createExpiredShareToken(slug) {
   const db = getPagesDb();
   const secret = db.prepare('SELECT value FROM share_meta WHERE key = ?').get('secret').value;
   db.prepare('UPDATE shares SET expires_at = ? WHERE token_id = ?').run(expiresAt, share.tokenId);
-  const payload = `${slug}:${expiresAt}:${share.tokenId}`;
+  const payload = `${share.pageId}:${expiresAt}:${share.tokenId}`;
   const hmac = crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
     .update(payload)
     .digest('hex');
@@ -272,6 +287,7 @@ test('state API CSRF checks mutating requests only', async () => {
 });
 
 test('state API rejects legacy share-token CRUD for the matching artifact', async () => {
+  await registerStatePage('shared-state');
   const token = createShare('shared-state', '24h', { allowPermanent: false }).token;
 
   await withServer(authConfig(), async ({ origin }) => {
@@ -304,7 +320,7 @@ test('state API allows short-share cookie CRUD for the matching artifact', async
     const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(redirect.status, 200);
     assert.equal(redirect.headers.get('location'), null);
-    assert.match(await redirect.text(), /<base href="\/short-state">/);
+    assert.match(await redirect.text(), /<base href="\/p\/short-state">/);
     const cookies = cookieHeader(redirect.headers.get('set-cookie'));
 
     let res = await fetch(`${origin}/api/state/short-state`, {
@@ -331,6 +347,7 @@ test('state API allows short-share cookie CRUD for the matching artifact', async
 });
 
 test('state API share-token scope mismatch falls through to auth wall', async () => {
+  await registerStatePage('scope-source');
   const token = createShare('scope-source', '24h', { allowPermanent: false }).token;
 
   await withServer(authConfig(), async ({ origin }) => {
@@ -350,6 +367,7 @@ test('state API share-token scope mismatch falls through to auth wall', async ()
 });
 
 test('state API rejects legacy share-token mutating requests before CSRF handling', async () => {
+  await registerStatePage('share-csrf');
   const token = createShare('share-csrf', '24h', { allowPermanent: false }).token;
 
   await withServer(authConfig(), async ({ origin }) => {
@@ -378,6 +396,8 @@ test('state API rejects legacy share-token mutating requests before CSRF handlin
 });
 
 test('state API invalid share tokens fall through to auth wall', async () => {
+  await registerStatePage('revoked-state');
+  await registerStatePage('expired-state');
   const revoked = createShare('revoked-state', '24h', { allowPermanent: false });
   revokeShare(revoked.tokenId);
   const expiredToken = await createExpiredShareToken('expired-state');
@@ -424,6 +444,7 @@ test('state API auth wall redirects unauthenticated and malformed-token API requ
 });
 
 test('legacy share tokens do not grant access to raw API or pages', async () => {
+  await registerStatePage('shared-page');
   const token = createShare('shared-page', '24h', { allowPermanent: false }).token;
   const app = express();
   setupAuth(app, authConfig());
