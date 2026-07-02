@@ -1,7 +1,20 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { browserBaseFromRequest } from '../lib/browser-base.js';
 import { icon, themeToggleIcons } from '../templates/icons.js';
 
 const ASSET_VERSION = Date.now();
+
+// Read the component version from package.json at startup — never hardcoded in markup.
+const APP_VERSION = (() => {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../package.json');
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '';
+  } catch {
+    return '';
+  }
+})();
 
 export function adminRoute() {
   return (req, res) => {
@@ -19,7 +32,9 @@ export function adminRoute() {
 </head>
 <body>
   <header class="page-header">
-    <nav class="breadcrumb"><a href="${baseUrl}/">Pages</a></nav>
+    <div class="header-left">
+      <a href="${baseUrl}/" class="nav-brand header-brand"><span class="nav-brand-mark">${icon('document')}</span><b>Pages</b></a>${APP_VERSION ? `<span class="header-version">v${APP_VERSION}</span>` : ''}
+    </div>
     <div class="header-actions">
       <button class="theme-toggle icon-btn" aria-label="Toggle dark mode">
         ${themeToggleIcons()}

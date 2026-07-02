@@ -48,9 +48,9 @@
 
 /* ===================== Admin console ===================== */
 .admin-page {
-  max-width: 960px;
+  max-width: min(1200px, 100% - 48px);
   margin: 0 auto;
-  padding: 32px 24px 64px;
+  padding: 32px 0 64px;
 }
 
 .admin-heading {
@@ -230,7 +230,7 @@
 }
 .tree-caret.is-open { transform: rotate(90deg); }
 .tree-name {
-  font-weight: 550;
+  font-weight: 600;
   font-size: 0.9rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -254,7 +254,9 @@
   min-width: 0;
 }
 .tree-title {
-  font-weight: 550;
+  /* CJK titles look muddy at heavy weights in small sizes — hierarchy comes
+     from color depth (title dark, uri/time muted), not thickness. */
+  font-weight: 500;
   font-size: 0.9rem;
   color: var(--color-text);
   text-decoration: none;
@@ -383,7 +385,7 @@
 .admin-toast-close:hover { opacity: 1; }
 
 @media (max-width: 600px) {
-  .admin-page { padding: 20px 16px 48px; }
+  .admin-page { max-width: 100%; padding: 20px 16px 48px; }
   .admin-heading-actions { justify-content: flex-start; width: 100%; }
   .admin-modal { padding: 12px; align-items: start; }
   .admin-modal-panel { max-height: calc(100vh - 24px); }
@@ -676,6 +678,21 @@ svg { display: block; }
 .nav-brand b {
   font-size: 15px;
   font-weight: 650;
+}
+
+/* Brand in the console top bar — same mark + wordmark as the viewer sidebar */
+.header-brand {
+  padding: 4px 0;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.header-version {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--color-text-faint);
+  margin-top: 3px; /* optically align with the wordmark baseline */
+  white-space: nowrap;
 }
 
 .page-nav h4 {
