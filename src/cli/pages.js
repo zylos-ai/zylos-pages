@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
-import { getLogicalPage, registerLogicalPage, searchLogicalPages } from '../pages/page-store.js';
+import { getLogicalPage, registerLogicalPage, searchLogicalPages, unregisterLogicalPage } from '../pages/page-store.js';
 import { createShare, listSharesForSlug, revokeAllForSlug } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
 
@@ -29,6 +29,7 @@ Usage:
   node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--json]
   node pages.js shares <uri> [--json]
   node pages.js unshare <uri> [--json]
+  node pages.js unregister <uri> [--json]
   node pages.js allow-root add <path> [--name <name>] [--json]
   node pages.js status [--json]
 
@@ -87,6 +88,7 @@ function humanize(result) {
     return result.shares.map(share => `${share.tokenId} ${share.expiresAt ? new Date(Number(share.expiresAt)).toISOString() : 'never'}`).join('\n') || 'no active shares';
   }
   if (result.command === 'unshare') return `revoked ${result.revoked} share(s) for ${result.uri}`;
+  if (result.command === 'unregister') return `unregistered ${result.uri}`;
   if (result.command === 'allow-root') return `allowed root ${result.name}: ${result.path}`;
   return JSON.stringify(result, null, 2);
 }
@@ -277,6 +279,27 @@ function commandUnshare(args) {
   output({ ok: true, command: 'unshare', uri, slug, revoked }, args.json);
 }
 
+function commandUnregister(args) {
+  const uri = normalizeUri(args._[0] || args.uri || args.slug);
+  try {
+    const result = unregisterLogicalPage(uri);
+    output({
+      ok: true,
+      command: 'unregister',
+      uri: result.page.uri,
+      pageId: result.page.pageId,
+      removedShares: result.removedShares,
+      removedSessions: result.removedSessions,
+      sourcePath: result.page.sourcePath,
+    }, args.json);
+  } catch (err) {
+    if (err?.code === 'page_missing') {
+      throw new CliError('page_missing', `logical page not found: ${uri}`);
+    }
+    throw err;
+  }
+}
+
 function commandAllowRoot(args) {
   const subcommand = args._[0];
   if (subcommand !== 'add') {
@@ -338,6 +361,8 @@ export function main(argv) {
       return commandShares(args);
     case 'unshare':
       return commandUnshare(args);
+    case 'unregister':
+      return commandUnregister(args);
     case 'allow-root':
       return commandAllowRoot(args);
     case undefined:

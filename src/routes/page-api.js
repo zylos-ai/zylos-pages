@@ -1,4 +1,9 @@
-import { registerLogicalPage, searchLogicalPages, updateLogicalPage } from '../pages/page-store.js';
+import {
+  registerLogicalPage,
+  searchLogicalPages,
+  unregisterLogicalPageById,
+  updateLogicalPage,
+} from '../pages/page-store.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { logger } from '../utils/logger.js';
 
@@ -117,5 +122,24 @@ export function setupPageApi(app, config) {
       res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message, code: err.code });
     }
   });
-}
 
+  app.delete('/api/pages/:pageId', (req, res) => {
+    if (!csrfCheck(req, res)) return;
+    if (!requireOwner(res)) return;
+
+    try {
+      const result = unregisterLogicalPageById(req.params.pageId);
+      res.json({
+        ok: true,
+        pageId: result.page.pageId,
+        uri: result.page.uri,
+        removedShares: result.removedShares,
+        removedSessions: result.removedSessions,
+      });
+    } catch (err) {
+      const status = err.statusCode || 500;
+      logger.warn('page unregister failed', { pageId: req.params.pageId, status, err: err.message });
+      res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message, code: err.code });
+    }
+  });
+}

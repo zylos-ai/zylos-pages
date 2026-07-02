@@ -14,6 +14,7 @@ process.env.PAGES_DATA_DIR = sharedDataDir;
 const { getPage } = await import('../src/services/pageService.js');
 const { getCachedPage, initCache, invalidatePagesForSlug, setCachedPage } = await import('../src/cache/pageCache.js');
 const { resolveLogicalAsset } = await import('../src/pages/asset-resolver.js');
+const { getPagesDb } = await import('../src/db/pages-db.js');
 
 function makeEnv(home, extra = {}) {
   return {
@@ -143,6 +144,46 @@ test('unified pages CLI registers, shares, lists shares, and unshares logical pa
 
   const after = runPagesCli(fixture, ['shares', 'recruit/share-target', '--json']);
   assert.deepEqual(after.shares, []);
+});
+
+test('pages CLI unregister removes registry and page-id keyed share rows but keeps source file', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'obsolete.md');
+  fs.writeFileSync(source, '# Obsolete\n');
+
+  runPagesCli(fixture, [
+    'register',
+    '--component', 'recruit',
+    '--uri', 'recruit/obsolete',
+    '--source', source,
+    '--json',
+  ]);
+  const share = runPagesCli(fixture, ['share', 'recruit/obsolete', '--duration', '24h', '--json']);
+  const db = getPagesDb();
+  const page = db.prepare('SELECT page_id FROM logical_pages WHERE uri = ?').get('recruit/obsolete');
+  assert.ok(page?.page_id);
+  db.prepare(`
+    INSERT INTO share_sessions (token_hash, token_id, page_id, created_at, last_activity_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run('dummy-hash', share.tokenId, page.page_id, Date.now(), Date.now(), Date.now() + 3600_000);
+
+  const unregistered = runPagesCli(fixture, ['unregister', 'recruit/obsolete', '--json']);
+  assert.equal(unregistered.ok, true);
+  assert.equal(unregistered.command, 'unregister');
+  assert.equal(unregistered.uri, 'recruit/obsolete');
+  assert.equal(unregistered.pageId, page.page_id);
+  assert.equal(unregistered.removedShares, 1);
+  assert.equal(unregistered.removedSessions, 1);
+  assert.equal(unregistered.sourcePath, fs.realpathSync(source));
+
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM logical_pages WHERE page_id = ?').get(page.page_id).count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM shares WHERE page_id = ?').get(page.page_id).count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM share_sessions WHERE page_id = ?').get(page.page_id).count, 0);
+  assert.equal(fs.existsSync(source), true);
+
+  const repeated = runPagesCli(fixture, ['unregister', 'recruit/obsolete', '--json'], { expectFailure: true });
+  assert.equal(repeated.code, 'page_missing');
+  assert.equal(repeated.error, 'logical page not found: recruit/obsolete');
 });
 
 test('pages CLI share base URL uses config when env is absent', () => {
