@@ -93,14 +93,14 @@ async function login(origin) {
     body: new URLSearchParams({ password: 'secret' }),
   });
   assert.equal(response.status, 302);
-  const match = response.headers.get('set-cookie').match(/__Host-zylos_pages_session=([^;,]+)/);
+  const match = response.headers.get('set-cookie').match(/__Secure-zylos_pages_session=([^;,]+)/);
   assert.ok(match);
-  return `__Host-zylos_pages_session=${match[1]}`;
+  return `__Secure-zylos_pages_session=${match[1]}`;
 }
 
 function cookieHeader(setCookie) {
   return setCookie
-    .split(/,\s*(?=__Host-)/)
+    .split(/,\s*(?=__Secure-)/)
     .map(cookie => cookie.split(';', 1)[0])
     .join('; ');
 }

@@ -31,6 +31,12 @@ export function browserRoot(baseUrl) {
   return `${baseUrl || ''}/`;
 }
 
+// Cookie Path bound to the instance's mount prefix, so multiple pages
+// instances on one host (e.g. /pages and /coco/pages) keep separate cookies.
+export function cookiePathFromBase(baseUrl) {
+  return baseUrl || '/';
+}
+
 export function browserPath(baseUrl, path) {
   const cleanPath = String(path).replace(/^\/+/, '');
   return `${baseUrl || ''}/${cleanPath}`;

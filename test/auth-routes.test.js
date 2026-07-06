@@ -191,6 +191,55 @@ test('login next target cannot escape forwarded prefix with dot segments', async
   }
 });
 
+test('session cookie Path is bound to the forwarded prefix (issue #104)', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const prefixed = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-Forwarded-Prefix': '/coco/pages',
+      },
+      body: new URLSearchParams({ password: 'secret' }),
+    });
+    assert.equal(prefixed.status, 302);
+    const prefixedCookie = prefixed.headers.get('set-cookie');
+    assert.match(prefixedCookie, /__Secure-zylos_pages_session=[^;]+;[^,]*Path=\/coco\/pages/);
+
+    const direct = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: 'secret' }),
+    });
+    assert.equal(direct.status, 302);
+    const directCookie = direct.headers.get('set-cookie');
+    assert.match(directCookie, /__Secure-zylos_pages_session=[^;]+;[^,]*Path=\/;/);
+  } finally {
+    server.close();
+  }
+});
+
+test('login expires legacy host-wide __Host- cookies (issue #104)', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const response = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: 'secret' }),
+    });
+    assert.equal(response.status, 302);
+    const cookie = response.headers.get('set-cookie');
+    assert.match(cookie, /__Host-zylos_pages_session=;[^,]*Path=\/;[^,]*Max-Age=0/);
+    assert.match(cookie, /__Host-share_access=;[^,]*Path=\/;[^,]*Max-Age=0/);
+    assert.match(cookie, /__Host-share_scope=;[^,]*Path=\/;[^,]*Max-Age=0/);
+  } finally {
+    server.close();
+  }
+});
+
 test('remember-me login sets 30-day cookie', async () => {
   const { server, origin } = await makeServer();
   try {
@@ -235,12 +284,12 @@ test('session persists in SQLite (survives validation after store reinit)', asyn
       body: new URLSearchParams({ password: 'secret', remember: 'on' }),
     });
     const cookie = loginRes.headers.get('set-cookie');
-    const tokenMatch = cookie.match(/__Host-zylos_pages_session=([^;]+)/);
+    const tokenMatch = cookie.match(/__Secure-zylos_pages_session=([^;]+)/);
     assert.ok(tokenMatch, 'session cookie should be set');
 
     const authedRes = await fetch(`${origin}/`, {
       redirect: 'manual',
-      headers: { Cookie: `__Host-zylos_pages_session=${tokenMatch[1]}` },
+      headers: { Cookie: `__Secure-zylos_pages_session=${tokenMatch[1]}` },
     });
     assert.equal(authedRes.status, 200);
   } finally {

@@ -8,6 +8,7 @@ import { getPagesDb } from '../db/pages-db.js';
 import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 import {
+  LEGACY_SHARE_COOKIE_CLEAR_HEADERS,
   SHARE_ACCESS_COOKIE_NAME,
   SHARE_SCOPE_COOKIE_NAME,
   clearShareAccessCookieHeader,
@@ -15,12 +16,16 @@ import {
   createShareAccessCookie,
   verifyShareAccessCookie,
 } from '../sharing/share-manager.js';
-import { browserBaseFromRequest, browserPath, browserRoot, isPathWithinBase } from '../lib/browser-base.js';
+import { browserBaseFromRequest, browserPath, browserRoot, cookiePathFromBase, isPathWithinBase } from '../lib/browser-base.js';
 import { isAssetExtension } from '../utils/mime.js';
 import path from 'node:path';
 
 const SCRYPT_KEYLEN = 64;
-const COOKIE_NAME = '__Host-zylos_pages_session';
+// __Secure- (not __Host-) so the Path can be bound to the instance's mount
+// prefix — __Host- mandates Path=/, which makes sessions collide between
+// multiple pages instances on one host (issue #104).
+const COOKIE_NAME = '__Secure-zylos_pages_session';
+const LEGACY_COOKIE_NAME = '__Host-zylos_pages_session';
 const SESSION_ABSOLUTE_MS = 86_400_000;      // 24 hours
 const SESSION_IDLE_MS = 3_600_000;            // 60 minutes
 const REMEMBER_ABSOLUTE_MS = 30 * 86_400_000; // 30 days
@@ -191,29 +196,39 @@ function appendSetCookie(res, cookie) {
   }
 }
 
-function setSessionCookie(res, token, remember = false) {
+function setSessionCookie(res, token, remember = false, cookiePath = '/') {
   const maxAge = remember ? 30 * 86400 : 86400;
   appendSetCookie(res,
-    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=${cookiePath}; Max-Age=${maxAge}`
   );
 }
 
-function clearSessionCookie(res) {
+function clearSessionCookie(res, cookiePath = '/') {
   appendSetCookie(res,
-    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=${cookiePath}; Max-Age=0`
   );
 }
 
-function clearShareScopeCookie(res) {
-  appendSetCookie(res, clearShareScopeCookieHeader());
+// Expire the host-wide cookies set by versions before path scoping.
+function clearLegacyHostCookies(res) {
+  appendSetCookie(res,
+    `${LEGACY_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+  );
+  for (const header of LEGACY_SHARE_COOKIE_CLEAR_HEADERS) {
+    appendSetCookie(res, header);
+  }
 }
 
-function clearShareAccessCookie(res) {
-  appendSetCookie(res, clearShareAccessCookieHeader());
+function clearShareScopeCookie(res, cookiePath = '/') {
+  appendSetCookie(res, clearShareScopeCookieHeader(cookiePath));
 }
 
-function setShareAccessCookie(res, pageId, tokenId, tokenExpiresAt) {
-  const cookie = createShareAccessCookie(pageId, tokenId, tokenExpiresAt);
+function clearShareAccessCookie(res, cookiePath = '/') {
+  appendSetCookie(res, clearShareAccessCookieHeader(cookiePath));
+}
+
+function setShareAccessCookie(res, pageId, tokenId, tokenExpiresAt, cookiePath = '/') {
+  const cookie = createShareAccessCookie(pageId, tokenId, tokenExpiresAt, cookiePath);
   appendSetCookie(res, cookie.header);
 }
 
@@ -224,7 +239,7 @@ function acceptShareViewer(res, result, options = {}) {
   res.locals.shareCanWriteAttachments = result.canWriteAttachments === true;
   res.locals.shareContext = result;
   if (options.refreshAccessCookie) {
-    setShareAccessCookie(res, result.pageId, result.tokenId, result.expiresAt);
+    setShareAccessCookie(res, result.pageId, result.tokenId, result.expiresAt, options.cookiePath || '/');
   }
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -526,9 +541,11 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     clearFailures(ip);
     const remember = req.body?.remember === 'on';
     const token = createSession(remember);
-    setSessionCookie(res, token, remember);
-    clearShareAccessCookie(res);
-    clearShareScopeCookie(res);
+    const cookiePath = cookiePathFromBase(browserBase);
+    setSessionCookie(res, token, remember, cookiePath);
+    clearShareAccessCookie(res, cookiePath);
+    clearShareScopeCookie(res, cookiePath);
+    clearLegacyHostCookies(res);
 
     const next = req.body?.next;
     const redirectTo = (next && isSafeRedirect(next, browserBase)) ? next : browserRoot(browserBase);
@@ -565,9 +582,11 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     }
 
     destroySession(getSessionCookie(req));
-    clearSessionCookie(res);
-    clearShareAccessCookie(res);
     const browserBase = browserBaseFromRequest(req);
+    const cookiePath = cookiePathFromBase(browserBase);
+    clearSessionCookie(res, cookiePath);
+    clearShareAccessCookie(res, cookiePath);
+    clearLegacyHostCookies(res);
     res.redirect(302, `${browserPath(browserBase, 'login')}?next=${encodeURIComponent(browserRoot(browserBase))}`);
   }
 
