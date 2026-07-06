@@ -29,6 +29,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
   <meta property="og:type" content="article">
   ${date ? `<meta property="article:published_time" content="${escapeHtml(String(date))}">` : ''}
   ${tags.length ? `<meta name="keywords" content="${tags.map(t => escapeHtml(String(t))).join(', ')}">` : ''}
+  <link rel="alternate" type="text/markdown" href="${baseUrl}/api/raw/${escapeHtml(slug || '')}" title="Markdown version">
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
   <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${ASSET_VERSION}" media="print">
   <script src="${baseUrl}/_assets/theme.js?v=${ASSET_VERSION}"></script>

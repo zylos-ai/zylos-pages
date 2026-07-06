@@ -134,6 +134,15 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
     if (isShareViewer) {
       html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
       html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
+      // Share viewers cannot use /api/raw — repoint the markdown alternate at
+      // the token-scoped raw route (/s/<token>.md, same capability as the share).
+      const shareToken = (shareContext || res.locals.shareContext)?.tokenId;
+      if (shareToken) {
+        html = html.replace(
+          /<link rel="alternate" type="text\/markdown"[^>]*>/,
+          `<link rel="alternate" type="text/markdown" href="${browserBase}/s/${shareToken}.md" title="Markdown version">`,
+        );
+      }
     } else {
       const pages = await scanPages(config.contentDir);
       html = injectNavSidebar(html, pages, displaySlug, browserBase);
