@@ -21,7 +21,7 @@ test.after(() => {
 
 function cookieHeader(setCookie) {
   return setCookie
-    .split(/,\s*(?=__Host-)/)
+    .split(/,\s*(?=__Secure-|__Host-)/)
     .map(cookie => cookie.split(';', 1)[0])
     .join('; ');
 }
@@ -300,8 +300,8 @@ test('short share URL sets access cookie and renders clean page in place', async
     assert.equal(redirect.status, 200);
     assert.equal(redirect.headers.get('location'), null);
     const setCookie = redirect.headers.get('set-cookie');
-    assert.match(setCookie, /__Host-share_access=/);
-    assert.doesNotMatch(setCookie, /__Host-share_scope=/);
+    assert.match(setCookie, /__Secure-share_access=/);
+    assert.doesNotMatch(setCookie, /__Secure-share_scope=/);
     assert.match(await redirect.text(), /<base href="\/p\/docs\/page">/);
   } finally {
     server.close();
@@ -334,7 +334,7 @@ test('auth middleware allows short share URL cookies to access target page', asy
       body: new URLSearchParams({ password: 'secret' }),
     });
     const cookie = login.headers.get('set-cookie');
-    assert.match(cookie, /__Host-zylos_pages_session=/);
+    assert.match(cookie, /__Secure-zylos_pages_session=/);
 
     const create = await fetch(`${origin}/api/share`, {
       method: 'POST',
@@ -423,7 +423,7 @@ test('legacy long share token bypass is rejected while short links still work', 
 
     response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('set-cookie'), /__Host-share_access=/);
+    assert.match(response.headers.get('set-cookie'), /__Secure-share_access=/);
   } finally {
     server.close();
   }
@@ -433,7 +433,7 @@ test('login session takes precedence over share-access cookie on /p/ routes (#10
   const { server, origin } = await makeServer({ auth: true });
   try {
     const sessionCookie = await login(origin);
-    assert.match(sessionCookie, /__Host-zylos_pages_session=/);
+    assert.match(sessionCookie, /__Secure-zylos_pages_session=/);
 
     const share = await createShareViaApi(origin, cookieHeader(sessionCookie), {
       slug: 'p/docs/page',
@@ -442,7 +442,7 @@ test('login session takes precedence over share-access cookie on /p/ routes (#10
     const shareVisit = await fetch(share.url, { redirect: 'manual' });
     assert.equal(shareVisit.status, 200);
     const shareCookie = cookieHeader(shareVisit.headers.get('set-cookie'));
-    assert.match(shareCookie, /__Host-share_access=/);
+    assert.match(shareCookie, /__Secure-share_access=/);
 
     // Both cookies present — the login session must win: authenticated view,
     // never the shell-less share view.
@@ -504,7 +504,7 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
       duration: '24h',
     });
     const shareVisit = await fetch(share.url, { redirect: 'manual' });
-    assert.match(shareVisit.headers.get('set-cookie'), /__Host-share_access=/);
+    assert.match(shareVisit.headers.get('set-cookie'), /__Secure-share_access=/);
 
     // Logging in clears any lingering share-access cookie.
     const relogin = await fetch(`${origin}/login`, {
@@ -514,7 +514,7 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
       body: new URLSearchParams({ password: 'secret' }),
     });
     assert.equal(relogin.status, 302);
-    assert.match(relogin.headers.get('set-cookie'), /__Host-share_access=;.*Max-Age=0/);
+    assert.match(relogin.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
 
     // Logging out clears it too.
     const logout = await fetch(`${origin}/logout`, {
@@ -523,7 +523,7 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
       headers: { Origin: origin, Cookie: cookieHeader(sessionCookie) },
     });
     assert.equal(logout.status, 302);
-    assert.match(logout.headers.get('set-cookie'), /__Host-share_access=;.*Max-Age=0/);
+    assert.match(logout.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
   } finally {
     server.close();
   }

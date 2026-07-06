@@ -15,7 +15,7 @@ import {
   updateShareAttachmentPermission,
 } from '../sharing/share-manager.js';
 import { logger } from '../utils/logger.js';
-import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
+import { browserBaseFromRequest, browserPath, cookiePathFromBase } from '../lib/browser-base.js';
 import { renderSharePage } from './pages.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
@@ -125,7 +125,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     }
 
     const browserBase = browserBaseFromRequest(req);
-    const accessCookie = createShareAccessCookie(share.pageId, share.tokenId, share.expiresAt);
+    const accessCookie = createShareAccessCookie(share.pageId, share.tokenId, share.expiresAt, cookiePathFromBase(browserBase));
     appendSetCookie(res, accessCookie.header);
     res.setHeader('Cache-Control', 'no-store');
     try {

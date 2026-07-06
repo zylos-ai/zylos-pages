@@ -115,7 +115,7 @@ function sameOriginHeaders(origin, extra = {}) {
 
 function cookieHeader(setCookie) {
   return setCookie
-    .split(/,\s*(?=__Host-)/)
+    .split(/,\s*(?=__Secure-)/)
     .map(cookie => cookie.split(';', 1)[0])
     .join('; ');
 }

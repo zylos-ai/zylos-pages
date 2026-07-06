@@ -96,20 +96,20 @@ async function login(origin, extraHeaders = {}) {
 }
 
 function sessionCookie(setCookieHeader) {
-  const match = setCookieHeader.match(/__Host-zylos_pages_session=([^;,]+)/);
+  const match = setCookieHeader.match(/__Secure-zylos_pages_session=([^;,]+)/);
   assert.ok(match, 'session cookie should be present');
-  return `__Host-zylos_pages_session=${match[1]}`;
+  return `__Secure-zylos_pages_session=${match[1]}`;
 }
 
 function shareScopeCookie(setCookieHeader) {
-  const match = setCookieHeader.match(/__Host-share_scope=([^;,]+)/);
+  const match = setCookieHeader.match(/__Secure-share_scope=([^;,]+)/);
   assert.ok(match, 'share-scope cookie should be present');
   return `${SHARE_SCOPE_COOKIE_NAME}=${match[1]}`;
 }
 
 function cookieHeader(setCookieHeader) {
   return setCookieHeader
-    .split(/,\s*(?=__Host-)/)
+    .split(/,\s*(?=__Secure-)/)
     .map(cookie => cookie.split(';', 1)[0])
     .join('; ');
 }
@@ -373,8 +373,8 @@ test('share page access renders in place and signs referenced assets', async () 
       const body = await redirect.text();
       assert.match(body, /<base href="\/p\/renovation-checklist">/);
       const setCookie = redirect.headers.get('set-cookie');
-      assert.match(setCookie, /__Host-share_access=/);
-      assert.doesNotMatch(setCookie, /__Host-share_scope=/);
+      assert.match(setCookie, /__Secure-share_access=/);
+      assert.doesNotMatch(setCookie, /__Secure-share_scope=/);
       assert.match(setCookie, /HttpOnly/);
       assert.match(setCookie, /Secure/);
       assert.match(setCookie, /SameSite=Lax/);
@@ -578,8 +578,8 @@ test('login clears legacy share-scope cookie without overwriting session cookie'
       const legacy = createShareScopeCookie('shared', createShare('shared', '24h', { allowPermanent: false }).tokenId, Date.now() + 3600_000).value;
       const shareCookie = `${SHARE_SCOPE_COOKIE_NAME}=${legacy}`;
       const loginCookies = await login(origin, { Cookie: shareCookie });
-      assert.match(loginCookies, /__Host-zylos_pages_session=/);
-      assert.match(loginCookies, /__Host-share_scope=;/);
+      assert.match(loginCookies, /__Secure-zylos_pages_session=/);
+      assert.match(loginCookies, /__Secure-share_scope=;/);
       assert.match(loginCookies, /Max-Age=0/);
     });
   } finally {

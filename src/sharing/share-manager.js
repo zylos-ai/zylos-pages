@@ -16,8 +16,18 @@ const SHARE_SESSION_MAX_AGE_SECONDS = 3600;
 const SHARE_SCOPE_MAX_AGE_SECONDS = 3600;
 const SHARE_ASSET_MAX_AGE_MS = 3600_000;
 
-export const SHARE_ACCESS_COOKIE_NAME = '__Host-share_access';
-export const SHARE_SCOPE_COOKIE_NAME = '__Host-share_scope';
+// __Secure- (not __Host-) so the Path can be bound to the instance's mount
+// prefix — __Host- mandates Path=/, which makes cookies collide between
+// multiple pages instances on one host (issue #104).
+export const SHARE_ACCESS_COOKIE_NAME = '__Secure-share_access';
+export const SHARE_SCOPE_COOKIE_NAME = '__Secure-share_scope';
+
+// Host-wide cookie names used before path scoping; expired on login/logout so
+// they don't linger until natural expiry.
+export const LEGACY_SHARE_COOKIE_CLEAR_HEADERS = [
+  '__Host-share_access=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+  '__Host-share_scope=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0',
+];
 
 const DURATION_MAP = {
   '24h': 24 * 60 * 60 * 1000,
@@ -289,7 +299,7 @@ export function getActiveShareToken(tokenId) {
   return { ...record, token: legacyTokenFor(record) };
 }
 
-export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt) {
+export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt, cookiePath = '/') {
   initShareStore();
   const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SESSION_MAX_AGE_SECONDS);
   const token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
@@ -299,12 +309,12 @@ export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt) {
   return {
     value: token,
     maxAge,
-    header: `${SHARE_ACCESS_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
+    header: `${SHARE_ACCESS_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=${maxAge}`,
   };
 }
 
-export function clearShareAccessCookieHeader() {
-  return `${SHARE_ACCESS_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+export function clearShareAccessCookieHeader(cookiePath = '/') {
+  return `${SHARE_ACCESS_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=0`;
 }
 
 export function verifyShareAccessCookie(cookieValue, requestSlug) {
@@ -369,7 +379,7 @@ export function verifyShare(token, requestSlug) {
   };
 }
 
-export function createShareScopeCookie(slug, tokenId, tokenExpiresAt) {
+export function createShareScopeCookie(slug, tokenId, tokenExpiresAt, cookiePath = '/') {
   const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SCOPE_MAX_AGE_SECONDS);
   const expiresAt = nowMs() + maxAge * 1000;
   const directory = directoryScope(slug);
@@ -378,12 +388,12 @@ export function createShareScopeCookie(slug, tokenId, tokenExpiresAt) {
   return {
     value,
     maxAge,
-    header: `${SHARE_SCOPE_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`,
+    header: `${SHARE_SCOPE_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=${maxAge}`,
   };
 }
 
-export function clearShareScopeCookieHeader() {
-  return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
+export function clearShareScopeCookieHeader(cookiePath = '/') {
+  return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=0`;
 }
 
 export function verifyShareScopeCookie(cookieValue, assetPath) {

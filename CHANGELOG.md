@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.4] - 2026-07-06
+
+### Fixed
+- **Cookie clash between multiple pages instances on one host** (#104): the session and share cookies were `__Host-` prefixed, which mandates `Path=/`, so two instances on the same domain (e.g. `/pages` and `/coco/pages`) shared one cookie slot — logging into one logged the other out, and each instance received the other's session token. Cookies are now `__Secure-` prefixed with `Path` bound to the instance's mount prefix (from `X-Forwarded-Prefix`, falling back to `/` for direct access), so each instance's cookies stay in its own subtree. Login/logout additionally expire the legacy host-wide `__Host-*` cookie names so stale cookies from earlier versions don't linger.
+
 ## [0.7.3] - 2026-07-02
 
 ### Fixed
