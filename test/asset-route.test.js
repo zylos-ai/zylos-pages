@@ -25,7 +25,7 @@ const { SHARE_SCOPE_COOKIE_NAME, createShare, revokeShare } = await import('../s
 // (#73) and the minting/verifying code was deleted. Anything a browser still
 // carries under this name is opaque bytes to the server, so tests construct it
 // as such — there is no longer a "valid" or "expired" variant to distinguish.
-const RESIDUAL_SCOPE_COOKIE = `${SHARE_SCOPE_COOKIE_NAME}=docs:${'a'.repeat(32)}:9999999999999:${'f'.repeat(64)}`;
+const RESIDUAL_SCOPE_COOKIE = `${SHARE_SCOPE_COOKIE_NAME}=left-over-from-an-older-version`;
 
 test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
@@ -105,12 +105,6 @@ function sessionCookie(setCookieHeader) {
   const match = setCookieHeader.match(/__Secure-zylos_pages_session=([^;,]+)/);
   assert.ok(match, 'session cookie should be present');
   return `__Secure-zylos_pages_session=${match[1]}`;
-}
-
-function shareScopeCookie(setCookieHeader) {
-  const match = setCookieHeader.match(/__Secure-share_scope=([^;,]+)/);
-  assert.ok(match, 'share-scope cookie should be present');
-  return `${SHARE_SCOPE_COOKIE_NAME}=${match[1]}`;
 }
 
 function cookieHeader(setCookieHeader) {
@@ -516,11 +510,38 @@ test('a residual share-scope cookie grants nothing on any route', async () => {
       ];
 
       for (const [label, requestPath, expectDenied] of probes) {
-        const res = await fetch(`${origin}${requestPath}`, {
+        const withCookie = await fetch(`${origin}${requestPath}`, {
           redirect: 'manual',
           headers: { Cookie: scopeCookie },
         });
-        expectDenied(res, `${label} should not be granted by a share-scope cookie`);
+        expectDenied(withCookie, `${label} should not be granted by a share-scope cookie`);
+
+        // The claim is equality with a cookie-less browser, so run that pairing
+        // rather than infer it: same status, same redirect target, and no
+        // Set-Cookie either way (the server must not answer the residual cookie
+        // at all, including by refreshing or clearing it here).
+        const withoutCookie = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
+
+        // Guard: on the 403 probe both Locations are null, so that comparison
+        // is vacuous there and the status carries it. Where a redirect IS
+        // expected, require a real target so the comparison has something to
+        // compare.
+        if (expectDenied === expectLoginRedirect) {
+          assert.equal(typeof withCookie.headers.get('location'), 'string', `${label}: expected a redirect target`);
+        }
+
+        assert.equal(
+          withCookie.status,
+          withoutCookie.status,
+          `${label}: residual cookie changed the status vs no cookie`
+        );
+        assert.equal(
+          withCookie.headers.get('location'),
+          withoutCookie.headers.get('location'),
+          `${label}: residual cookie changed the redirect target vs no cookie`
+        );
+        assert.equal(withCookie.headers.get('set-cookie'), null, `${label}: no Set-Cookie expected`);
+        assert.equal(withoutCookie.headers.get('set-cookie'), null, `${label}: no Set-Cookie expected`);
       }
 
       const session = sessionCookie(await login(origin));
