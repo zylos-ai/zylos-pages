@@ -5,7 +5,7 @@
 
 import crypto from 'node:crypto';
 import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
-import { getLogicalPage, getLogicalPageById } from '../pages/page-store.js';
+import { getLogicalPage, getLogicalPageById, initPageStore } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
@@ -96,6 +96,9 @@ function dropSlugKeyedShareTables() {
 function initShareStore() {
   if (initialized) return;
   db = getPagesDb();
+  // logical_pages is created lazily by the page store, and one statement below
+  // references it. Preparing that statement first would throw on a cold DB.
+  initPageStore();
   dropSlugKeyedShareTables();
   db.exec(`
     CREATE TABLE IF NOT EXISTS share_meta (
@@ -167,12 +170,19 @@ function initShareStore() {
   _touchShareSession = db.prepare('UPDATE share_sessions SET last_activity_at = ? WHERE token_hash = ?');
   _deleteShareSession = db.prepare('DELETE FROM share_sessions WHERE token_hash = ?');
   _deleteExpiredShareSessions = db.prepare('DELETE FROM share_sessions WHERE expires_at <= ?');
+  // The live-page requirement is part of the WHERE clause, not a check around
+  // it. Checking afterwards means the row is already written by the time the
+  // caller learns it should not have been: a tombstone passes revoked/expiry
+  // (it is neither), gets mutated, and only then does the resolver notice the
+  // page is gone and report "not found" over a write that happened. Tombstones
+  // are an audit record; no live operation may touch them.
   _updateShareAttachmentPermission = db.prepare(`
     UPDATE shares
     SET can_write_attachments = ?
     WHERE token_id = ?
       AND revoked = 0
       AND (expires_at = 0 OR expires_at > ?)
+      AND EXISTS (SELECT 1 FROM logical_pages WHERE logical_pages.page_id = shares.page_id)
   `);
 
   if (!_getMeta.get('secret')?.value) {
@@ -630,14 +640,13 @@ export function describeShare(input) {
   };
 }
 
-// Sessions only. Expiry no longer deletes share rows: an expired row is the
-// sole record that a link existed at all, and deleting it means "someone hands
-// you an old link, which document was it?" has no answer. Sessions are the
-// opposite — transient browser state, worth nothing after expiry.
-//
-// This is not the same as "share rows are never deleted": unregistering a page
-// still drops its share rows (page-store.js), which is the ledger's remaining
-// hole and an open decision (#108). Nothing here should be read as closing it.
+// Sessions only. Share rows are never deleted — not on expiry, and not when
+// the page is unregistered (page-store stamps them with the page's uri and
+// leaves them as tombstones). An expired or orphaned row is the sole record
+// that a link existed at all, and deleting it means "someone hands you an old
+// link, which document was it?" has no answer. Sessions are the opposite —
+// transient browser state, worth nothing after expiry, and the thing that
+// could otherwise still open an unregistered page.
 export function cleanupShares() {
   initShareStore();
   const sessions = _deleteExpiredShareSessions.run(nowMs()).changes;

@@ -119,7 +119,7 @@ test('PATCH returns 404 for unknown pageId', async () => {
   }
 });
 
-test('DELETE unregisters a page, removes page-id keyed share rows, and keeps source file', async () => {
+test('DELETE unregisters a page, tombstones its share rows, and keeps source file', async () => {
   const { server, origin, contentDir, config } = await makeServer();
   try {
     const page = registerPage(config, contentDir, 'delete/me', 'Delete Me');
