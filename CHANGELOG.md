@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.8] - 2026-07-25
+
+Deletes the retired share-scope cookie machinery. 0.7.7 fixed logout to clear
+the cookie and noted that the mechanism behind it had been dead since 0.7.0,
+leaving the question of whether to remove it open; the owner's call was to
+remove it rather than keep dead code around.
+
+### Removed
+- **`createShareScopeCookie` and `verifyShareScopeCookie`**, and with them the four private pieces used by nothing else once they were gone: `directoryScope`, `computeShareScopeHmac`, `isAssetWithinScope`, and `SHARE_SCOPE_MAX_AGE_SECONDS`. The mechanism was superseded in 0.7.0 (#73) when share views moved to signed asset URLs; the verifier's only caller was deleted in that same commit. What survives is exactly the clear path: `SHARE_SCOPE_COOKIE_NAME` and `clearShareScopeCookieHeader`, used by login and logout to expire copies left in browsers by earlier versions.
+
+### Tests
+- **The expired/tampered scope-cookie test is gone, not ported.** Both notions only exist relative to a verifier: with the HMAC check deleted there is no such thing as an expired or tampered scope cookie, only bytes nobody reads. Keeping the test would have asserted a distinction the code can no longer make.
+- **The remaining scope-cookie test is now about the request, not the helper.** It was pinned in 0.7.7 so that re-wiring the verifier would break a test; that reason died with the verifier. It is kept because the claim worth holding is that a browser still carrying a scope cookie is answered exactly like one that carries none — a property of routes that do still exist. The fixture is an opaque string, since a "valid" one is no longer constructible or meaningful.
+- **The scope cookie is dropped from the issuance-parity checks and given its own contract.** Comparing a clear against its issuance is not possible for a cookie nothing issues, and synthesising a fake issuance to compare against would have re-invented a contract that no longer exists. It is instead asserted directly: expired, at the mount path, and carrying `Secure` — the last because a `__Secure-`-prefixed `Set-Cookie` is rejected without it (draft-ietf-httpbis-rfc6265bis-22 §4.1.3.1). Session and share-access, which are genuinely issued, keep their comparison against real issuing headers.
+- **The live RFC 6265bis citations now carry the draft version.** They pointed at a section number of a document that is still an Internet-Draft in the RFC Editor queue, where numbering can move between revisions. Both remaining citations in test comments are corrected; the 0.7.7 entry below is left as it was published. Flagged in review as a non-blocking precision item and fixed here rather than with a commit of its own.
+
 ## [0.7.7] - 2026-07-25
 
 Logout now clears every credential cookie it can be carrying, and the boundary
