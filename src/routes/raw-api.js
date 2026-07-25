@@ -1,7 +1,7 @@
 // Raw Markdown API route handlers
 // GET /api/raw/:slug(*) - return the original Markdown text (requires login)
 
-import { readFile } from 'node:fs/promises';
+import { streamFileResponse } from '../utils/stream-file.js';
 import { resolveSafePath } from '../security/pathGuard.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
@@ -39,19 +39,18 @@ export function setupRawApi(app, config) {
       return res.status(status).json({ error: 'Invalid path' });
     }
 
-    try {
-      const markdown = await readFile(filePath, 'utf8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-      return res.status(200).send(markdown);
-    } catch (err) {
-      if (err.code === 'ENOENT') {
-        logger.info('raw markdown not found', { path: slug });
-        return res.status(404).json({ error: 'Page not found' });
-      }
+    return streamFileResponse(res, filePath, {
+      contentType: 'text/plain; charset=utf-8',
+      onError: (err) => {
+        if (err.code === 'ENOENT') {
+          logger.info('raw markdown not found', { path: slug });
+          res.status(404).json({ error: 'Page not found' });
+          return;
+        }
 
-      logger.error('raw markdown read failed', { path: slug, err: err.message });
-      return res.status(500).json({ error: 'Internal Server Error' });
-    }
+        logger.error('raw markdown read failed', { path: slug, err: err.message });
+        res.status(500).json({ error: 'Internal Server Error' });
+      },
+    });
   });
 }

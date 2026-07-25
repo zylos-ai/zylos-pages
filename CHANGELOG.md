@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.9] - 2026-07-26
+
+The two raw-Markdown routes no longer read a whole file into memory before
+sending it.
+
+### Changed
+- **`GET /api/raw/<slug>` and `GET /s/<tokenId>.md` stream their file instead of buffering it.** Both used to `readFile` the entire source into a string and hand that to `send`, so every request cost one full copy of the page in heap. They now share `streamFileResponse()` — one helper rather than two parallel implementations, because the previous round showed how easily these two routes drift apart. Status codes, `Content-Type`, `Cache-Control` and both error bodies are unchanged.
+- **The renderer's `security.maxFileSizeBytes` ceiling is deliberately *not* extended to these routes.** That limit exists to keep an oversized source away from the render worker, which highlights code and builds HTML under a timeout; a streamed file read is not the cost it was written for. Applying it here would refuse a download that is now cheap, so the asymmetry recorded in 0.7.8 stays — with the memory amplification that made it worth worrying about removed instead.
+
+### Tests
+- **The failure mode streaming introduces is pinned, on both routes.** A read stream reports a missing file *asynchronously*, after the handler has returned, so an error handler that only runs once bytes are flowing turns a deleted source into a hang or an empty `200`. Each route now asserts that a page registered but absent from disk still returns its 404, guarded by a preceding request that must succeed so the 404 cannot come from a broken fixture. Verified by falsification: making the handler treat every error as post-header turns both red.
+- **A multi-chunk body is checked byte-exact rather than by substring.** The previous fixtures fit in a single chunk, which cannot show a boundary landing inside a multi-byte character or a dropped final chunk — both of which corrupt the document while still returning `200`. The new fixture is >256 KiB of mixed CJK and emoji and is compared in full. Verified by falsification: truncating the stream turns it red.
+- Note on scope: these assert **behavioural equivalence**, not the memory property itself. That the file is no longer materialised is a property of the code shape, visible in `streamFileResponse()`, and is not something an HTTP-level test can observe.
+
 ## [0.7.8] - 2026-07-26
 
 A shared link can now hand its Markdown source to a tool instead of its

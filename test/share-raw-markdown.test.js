@@ -245,3 +245,25 @@ test('a rendered share view points its markdown alternate at the token route, ne
     server.close();
   }
 });
+
+// Same streaming failure mode as the /api/raw route, asserted independently on
+// the token path: the two raw routes share one helper, and a regression that
+// only reached one of them would otherwise be invisible here. A share whose
+// page file has been deleted must 404 rather than hang or return an empty 200.
+test('the token raw route still 404s when the source file no longer exists on disk', async () => {
+  const { server, contentDir } = await makeServer();
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const share = createShare('p/docs/shared', '24h', { allowPermanent: false });
+  try {
+    const before = await fetch(`${origin}/s/${share.tokenId}.md`);
+    assert.equal(before.status, 200, 'the share must serve while its file exists');
+
+    fs.rmSync(path.join(contentDir, 'docs', 'shared.md'), { force: true });
+
+    const after = await fetch(`${origin}/s/${share.tokenId}.md`);
+    assert.equal(after.status, 404, 'a share whose file is gone must 404, not hang or return an empty 200');
+  } finally {
+    revokeShare(share.tokenId);
+    server.close();
+  }
+});

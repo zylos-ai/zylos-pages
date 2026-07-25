@@ -14,7 +14,7 @@ import {
   listSharesForSlug,
   updateShareAttachmentPermission,
 } from '../sharing/share-manager.js';
-import { readFile } from 'node:fs/promises';
+import { streamFileResponse } from '../utils/stream-file.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath, cookiePathFromBase } from '../lib/browser-base.js';
 import { renderSharePage } from './pages.js';
@@ -122,9 +122,10 @@ export function setupShareApi(app, sharingConfig, config = {}) {
   // match the share token itself (one page, read-only, expiry and revocation
   // honoured). The representation does not: this returns the source file
   // verbatim, including the frontmatter block, while the rendered view strips
-  // it and projects only title/description/date/tags — and unlike the render
-  // path it applies no maxFileSizeBytes ceiling. Registered before /s/:tokenId
-  // because that param would otherwise swallow the ".md" suffix.
+  // it and projects only title/description/date/tags. It also carries no
+  // maxFileSizeBytes ceiling: that limit protects the render worker, and a
+  // streamed file read is not the cost it was written for. Registered before
+  // /s/:tokenId because that param would otherwise swallow the ".md" suffix.
   app.get('/s/:tokenId.md', async (req, res) => {
     const share = getActiveShare(req.params.tokenId);
     if (!share) {
@@ -135,15 +136,13 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     if (!page || page.sourceExt !== '.md') {
       return res.status(404).send('Not a markdown page');
     }
-    try {
-      const markdown = await readFile(page.sourcePath, 'utf8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-      return res.status(200).send(markdown);
-    } catch (err) {
-      logger.error('share raw markdown read failed', { tokenId: req.params.tokenId, err: err.message });
-      return res.status(err.code === 'ENOENT' ? 404 : 500).send('Error reading page');
-    }
+    return streamFileResponse(res, page.sourcePath, {
+      contentType: 'text/markdown; charset=utf-8',
+      onError: (err) => {
+        logger.error('share raw markdown read failed', { tokenId: req.params.tokenId, err: err.message });
+        res.status(err.code === 'ENOENT' ? 404 : 500).send('Error reading page');
+      },
+    });
   });
 
   // GET /s/:tokenId — short share link rendered in place
