@@ -94,7 +94,7 @@ test('slug-keyed share rows are dropped and legacy shares.json is ignored', asyn
       component: 'content',
     }, { externalFiles: { allowedSources: { content: contentDir } } });
 
-    const share = createShare('new/page', '24h', { allowPermanent: false });
+    const share = createShare('new/page', '24h');
     assert.equal(share.pageId, page.pageId);
     assert.deepEqual(listSharesForSlug('new/page').map(entry => entry.tokenId), [share.tokenId]);
     assert.equal(getActiveShare(legacyTokenId), null);

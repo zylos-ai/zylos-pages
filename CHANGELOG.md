@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.7.5] - 2026-07-25
+
+Follow-up to an incident where a routine `unshare <uri>` cleanup revoked two
+permanent links that were still in use. The CLI could not express "revoke just
+this one", and could not list what links existed at all, so neither the mistake
+nor its blast radius was visible before or after the fact.
+
+### Added
+- **`unshare --token <token-id>`**: revokes exactly one share. `revokeShare(tokenId)` and `DELETE /api/share/:tokenId` already existed for the web client; the CLI only imported `revokeAllForSlug`, so agents could revoke a whole page but never a single link. Unknown and already-revoked token ids report distinct errors.
+- **`shares --all`**: lists every live share on the instance. Previously `shares <uri>` could only answer per-page, so "what passwordless links exist on this box right now?" had no CLI answer and required reading the SQLite file directly.
+
+### Changed
+- **`sharing.allowPermanent` removed; permanent links are always allowed.** The option defaulted to `false` in code while deployments set it to `true`, so the same command behaved differently per machine with nothing in the CLI surfacing which. If the key is still present in `config.json` it is ignored and startup logs a warning — removing the gate *loosens* behaviour for anyone who had set it to `false`, so that change is announced rather than silent. `createShare()` drops both of its now-dead parameters: `sharingConfig` (only ever read for `allowPermanent`) and `options` (already dead before this change — `canWriteAttachments` has been hardcoded `false` in the function body, so every caller's `options` was silently discarded). Test call sites were passing `{ allowPermanent: false }` positionally and would have silently re-bound it to `options` otherwise.
+- **SKILL.md no longer presents passwordless sharing as a routine step.** The HTML quick-start previously ran `share ... --duration 30d` directly under a `# Create a public share link (no login required)` comment, which is where the default-share behaviour came from. Adds a Sharing section stating plainly that `/s/<token>` bypasses login, that registering (password-protected) is the default, and that `unshare <uri>` revokes every token on a page.
+- **`--all` is parsed as a boolean flag.** `parseArgs` special-cased only `--json`, so `shares --all` failed with "missing value for --all". Replaced with a `BOOLEAN_FLAGS` set; flags outside it are unchanged and still consume the next argument.
+
+### Tests
+- **`test/share-permanent.test.js` (new).** The suite had no `permanent` case whatsoever, so it could not have caught the old gate or its removal. Covers permanent shares from a config with no `sharing` key (the exact shape the removed default governed), their appearance in `shares --all`, and — as a negative control — that an unknown duration is still rejected. Verified to fail when the old gate is reinstated.
+
+### Fixed
+- **Hourly-cleanup comment corrected.** It claimed to clean up "expired/revoked shares", but the SQL only ever deleted expired rows — revoked rows stay forever. The comment implied revocation destroys the record, which is the opposite of what happens (and is why two revoked links could be restored by hand).
+
+### Known limitation (not addressed here)
+- Expired shares are hard-deleted, so the `shares` table is a snapshot rather than a full ledger of every link ever minted. Related: `token_id` is the secret in the `/s/<token>` URL and is stored in plaintext, so a revoked row still holds a re-activatable credential. Both are being handled as a separate change with its own review — the retention contract needs to be settled before the schema moves.
+
 ## [0.7.4] - 2026-07-06
 
 ### Fixed

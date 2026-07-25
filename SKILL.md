@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.7.4
+version: 0.7.5
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
@@ -97,9 +97,9 @@ So:
   over. "Visible inside the company" is a different thing from "readable by
   anyone on the internet who has the URL" — do not treat the first as
   license for the second.
-- **Prefer a duration over `permanent`.** Permanent links are additionally
-  gated by `sharing.allowPermanent` in the component config, which is off
-  by default.
+- **Prefer a duration over `permanent`.** Nothing in the config gates
+  permanent links — an expiry is the only thing that limits how long a
+  passwordless URL keeps working, so pick the shortest one that does the job.
 
 Revoking:
 

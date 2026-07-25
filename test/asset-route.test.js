@@ -58,7 +58,7 @@ async function withServer(config, fn) {
   const app = express();
   app.use(securityHeaders());
   setupAuth(app, config.auth || { enabled: false, password: null });
-  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
+  setupShareApi(app, config.sharing || { enabled: true }, config);
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
   setupLogicalAssetRoute(app, config);
@@ -363,8 +363,8 @@ test('share page access renders in place and signs referenced assets', async () 
     await mkdir(path.join(contentDir, 'docs'));
     await writeFile(path.join(contentDir, 'docs', 'nested.jpg'), 'nested image');
     registerPage(config, 'renovation-checklist', pagePath, 'Renovation checklist');
-    const share = createShare('renovation-checklist', '24h', { allowPermanent: false });
-    assert.throws(() => createShare('direct-token.jpg', '24h', { allowPermanent: false }), /Page not found/);
+    const share = createShare('renovation-checklist', '24h');
+    assert.throws(() => createShare('direct-token.jpg', '24h'), /Page not found/);
 
     await withServer(config, async ({ origin }) => {
       const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
@@ -419,7 +419,7 @@ test('signed share assets allow page assets while isolating unsigned siblings', 
     await writeFile(path.join(contentDir, 'root.png'), 'root');
     await writeFile(path.join(contentDir, 'other', 'secret.png'), 'secret');
     registerPage(config, 'docs/guide', pagePath, 'Guide');
-    const share = createShare('docs/guide', '24h', { allowPermanent: false });
+    const share = createShare('docs/guide', '24h');
 
     await withServer(config, async ({ origin }) => {
       const page = await fetch(`${origin}/s/${share.tokenId}`);
@@ -459,7 +459,7 @@ test('signed share assets work for p-prefixed logical page shares', async () => 
     await writeFile(pagePath, '<!doctype html><img src="hero.png">');
     await writeFile(path.join(contentDir, 'docs', 'hero.png'), 'hero');
     registerPage(config, 'docs/prefixed', pagePath, 'Prefixed');
-    const share = createShare('p/docs/prefixed', '24h', { allowPermanent: false });
+    const share = createShare('p/docs/prefixed', '24h');
 
     await withServer(config, async ({ origin }) => {
       const page = await fetch(`${origin}/s/${share.tokenId}`);
@@ -480,8 +480,8 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
   const contentDir = await makeContentDir();
   try {
     await writeFile(path.join(contentDir, 'image.jpg'), 'image');
-    const expiredShare = createShare('page', '24h', { allowPermanent: false });
-    const validShare = createShare('page', '24h', { allowPermanent: false });
+    const expiredShare = createShare('page', '24h');
+    const validShare = createShare('page', '24h');
     const expired = createShareScopeCookie('page', expiredShare.tokenId, Date.now() - 1000).value;
     const valid = createShareScopeCookie('page', validShare.tokenId, Date.now() + 3600_000).value;
     const tampered = valid.replace(/[0-9a-f]$/, (char) => char === '0' ? '1' : '0');
@@ -513,7 +513,7 @@ test('revoked share invalidates existing signed asset URLs', async () => {
     await writeFile(pagePath, '<!doctype html><img src="asset.jpg">');
     await writeFile(path.join(contentDir, 'asset.jpg'), 'asset');
     registerPage(config, 'shared', pagePath, 'Shared');
-    const share = createShare('shared', '24h', { allowPermanent: false });
+    const share = createShare('shared', '24h');
 
     await withServer(config, async ({ origin }) => {
       const page = await fetch(`${origin}/s/${share.tokenId}`);
@@ -541,7 +541,7 @@ test('asset route rejects traversal, null byte, and double-encoded traversal', a
     const pagePath = path.join(contentDir, 'page.md');
     await writeFile(pagePath, '# Page\n');
     registerPage(config, 'page', pagePath, 'Page');
-    const share = createShare('page', '24h', { allowPermanent: false });
+    const share = createShare('page', '24h');
     const cookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('page', share.tokenId, Date.now() + 3600_000).value}`;
     await withServer(config, async ({ origin }) => {
       let res = await rawGet(origin, '/assets/page?path=%2e%2e%2Fsecret.jpg');
@@ -571,11 +571,11 @@ test('login clears legacy share-scope cookie without overwriting session cookie'
     const pagePath = path.join(contentDir, 'shared.html');
     await writeFile(pagePath, '<!doctype html><h1>Shared</h1>');
     registerPage(config, 'shared', pagePath, 'Shared');
-    const token = createShare('shared', '24h', { allowPermanent: false }).token;
+    const token = createShare('shared', '24h').token;
 
     await withServer(config, async ({ origin }) => {
       await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
-      const legacy = createShareScopeCookie('shared', createShare('shared', '24h', { allowPermanent: false }).tokenId, Date.now() + 3600_000).value;
+      const legacy = createShareScopeCookie('shared', createShare('shared', '24h').tokenId, Date.now() + 3600_000).value;
       const shareCookie = `${SHARE_SCOPE_COOKIE_NAME}=${legacy}`;
       const loginCookies = await login(origin, { Cookie: shareCookie });
       assert.match(loginCookies, /__Secure-zylos_pages_session=/);

@@ -77,7 +77,7 @@ async function withServer(authConfig, fn) {
     component: 'content',
   }, config);
   setupAuth(app, authConfig || { enabled: false, password: null });
-  setupShareApi(app, { enabled: true, allowPermanent: false }, config);
+  setupShareApi(app, { enabled: true }, config);
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
   try {
@@ -121,7 +121,7 @@ function cookieHeader(setCookie) {
 }
 
 async function createExpiredShareToken(slug) {
-  const share = createShare(slug, '24h', { allowPermanent: false });
+  const share = createShare(slug, '24h');
   const expiresAt = Date.now() - 1000;
   const db = getPagesDb();
   const secret = db.prepare('SELECT value FROM share_meta WHERE key = ?').get('secret').value;
@@ -288,7 +288,7 @@ test('state API CSRF checks mutating requests only', async () => {
 
 test('state API rejects legacy share-token CRUD for the matching artifact', async () => {
   await registerStatePage('shared-state');
-  const token = createShare('shared-state', '24h', { allowPermanent: false }).token;
+  const token = createShare('shared-state', '24h').token;
 
   await withServer(authConfig(), async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/shared-state?token=${encodeURIComponent(token)}`, {
@@ -314,7 +314,7 @@ test('state API rejects legacy share-token CRUD for the matching artifact', asyn
 });
 
 test('state API allows short-share cookie CRUD for the matching artifact', async () => {
-  const share = createShare('short-state', '24h', { allowPermanent: false });
+  const share = createShare('short-state', '24h');
 
   await withServer(authConfig(), async ({ origin }) => {
     const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
@@ -348,7 +348,7 @@ test('state API allows short-share cookie CRUD for the matching artifact', async
 
 test('state API share-token scope mismatch falls through to auth wall', async () => {
   await registerStatePage('scope-source');
-  const token = createShare('scope-source', '24h', { allowPermanent: false }).token;
+  const token = createShare('scope-source', '24h').token;
 
   await withServer(authConfig(), async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/other-artifact?token=${encodeURIComponent(token)}`, {
@@ -368,7 +368,7 @@ test('state API share-token scope mismatch falls through to auth wall', async ()
 
 test('state API rejects legacy share-token mutating requests before CSRF handling', async () => {
   await registerStatePage('share-csrf');
-  const token = createShare('share-csrf', '24h', { allowPermanent: false }).token;
+  const token = createShare('share-csrf', '24h').token;
 
   await withServer(authConfig(), async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/share-csrf/key?token=${encodeURIComponent(token)}`, {
@@ -398,7 +398,7 @@ test('state API rejects legacy share-token mutating requests before CSRF handlin
 test('state API invalid share tokens fall through to auth wall', async () => {
   await registerStatePage('revoked-state');
   await registerStatePage('expired-state');
-  const revoked = createShare('revoked-state', '24h', { allowPermanent: false });
+  const revoked = createShare('revoked-state', '24h');
   revokeShare(revoked.tokenId);
   const expiredToken = await createExpiredShareToken('expired-state');
 
@@ -445,7 +445,7 @@ test('state API auth wall redirects unauthenticated and malformed-token API requ
 
 test('legacy share tokens do not grant access to raw API or pages', async () => {
   await registerStatePage('shared-page');
-  const token = createShare('shared-page', '24h', { allowPermanent: false }).token;
+  const token = createShare('shared-page', '24h').token;
   const app = express();
   setupAuth(app, authConfig());
   setupRawApi(app, { contentDir: dataDir });

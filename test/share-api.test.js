@@ -57,7 +57,7 @@ function makeServer({ auth = false, authConfig = null, sharingEnabled = true, sh
     });
   }
   if (sharingEnabled) {
-    setupShareApi(app, { enabled: true, allowPermanent: false }, config);
+    setupShareApi(app, { enabled: true }, config);
   }
   app.get(['/docs/page', '/p/docs/page'], (req, res) => {
     if (req.query.locals === '1') {
@@ -236,7 +236,7 @@ test('patch cannot upgrade share attachment permission and can keep read-only st
 });
 
 test('share viewers cannot patch share attachment permission', async () => {
-  const share = createShare('docs/page', '24h', { allowPermanent: false });
+  const share = createShare('docs/page', '24h');
   const { server, origin } = await makeServer({ shareViewer: true });
   try {
     const response = await patchShare(origin, share.tokenId, true);
@@ -309,7 +309,7 @@ test('short share URL sets access cookie and renders clean page in place', async
 });
 
 test('short share URL remains accessible when auth is enabled without password', async () => {
-  const share = createShare('docs/page', '24h', { allowPermanent: false });
+  const share = createShare('docs/page', '24h');
   const { server, origin } = await makeServer({
     authConfig: { enabled: true, password: null },
   });
@@ -410,7 +410,7 @@ test('auth middleware keeps short share cookies read-only', async () => {
 test('legacy long share token bypass is rejected while short links still work', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
-    const share = createShare('docs/page', '24h', { allowPermanent: false });
+    const share = createShare('docs/page', '24h');
 
     let response = await fetch(`${origin}/docs/page?token=${encodeURIComponent(share.token)}`, {
       redirect: 'manual',

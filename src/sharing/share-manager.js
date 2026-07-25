@@ -259,18 +259,17 @@ function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
   return Math.max(0, Math.min(maxAgeSeconds, remaining));
 }
 
-export function createShare(slug, duration, sharingConfig = {}, options = {}) {
+export function createShare(slug, duration) {
   initShareStore();
   const uri = pageUriFromSlug(slug);
   const page = getLogicalPage(uri);
   if (!page) {
     throw Object.assign(new Error('Page not found'), { statusCode: 404 });
   }
+  // Share tokens are read-only. Kept as a named constant because it is written
+  // to the row and returned to callers, but there is deliberately no way to
+  // turn it on from the outside.
   const canWriteAttachments = false;
-
-  if (duration === 'permanent' && !sharingConfig.allowPermanent) {
-    throw Object.assign(new Error('Permanent shares are disabled'), { statusCode: 403 });
-  }
 
   const durationMs = DURATION_MAP[duration];
   if (durationMs === undefined) {

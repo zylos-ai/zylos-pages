@@ -29,7 +29,7 @@ async function makeServer() {
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
   };
-  setupShareApi(app, { enabled: true, allowPermanent: false }, config);
+  setupShareApi(app, { enabled: true }, config);
   setupPageApi(app, config);
 
   const server = http.createServer(app);

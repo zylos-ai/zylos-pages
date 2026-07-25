@@ -258,7 +258,7 @@ function commandShare(args) {
     throw new CliError('sharing_disabled', 'sharing is disabled in config (sharing.enabled=false)');
   }
   const slug = shareSlugForUri(uri);
-  const result = createShare(slug, duration, config.sharing || {});
+  const result = createShare(slug, duration);
   output({
     ok: true,
     command: 'share',

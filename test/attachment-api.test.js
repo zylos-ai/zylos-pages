@@ -43,7 +43,7 @@ function baseConfig(contentDir, auth = authConfig(), extra = {}) {
   return {
     contentDir,
     auth,
-    sharing: { enabled: true, allowPermanent: false },
+    sharing: { enabled: true },
     attachments: { maxFileSizeBytes: 128, ...(extra.attachments || {}) },
     externalFiles: { allowedSources: { content: contentDir } },
   };
@@ -61,8 +61,8 @@ function registerContentPage(contentDir, uri, title = uri) {
 
 async function withServer(config, fn, options = {}) {
   const app = express();
-  setupAuth(app, config.auth || { enabled: false, password: null }, config.sharing || { enabled: true, allowPermanent: false });
-  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
+  setupAuth(app, config.auth || { enabled: false, password: null }, config.sharing || { enabled: true });
+  setupShareApi(app, config.sharing || { enabled: true }, config);
   setupAttachmentApi(app, config, options);
   app.get('/s/:slug', (_req, res) => res.status(200).send('fallback'));
   app.get('/:slug(*)', (req, res) => res.status(200).send(req.params.slug || 'root'));
@@ -139,7 +139,7 @@ async function patchSharePermission(origin, tokenId, canWriteAttachments, cookie
 }
 
 async function createExpiredShareToken(slug, options = {}) {
-  const share = createShare(slug, '24h', { allowPermanent: false }, options);
+  const share = createShare(slug, '24h');
   const expiresAt = Date.now() - 1000;
   const db = getPagesDb();
   const secret = db.prepare('SELECT value FROM share_meta WHERE key = ?').get('secret').value;
@@ -290,7 +290,7 @@ test('uploaded original filenames cannot break attachment file response headers'
 test('share viewers can list and read matching artifact attachments but cannot mutate', async () => {
   const contentDir = await makeContentDir();
   try {
-    const share = createShare('renovation-checklist', '24h', { allowPermanent: false });
+    const share = createShare('renovation-checklist', '24h');
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       const authCookie = await login(origin);
       const uploaded = await upload(origin, 'renovation-checklist', 'share-log', authCookie);
@@ -336,7 +336,7 @@ test('share viewers can list and read matching artifact attachments but cannot m
 test('short share viewers remain read-only even when write permission is requested', async () => {
   const contentDir = await makeContentDir();
   try {
-    const share = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
+    const share = createShare('renovation-checklist', '24h');
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       let res = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
       assert.equal(res.status, 200);
@@ -376,7 +376,7 @@ test('existing short share cookie sessions cannot be upgraded to attachment writ
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       const authCookie = await login(origin);
 
-      const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
+      const readOnly = createShare('renovation-checklist', '24h');
       let res = await fetch(`${origin}/s/${readOnly.tokenId}`, { redirect: 'manual' });
       assert.equal(res.status, 200);
       const readOnlyCookies = cookieHeader(res.headers.get('set-cookie'));
@@ -398,8 +398,8 @@ test('existing short share cookie sessions cannot be upgraded to attachment writ
 test('legacy tokens no longer authorize attachment access', async () => {
   const contentDir = await makeContentDir();
   try {
-    const readOnly = createShare('renovation-checklist', '24h', { allowPermanent: false });
-    const editable = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
+    const readOnly = createShare('renovation-checklist', '24h');
+    const editable = createShare('renovation-checklist', '24h');
 
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       let res = await fetch(`${origin}/api/attachments/renovation-checklist/legacy-readonly?token=${encodeURIComponent(readOnly.token)}`, {
@@ -441,7 +441,7 @@ test('legacy tokens no longer authorize attachment access', async () => {
 test('revoked and expired editable shares cannot mutate attachments', async () => {
   const contentDir = await makeContentDir();
   try {
-    const share = createShare('renovation-checklist', '24h', { allowPermanent: false }, { canWriteAttachments: true });
+    const share = createShare('renovation-checklist', '24h');
     revokeShare(share.tokenId);
     const expiredToken = await createExpiredShareToken('renovation-checklist', { canWriteAttachments: true });
 
@@ -464,10 +464,10 @@ test('revoked and expired editable shares cannot mutate attachments', async () =
 test('revoked, expired, malformed, and wrong-artifact shares cannot read attachments', async () => {
   const contentDir = await makeContentDir();
   try {
-    const revoked = createShare('renovation-checklist', '24h', { allowPermanent: false });
+    const revoked = createShare('renovation-checklist', '24h');
     revokeShare(revoked.tokenId);
     const expiredToken = await createExpiredShareToken('renovation-checklist');
-    const wrongToken = createShare('notes', '24h', { allowPermanent: false }).token;
+    const wrongToken = createShare('notes', '24h').token;
 
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       for (const token of [revoked.token, expiredToken, wrongToken, 'not-a-token']) {

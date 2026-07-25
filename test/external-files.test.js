@@ -220,6 +220,9 @@ test('allow-root add preserves existing config fields and enables registration f
       enabled: true,
       password: 'scrypt:already-hashed',
     },
+    // `allowPermanent` was removed as a supported option in 0.7.5. It is kept
+    // here on purpose: this test is about `allow-root add` preserving config
+    // keys it does not own, and an unrecognised key is the strongest canary.
     sharing: {
       enabled: true,
       allowPermanent: false,
