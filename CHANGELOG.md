@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.7.7] - 2026-07-25
+
+Logout now clears every credential cookie it can be carrying, and the boundary
+of what logout does — and does not — end is written down as tests rather than
+left to be re-derived by the next person to ask.
+
+A correction belongs at the top of this entry: the issue that prompted it
+claimed a stale `__Secure-share_scope` cookie could still authorize signed
+attachments for up to an hour. That is not true of this codebase. The
+scope-cookie mechanism was retired in 0.7.0 when share views moved to signed
+asset URLs (#73, `0b2a9b0` — the same commit deleted the middleware's only call
+to `verifyShareScopeCookie`, which has had no caller since). Measured
+rather than reasoned: a **valid** scope cookie was replayed against an asset in
+scope, a loose asset, and the shared page, and all three were denied. Each probe
+is paired with the status a logged-in session gets on that same route — 200 for
+the in-scope asset and the shared page, and 404 for the loose asset, which no
+viewer can reach because the legacy contentDir route is disabled. So the loose
+probe shows the scope cookie failing at the asset guard (403) rather than
+reaching absent content, which is a weaker statement than the other two and is
+now written as such. The defect is the asymmetry and the stale credential, not
+a live bypass.
+
+### Fixed
+- **Logout clears the `__Secure-share_scope` cookie.** Login cleared all three credential cookies (session, share-access, share-scope); logout cleared two and left the scope cookie to expire on its own, up to an hour later. Logout means "clear this browser's credentials", and a cookie surviving it is wrong on its own terms — the more so because the verification helper is still exported, so anything that re-wires it would silently inherit a credential that logout was believed to have removed.
+
+### Tests
+- **The deletion contract is tested as deletion, separately from policy.** Which stored cookie a `Set-Cookie` replaces is decided by name + Domain + Path (RFC 6265 §5.3), so that — plus an immediate expiry — is what the deletion test asserts, compared against the actual issuing headers rather than hand-copied literals: the login response for the session cookie, `createShareScopeCookie()` for the scope cookie, the real share visit for share-access. `Secure` is asserted alongside them only because these names carry the `__Secure-` prefix, which a user agent rejects outright when the attribute is absent (RFC 6265bis §4.1.3.1) — taken from the spec, not measured here. `HttpOnly` and `SameSite` are checked in a separate test labelled as policy consistency, because they are not part of cookie identity: folding them into the deletion check would have failed a future deliberate hardening of issuance while logout was still deleting the right cookie. Both tests guard against extracting nothing, since two empty attribute sets compare equal no matter what either side does.
+- **Path is covered on prefixed mounts, with the failure mode as its own assertion.** Under `X-Forwarded-Prefix: /coco/pages` all three clears must carry `Path=/coco/pages`; a separate check asserts no `__Secure-` cookie is cleared at `Path=/`, since clearing at the wrong path leaves the real cookie alive while looking correct.
+- **Negative control for the cleared-cookie assertions.** They are run against a login response, which must reject it — otherwise a matcher too loose to tell a live cookie from an expired one would let both tests above pass vacuously.
+- **A valid share-scope cookie is pinned as granting nothing** (`asset-route.test.js`). The existing coverage only replayed expired and tampered cookies, which prove signature checking, not retirement. This replays a valid one against an in-scope asset, a loose asset and the shared page, each paired with the status a logged-in session gets on that same route (200, 404, 200) so "denied" cannot be confused with "route absent", plus an assertion that a session never hits the asset guard — otherwise the 403 above would prove nothing. Re-wiring the retired helper now breaks a test instead of quietly restoring a bypass.
+- **What logout does not do is pinned too** (`share-api.test.js`). Logout clears this browser's copy of a share session; it is not a revocation. A client that keeps the cookie still has exactly the access the public share link grants, and revoking the share is what ends it. The test asserts all three states — granted before logout, still granted after, gone after revocation — so the boundary is a fixture rather than an assumption.
+
 ## [0.7.6] - 2026-07-25
 
 Closes the other half of the share-link incident follow-up. 0.7.5 made revocation

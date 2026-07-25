@@ -563,6 +563,92 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
     });
     assert.equal(logout.status, 302);
     assert.match(logout.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
+
+    // Which stored cookie a Set-Cookie replaces is decided by name + Domain +
+    // Path (RFC 6265 5.3); Secure is required on top only because the name
+    // carries the __Secure- prefix. Compare those against the header the share
+    // visit actually sent, rather than against hand-written literals.
+    const attributes = (setCookie) => new Set(
+      setCookie.split(/,\s*(?=__Secure-|__Host-)/)
+        .find(entry => entry.startsWith('__Secure-share_access='))
+        .split(';').slice(1)
+        .map(part => part.trim())
+        .filter(part => part && !/^Max-Age=/i.test(part))
+    );
+    const identity = (setCookie) => new Set(
+      [...attributes(setCookie)].filter(attribute => /^(Path=|Domain=|Secure$)/i.test(attribute))
+    );
+    const issuedIdentity = identity(shareVisit.headers.get('set-cookie'));
+    const clearedIdentity = identity(logout.headers.get('set-cookie'));
+
+    // Guard: without this, an extractor that stopped finding Path would leave
+    // {Secure} on both sides — deepEqual passes, the Secure assertion passes,
+    // and the Path half of the identity would silently stop being tested.
+    assert.ok(
+      [...issuedIdentity].some(attribute => /^Path=\S/i.test(attribute)),
+      'share_access issuance should carry a non-empty Path'
+    );
+
+    assert.deepEqual(
+      clearedIdentity,
+      issuedIdentity,
+      'share_access should be deleted under the identity it was issued with'
+    );
+    assert.ok(
+      clearedIdentity.has('Secure'),
+      '__Secure- prefixed names are rejected without the Secure attribute'
+    );
+  } finally {
+    server.close();
+  }
+});
+
+// Boundary that logout does and does not cover, pinned so it stops being
+// folklore: logging out clears this browser's copy of the share-access
+// cookie, but it is not a revocation — a client that keeps the cookie still
+// has the access the public share link grants until the share is revoked.
+test('logout clears the browser copy of a share session but does not revoke the share', async () => {
+  const { server, origin } = await makeServer({ auth: true });
+  try {
+    const sessionCookie = await login(origin);
+    const share = await createShareViaApi(origin, cookieHeader(sessionCookie), {
+      slug: 'p/docs/page',
+      duration: '24h',
+    });
+    const shareVisit = await fetch(share.url, { redirect: 'manual' });
+    const shareAccess = shareVisit.headers.get('set-cookie')
+      .match(/__Secure-share_access=([^;,]+)/)[1];
+    const shareCookie = `__Secure-share_access=${shareAccess}`;
+
+    // Positive control: the retained cookie grants the shared page.
+    const before = await fetch(`${origin}/p/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: shareCookie },
+    });
+    assert.equal(before.status, 200);
+
+    const logout = await fetch(`${origin}/logout`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { Origin: origin, Cookie: cookieHeader(sessionCookie) },
+    });
+    assert.equal(logout.status, 302);
+
+    // Unchanged by logout — the share link is public until revoked.
+    const after = await fetch(`${origin}/p/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: shareCookie },
+    });
+    assert.equal(after.status, 200);
+
+    // Revocation is what actually ends it.
+    assert.equal(revokeShare(share.tokenId), true);
+    const revoked = await fetch(`${origin}/p/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: shareCookie },
+    });
+    assert.equal(revoked.status, 302);
+    assert.match(revoked.headers.get('location'), /^\/login/);
   } finally {
     server.close();
   }

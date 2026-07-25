@@ -505,6 +505,69 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
   }
 });
 
+// The scope cookie was retired when shares moved to signed asset URLs (#73):
+// nothing issues it and nothing verifies it. Pinned here so a stale copy left
+// in a browser is known to grant nothing, and so re-wiring the still-exported
+// helper would break a test rather than silently restore a bypass.
+test('a valid share-scope cookie grants nothing on any route', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const pagePath = path.join(contentDir, 'scoped.html');
+    await writeFile(pagePath, '<!doctype html><img src="pic.png">');
+    await writeFile(path.join(contentDir, 'pic.png'), 'pic');
+    await writeFile(path.join(contentDir, 'loose.jpg'), 'loose');
+    registerPage(config, 'scoped', pagePath, 'Scoped');
+    const share = createShare('scoped', '24h');
+    const scopeCookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('scoped', share.tokenId, Date.now() + 3600_000).value}`;
+
+    await withServer(config, async ({ origin }) => {
+      const page = await fetch(`${origin}/s/${share.tokenId}`);
+      assert.equal(page.status, 200);
+      const unsignedAsset = signedAssetPath(await page.text(), 'pic.png').replace(/[?&](exp|sig)=[^&]*/g, '');
+
+      // Each probe carries the status a logged-in session gets on that same
+      // route, so "denied" is never confused with "route absent". The loose
+      // asset is not reachable by anyone — the legacy contentDir route is
+      // disabled — so its control is 404, and what the scope cookie fails to
+      // do there is get past the asset guard (403) rather than reach content.
+      const probes = [
+        ['unsigned asset in scope', unsignedAsset, expectLoginRedirect, 200],
+        ['loose asset', '/loose.jpg', expectAssetDenied, 404],
+        ['the shared page', '/scoped', expectLoginRedirect, 200],
+      ];
+
+      for (const [label, requestPath, expectDenied] of probes) {
+        const res = await fetch(`${origin}${requestPath}`, {
+          redirect: 'manual',
+          headers: { Cookie: scopeCookie },
+        });
+        expectDenied(res, `${label} should not be granted by a share-scope cookie`);
+      }
+
+      const session = sessionCookie(await login(origin));
+      for (const [label, requestPath, , sessionStatus] of probes) {
+        const res = await fetch(`${origin}${requestPath}`, {
+          redirect: 'manual',
+          headers: { Cookie: session },
+        });
+        assert.equal(
+          res.status,
+          sessionStatus,
+          `${label} should answer ${sessionStatus} for a logged-in session`
+        );
+        assert.notEqual(
+          res.status,
+          403,
+          `${label}: a session must never hit the asset guard, or the 403 above proves nothing`
+        );
+      }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('revoked share invalidates existing signed asset URLs', async () => {
   const contentDir = await makeContentDir();
   try {
