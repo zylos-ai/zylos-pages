@@ -586,6 +586,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     const cookiePath = cookiePathFromBase(browserBase);
     clearSessionCookie(res, cookiePath);
     clearShareAccessCookie(res, cookiePath);
+    clearShareScopeCookie(res, cookiePath);
     clearLegacyHostCookies(res);
     res.redirect(302, `${browserPath(browserBase, 'login')}?next=${encodeURIComponent(browserRoot(browserBase))}`);
   }

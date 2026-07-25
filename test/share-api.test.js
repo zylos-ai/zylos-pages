@@ -563,6 +563,72 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
     });
     assert.equal(logout.status, 302);
     assert.match(logout.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
+
+    // The clear only expires the cookie if its attributes match the issuing
+    // ones — compare against the header the share visit actually sent.
+    const attributes = (setCookie) => new Set(
+      setCookie.split(/,\s*(?=__Secure-|__Host-)/)
+        .find(entry => entry.startsWith('__Secure-share_access='))
+        .split(';').slice(1)
+        .map(part => part.trim())
+        .filter(part => part && !/^Max-Age=/i.test(part))
+    );
+    assert.deepEqual(
+      attributes(logout.headers.get('set-cookie')),
+      attributes(shareVisit.headers.get('set-cookie')),
+      'share_access clear attributes should match its issuing attributes'
+    );
+  } finally {
+    server.close();
+  }
+});
+
+// Boundary that logout does and does not cover, pinned so it stops being
+// folklore: logging out clears this browser's copy of the share-access
+// cookie, but it is not a revocation — a client that keeps the cookie still
+// has the access the public share link grants until the share is revoked.
+test('logout clears the browser copy of a share session but does not revoke the share', async () => {
+  const { server, origin } = await makeServer({ auth: true });
+  try {
+    const sessionCookie = await login(origin);
+    const share = await createShareViaApi(origin, cookieHeader(sessionCookie), {
+      slug: 'p/docs/page',
+      duration: '24h',
+    });
+    const shareVisit = await fetch(share.url, { redirect: 'manual' });
+    const shareAccess = shareVisit.headers.get('set-cookie')
+      .match(/__Secure-share_access=([^;,]+)/)[1];
+    const shareCookie = `__Secure-share_access=${shareAccess}`;
+
+    // Positive control: the retained cookie grants the shared page.
+    const before = await fetch(`${origin}/p/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: shareCookie },
+    });
+    assert.equal(before.status, 200);
+
+    const logout = await fetch(`${origin}/logout`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { Origin: origin, Cookie: cookieHeader(sessionCookie) },
+    });
+    assert.equal(logout.status, 302);
+
+    // Unchanged by logout — the share link is public until revoked.
+    const after = await fetch(`${origin}/p/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: shareCookie },
+    });
+    assert.equal(after.status, 200);
+
+    // Revocation is what actually ends it.
+    assert.equal(revokeShare(share.tokenId), true);
+    const revoked = await fetch(`${origin}/p/docs/page`, {
+      redirect: 'manual',
+      headers: { Cookie: shareCookie },
+    });
+    assert.equal(revoked.status, 302);
+    assert.match(revoked.headers.get('location'), /^\/login/);
   } finally {
     server.close();
   }

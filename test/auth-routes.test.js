@@ -9,7 +9,53 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-test-'));
 process.env.PAGES_DATA_DIR = tmpDir;
 
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
+const { createShareScopeCookie } = await import('../src/sharing/share-manager.js');
 const express = (await import('express')).default;
+
+// Set-Cookie headers arrive joined by ", " — split on the cookie-name boundary.
+function splitSetCookie(header) {
+  return header.split(/,\s*(?=__Secure-|__Host-)/);
+}
+
+function findCookie(header, name) {
+  const cookie = splitSetCookie(header).find(entry => entry.startsWith(`${name}=`));
+  assert.ok(cookie, `${name} should be present in Set-Cookie`);
+  return cookie;
+}
+
+function cookieValue(cookie) {
+  return cookie.split(';', 1)[0].split('=').slice(1).join('=');
+}
+
+// Attributes except Max-Age, which differs between issuing and clearing.
+function cookieAttributes(cookie) {
+  return new Set(
+    cookie.split(';').slice(1)
+      .map(part => part.trim())
+      .filter(part => part && !/^Max-Age=/i.test(part))
+  );
+}
+
+async function logout(origin, extraHeaders = {}) {
+  const response = await fetch(`${origin}/logout`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { Origin: origin, ...extraHeaders },
+  });
+  assert.equal(response.status, 302);
+  return response.headers.get('set-cookie');
+}
+
+async function loginCookies(origin, extraHeaders = {}) {
+  const response = await fetch(`${origin}/login`, {
+    method: 'POST',
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', ...extraHeaders },
+    body: new URLSearchParams({ password: 'secret' }),
+  });
+  assert.equal(response.status, 302);
+  return response.headers.get('set-cookie');
+}
 
 test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -292,6 +338,87 @@ test('session persists in SQLite (survives validation after store reinit)', asyn
       headers: { Cookie: `__Secure-zylos_pages_session=${tokenMatch[1]}` },
     });
     assert.equal(authedRes.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+// Logout must clear every credential cookie this browser can be carrying:
+// the login session, the share-access session, and the retired share-scope
+// cookie. Login already cleared all three; logout used to skip share_scope.
+test('logout clears session, share-access, and share-scope cookies at the mount path', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    for (const [prefix, expectedPath] of [[null, '/'], ['/coco/pages', '/coco/pages']]) {
+      const header = await logout(origin, prefix ? { 'X-Forwarded-Prefix': prefix } : {});
+
+      for (const name of ['__Secure-zylos_pages_session', '__Secure-share_access', '__Secure-share_scope']) {
+        const cookie = findCookie(header, name);
+        assert.equal(cookieValue(cookie), '', `${name} should be cleared`);
+        assert.match(cookie, /Max-Age=0/, `${name} should expire immediately`);
+        assert.ok(
+          cookieAttributes(cookie).has(`Path=${expectedPath}`),
+          `${name} should be cleared at Path=${expectedPath}, got: ${cookie}`
+        );
+      }
+
+      // Negative control: clearing at the wrong Path leaves the real cookie
+      // alive, so on a prefixed mount no __Secure- cookie may use Path=/.
+      if (prefix) {
+        for (const cookie of splitSetCookie(header)) {
+          if (!cookie.startsWith('__Secure-')) continue;
+          assert.ok(
+            !cookieAttributes(cookie).has('Path=/'),
+            `prefixed logout must not clear at Path=/, got: ${cookie}`
+          );
+        }
+      }
+    }
+  } finally {
+    server.close();
+  }
+});
+
+// A clear only expires the cookie when its attributes match the ones used to
+// issue it, so compare against the real issuing headers rather than literals.
+test('logout clear headers match the attributes each cookie is issued with', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const cookiePath = '/coco/pages';
+    const headers = { 'X-Forwarded-Prefix': cookiePath };
+    const cleared = await logout(origin, headers);
+    const issuedSession = findCookie(await loginCookies(origin, headers), '__Secure-zylos_pages_session');
+    const tokenId = 'a'.repeat(32);
+    const expiresAt = Date.now() + 3600_000;
+
+    // share_access issuance needs a real share row, so its parity check lives
+    // in share-api.test.js where a share link is actually visited.
+    const pairs = [
+      ['__Secure-zylos_pages_session', issuedSession],
+      ['__Secure-share_scope', createShareScopeCookie('page', tokenId, expiresAt, cookiePath).header],
+    ];
+
+    for (const [name, issued] of pairs) {
+      assert.deepEqual(
+        cookieAttributes(findCookie(cleared, name)),
+        cookieAttributes(issued),
+        `${name} clear attributes should match its issuing attributes`
+      );
+    }
+  } finally {
+    server.close();
+  }
+});
+
+// Negative control for the two tests above: the "cleared" assertions must be
+// able to fail. Login issues a live session cookie, so running them against a
+// login response has to reject it.
+test('login issues a live session cookie, so the cleared-cookie assertions discriminate', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const session = findCookie(await loginCookies(origin), '__Secure-zylos_pages_session');
+    assert.notEqual(cookieValue(session), '', 'login must issue a non-empty session cookie');
+    assert.doesNotMatch(session, /Max-Age=0/, 'login must not expire the session cookie');
   } finally {
     server.close();
   }

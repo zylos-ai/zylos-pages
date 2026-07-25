@@ -505,6 +505,56 @@ test('expired and tampered share-scope cookies fall through to auth wall', async
   }
 });
 
+// The scope cookie was retired when shares moved to signed asset URLs (#73):
+// nothing issues it and nothing verifies it. Pinned here so a stale copy left
+// in a browser is known to grant nothing, and so re-wiring the still-exported
+// helper would break a test rather than silently restore a bypass.
+test('a valid share-scope cookie grants nothing on any route', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const pagePath = path.join(contentDir, 'scoped.html');
+    await writeFile(pagePath, '<!doctype html><img src="pic.png">');
+    await writeFile(path.join(contentDir, 'pic.png'), 'pic');
+    await writeFile(path.join(contentDir, 'loose.jpg'), 'loose');
+    registerPage(config, 'scoped', pagePath, 'Scoped');
+    const share = createShare('scoped', '24h');
+    const scopeCookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('scoped', share.tokenId, Date.now() + 3600_000).value}`;
+
+    await withServer(config, async ({ origin }) => {
+      const page = await fetch(`${origin}/s/${share.tokenId}`);
+      assert.equal(page.status, 200);
+      const unsignedAsset = signedAssetPath(await page.text(), 'pic.png').replace(/[?&](exp|sig)=[^&]*/g, '');
+
+      const denied = [
+        ['unsigned asset in scope', unsignedAsset, expectLoginRedirect],
+        ['loose asset', '/loose.jpg', expectAssetDenied],
+        ['the shared page', '/scoped', expectLoginRedirect],
+      ];
+      for (const [label, requestPath, expect] of denied) {
+        const res = await fetch(`${origin}${requestPath}`, {
+          redirect: 'manual',
+          headers: { Cookie: scopeCookie },
+        });
+        expect(res, `${label} should not be granted by a share-scope cookie`);
+      }
+
+      // Positive control: the same routes answer for a logged-in session, so
+      // the assertions above can distinguish "denied" from "route missing".
+      const session = sessionCookie(await login(origin));
+      for (const [label, requestPath] of [['unsigned asset in scope', unsignedAsset], ['the shared page', '/scoped']]) {
+        const res = await fetch(`${origin}${requestPath}`, {
+          redirect: 'manual',
+          headers: { Cookie: session },
+        });
+        assert.equal(res.status, 200, `${label} should be reachable with a session`);
+      }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('revoked share invalidates existing signed asset URLs', async () => {
   const contentDir = await makeContentDir();
   try {
