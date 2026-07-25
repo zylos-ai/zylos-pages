@@ -149,14 +149,15 @@ test('DELETE unregisters a page, removes page-id keyed share rows, and keeps sou
     assert.equal(body.ok, true);
     assert.equal(body.pageId, page.pageId);
     assert.equal(body.uri, 'delete/me');
-    assert.equal(body.removedShares, 1);
+    assert.equal(body.tombstonedShares, 1);
     assert.equal(body.removedSessions, 1);
 
     assert.equal(getLogicalPage('delete/me'), null);
     assert.equal(getLogicalPageById(page.pageId), null);
+    // The link is dead — it just remains answerable.
     assert.equal(getActiveShare(share.tokenId), null);
     assert.deepEqual(listSharesForSlug('delete/me'), []);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM shares WHERE page_id = ?').get(page.pageId).count, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM shares WHERE page_id = ?').get(page.pageId).count, 1);
     assert.equal(db.prepare('SELECT COUNT(*) AS count FROM share_sessions WHERE page_id = ?').get(page.pageId).count, 0);
     assert.equal(fs.existsSync(sourcePath), true);
   } finally {

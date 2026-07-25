@@ -4,7 +4,7 @@
 // verified only for backwards compatibility.
 
 import crypto from 'node:crypto';
-import { getPagesDb } from '../db/pages-db.js';
+import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
 import { getLogicalPage, getLogicalPageById } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
@@ -109,7 +109,8 @@ function initShareStore() {
       created_at INTEGER NOT NULL,
       can_write_attachments INTEGER NOT NULL DEFAULT 0,
       revoked INTEGER NOT NULL DEFAULT 0,
-      revoked_at INTEGER
+      revoked_at INTEGER,
+      origin_uri TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_shares_page_created ON shares(page_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS share_sessions (
@@ -123,6 +124,13 @@ function initShareStore() {
     );
     CREATE INDEX IF NOT EXISTS idx_share_sessions_token_id ON share_sessions(token_id);
   `);
+
+  // A share resolves its document through page_id while the page exists, so a
+  // rename or move is followed automatically. origin_uri is the fallback for
+  // the one case where that lookup can no longer work: the page was
+  // unregistered, and the uri it had at that moment is stamped here (by
+  // page-store) so the link is still answerable afterwards.
+  addColumnIfMissing(db, 'shares', 'origin_uri', 'TEXT');
 
   _getMeta = db.prepare('SELECT value FROM share_meta WHERE key = ?');
   _setMeta = db.prepare('INSERT OR REPLACE INTO share_meta (key, value) VALUES (?, ?)');
@@ -140,7 +148,7 @@ function initShareStore() {
     ORDER BY created_at DESC
   `);
   _listAllShares = db.prepare(`
-    SELECT token_id, page_id, expires_at, created_at, can_write_attachments
+    SELECT token_id, page_id, expires_at, created_at, can_write_attachments, origin_uri
     FROM shares
     WHERE revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
@@ -545,24 +553,24 @@ export function listSharesForSlug(slug) {
 // answers "what links exist for this page?"; auditing an instance asks the
 // inverse and had no answer before this. Same liveness predicate as that
 // function: revoked = 0 AND (permanent OR not yet expired).
+//
+// Tombstones are excluded on top of that predicate. A share whose page was
+// unregistered cannot serve anything, so listing it would overstate what this
+// box exposes — which is the one question this function exists to answer.
+// `share-info` is where those rows remain visible.
 export function listAllShares() {
   initShareStore();
-  return _listAllShares.all(nowMs()).map(record => {
-    const page = getLogicalPageById(record.page_id);
-    return {
+  return _listAllShares.all(nowMs())
+    .map(record => ({ record, page: getLogicalPageById(record.page_id) }))
+    .filter(({ page }) => page !== null)
+    .map(({ record, page }) => ({
       tokenId: record.token_id,
       pageId: record.page_id,
-      // Unreachable today: unregister deletes a page's share rows along with
-      // the page, so a surviving share always resolves. Kept because the
-      // reverse — dropping the row and reporting nothing — is how the ledger
-      // loses history, and because #108 may turn unregister into a tombstone,
-      // at which point this is the live path rather than a guard.
-      uri: page ? page.uri : null,
+      uri: page.uri,
       expiresAt: record.expires_at,
       createdAt: record.created_at,
       canWriteAttachments: record.can_write_attachments === 1,
-    };
-  });
+    }));
 }
 
 // Accepts either a bare token id or the whole share URL someone pasted, since
@@ -583,7 +591,8 @@ function durationLabel(createdAt, expiresAt) {
 
 // Answers "here is a link — which document is it, and is it still live?".
 // Unlike listSharesForSlug/listAllShares this deliberately ignores liveness:
-// the whole point is to resolve links that are already expired or revoked.
+// the whole point is to resolve links that are already expired, revoked, or
+// pointed at a document that no longer exists.
 export function describeShare(input) {
   const tokenId = tokenIdFromInput(input);
   if (!tokenId) return null;
@@ -591,16 +600,28 @@ export function describeShare(input) {
   const record = _getShare.get(tokenId);
   if (!record) return null;
   const page = getLogicalPageById(record.page_id);
+  const documentDeleted = page === null;
   const expired = hasExpired(record.expires_at);
-  // Revoked wins over expired: it is the deliberate act, and both timestamps
-  // are returned anyway for anyone who needs to see the full history.
-  const status = record.revoked ? 'revoked' : (expired ? 'expired' : 'active');
+  // Precedence, strongest claim first:
+  //   revoked          — the deliberate act, and the only reversible one
+  //   document_deleted — there is no longer anything to serve
+  //   expired          — the clock ran out
+  // A deleted document outranks expiry because it says something about the
+  // content rather than the calendar. Every underlying fact is returned
+  // alongside, so nothing here hides state from a caller that wants it all.
+  let status = 'active';
+  if (record.revoked) status = 'revoked';
+  else if (documentDeleted) status = 'document_deleted';
+  else if (expired) status = 'expired';
   return {
     tokenId: record.token_id,
     pageId: record.page_id,
-    // See listAllShares: null is unreachable while unregister cascades.
-    uri: page ? page.uri : null,
+    // The page's current uri while it exists (so renames are followed), and
+    // the uri stamped at unregister once it does not. Null only for rows that
+    // predate the stamp and whose page is already gone.
+    uri: page ? page.uri : (record.origin_uri ?? null),
     status,
+    documentDeleted,
     createdAt: record.created_at,
     expiresAt: record.expires_at,
     revokedAt: record.revoked_at,

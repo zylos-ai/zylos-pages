@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { getPagesDb } from '../db/pages-db.js';
+import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
@@ -247,14 +247,26 @@ function unregisterLogicalPageRecord(page) {
   }
   initPageStore();
   const remove = db.transaction(() => {
+    // Sessions are transient browser state and must die with the page — they
+    // are what would otherwise still open it.
     const removedSessions = tableExists('share_sessions')
       ? db.prepare('DELETE FROM share_sessions WHERE page_id = ?').run(page.pageId).changes
       : 0;
-    const removedShares = tableExists('shares')
-      ? db.prepare('DELETE FROM shares WHERE page_id = ?').run(page.pageId).changes
-      : 0;
+    // Share rows are not. Deleting them used to take the ledger's only record
+    // that those links existed, so "someone just sent me this link, what was
+    // it?" became unanswerable the moment a page was unregistered. The rows
+    // stay, stamped with the uri the page had right now — the page row that
+    // holds the uri is about to go, and page_id alone names nothing to a
+    // human. The links themselves stop working regardless: every access path
+    // resolves through the page row, which is gone.
+    let tombstonedShares = 0;
+    if (tableExists('shares')) {
+      addColumnIfMissing(db, 'shares', 'origin_uri', 'TEXT');
+      tombstonedShares = db.prepare('UPDATE shares SET origin_uri = ? WHERE page_id = ?')
+        .run(page.uri, page.pageId).changes;
+    }
     const removedPages = db.prepare('DELETE FROM logical_pages WHERE page_id = ?').run(page.pageId).changes;
-    return { removedSessions, removedShares, removedPages };
+    return { removedSessions, tombstonedShares, removedPages };
   });
   const result = remove();
   if (result.removedPages === 0) {
@@ -263,12 +275,15 @@ function unregisterLogicalPageRecord(page) {
   logger.info('logical page unregistered', {
     pageId: page.pageId,
     uri: page.uri,
-    removedShares: result.removedShares,
+    tombstonedShares: result.tombstonedShares,
     removedSessions: result.removedSessions,
   });
   return {
     page,
-    removedShares: result.removedShares,
+    // Named for what now happens to them. The old `removedShares` counted
+    // deletions; reporting a retention under a name that says "removed" is
+    // how a caller ends up believing the links were purged.
+    tombstonedShares: result.tombstonedShares,
     removedSessions: result.removedSessions,
   };
 }

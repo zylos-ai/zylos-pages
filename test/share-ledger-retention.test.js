@@ -164,6 +164,102 @@ test('share-info accepts the whole share URL, not just the token', () => {
   assert.equal(info.share.uri, uri);
 });
 
+// --- unregistered documents ---
+//
+// The other half of the ledger. Retaining expired rows is worthless if
+// deleting the page still wipes them, and keeping the rows alone is not enough
+// either: the uri lives only in the page row, so a surviving share would name
+// nothing. The uri is stamped onto the share rows as the page goes.
+
+function unregister(fixture, uri) {
+  return runCli(fixture, ['unregister', uri, '--json']);
+}
+
+test('share-info still names the document after the page is unregistered', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'ledger/unregistered-lookup');
+  const shared = runCli(fixture, ['share', uri, '--duration', '30d', '--json']);
+
+  const removed = unregister(fixture, uri);
+  assert.equal(removed.tombstonedShares, 1);
+
+  const info = runCli(fixture, ['share-info', shared.tokenId, '--json']);
+
+  assert.equal(info.share.uri, uri, 'the historical document must still be named');
+  assert.equal(info.share.status, 'document_deleted');
+  assert.equal(info.share.documentDeleted, true);
+});
+
+// Criterion 2: nobody may read the answer as "the link still works".
+test('a share on an unregistered page is not active by any access path', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'ledger/unregistered-dead');
+  const shared = runCli(fixture, ['share', uri, '--duration', 'permanent', '--json']);
+
+  unregister(fixture, uri);
+
+  const listed = runCli(fixture, ['shares', '--all', '--json']);
+  assert.equal(listed.count, 0, 'a tombstone is not live exposure');
+  assert.deepEqual(listed.shares, []);
+  // Per-page listing is keyed by a page that no longer exists, so it refuses
+  // rather than returning an empty list that could be read as "nothing shared".
+  const perPage = runCli(fixture, ['shares', uri, '--json'], { expectFailure: true });
+  assert.equal(perPage.code, 'page_missing');
+  assert.equal(runCli(fixture, ['share-info', shared.tokenId, '--json']).share.status, 'document_deleted');
+});
+
+// Criterion 3, stated as its own test so a regression cannot hide behind the
+// one above: live shares on other pages must survive an unrelated unregister.
+test('unregistering one page leaves other pages\' shares live', () => {
+  const fixture = makeFixture();
+  const doomed = registerPage(fixture, 'ledger/doomed');
+  const kept = registerPage(fixture, 'ledger/kept');
+  runCli(fixture, ['share', doomed, '--duration', '30d', '--json']);
+  const survivor = runCli(fixture, ['share', kept, '--duration', '30d', '--json']);
+
+  unregister(fixture, doomed);
+
+  const listed = runCli(fixture, ['shares', '--all', '--json']);
+  assert.equal(listed.count, 1);
+  assert.equal(listed.shares[0].tokenId, survivor.tokenId);
+  assert.equal(listed.shares[0].uri, kept);
+});
+
+// A revoked link on a page that is later unregistered: the deliberate act is
+// the stronger claim and keeps the status, but the deletion is still reported.
+test('revocation outranks deletion in status, without hiding the deletion', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'ledger/revoked-then-deleted');
+  const shared = runCli(fixture, ['share', uri, '--duration', 'permanent', '--json']);
+  runCli(fixture, ['unshare', '--token', shared.tokenId, '--json']);
+
+  unregister(fixture, uri);
+  const info = runCli(fixture, ['share-info', shared.tokenId, '--json']);
+
+  assert.equal(info.share.status, 'revoked');
+  assert.equal(info.share.documentDeleted, true, 'the deletion must still be visible');
+  assert.equal(info.share.uri, uri);
+});
+
+// Negative control for the stamp itself: a row written before this version has
+// no origin_uri, so once its page is gone there is genuinely nothing to name.
+// It must degrade to a null uri rather than crash or invent one.
+test('a pre-existing row without a stamped uri degrades to a null uri', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'ledger/legacy-row');
+  const shared = runCli(fixture, ['share', uri, '--duration', '30d', '--json']);
+
+  unregister(fixture, uri);
+  const db = new Database(path.join(fixture.dataDir, 'pages.db'));
+  const cleared = db.prepare('UPDATE shares SET origin_uri = NULL WHERE token_id = ?').run(shared.tokenId).changes;
+  db.close();
+  assert.equal(cleared, 1, 'fixture must actually clear the stamp');
+
+  const info = runCli(fixture, ['share-info', shared.tokenId, '--json']);
+  assert.equal(info.share.uri, null);
+  assert.equal(info.share.status, 'document_deleted');
+});
+
 // Negative controls. Without these, every assertion above could pass because
 // share-info returns something for any input at all.
 test('share-info fails on a well-formed token that was never issued', () => {

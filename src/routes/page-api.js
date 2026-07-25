@@ -133,7 +133,9 @@ export function setupPageApi(app, config) {
         ok: true,
         pageId: result.page.pageId,
         uri: result.page.uri,
-        removedShares: result.removedShares,
+        // Renamed from removedShares: the rows are kept as an audit trail now,
+        // and a caller reading "removed" would conclude the links were purged.
+        tombstonedShares: result.tombstonedShares,
         removedSessions: result.removedSessions,
       });
     } catch (err) {

@@ -111,8 +111,14 @@ function humanize(result) {
   }
   if (result.command === 'share-info') {
     const share = result.share;
+    // The deleted case is the reason this command exists, so it is stated on
+    // the Document line rather than left to be inferred from a status code:
+    // someone reading "Document: q3/plan" must not conclude the doc is there.
+    const document = share.documentDeleted
+      ? `${share.uri ?? '(unknown)'} — deleted, this link no longer opens anything`
+      : (share.uri ?? '(page no longer registered)');
     return [
-      `Document: ${share.uri ?? '(page no longer registered)'}`,
+      `Document: ${document}`,
       `Status:   ${share.status}`,
       `Created:  ${new Date(Number(share.createdAt)).toISOString()}`,
       `Duration: ${share.duration}`,
@@ -361,7 +367,7 @@ function commandUnregister(args) {
       command: 'unregister',
       uri: result.page.uri,
       pageId: result.page.pageId,
-      removedShares: result.removedShares,
+      tombstonedShares: result.tombstonedShares,
       removedSessions: result.removedSessions,
       sourcePath: result.page.sourcePath,
     }, args.json);

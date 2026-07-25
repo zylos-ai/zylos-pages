@@ -173,6 +173,21 @@ test('`share-info` default output reports the revocation time of a revoked link'
   assert.ok(!Number.isNaN(Date.parse(fieldOf(text, 'Revoked'))), `Revoked must be a date:\n${text}`);
 });
 
+test('`share-info` default output says the document is gone, in words', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'output/info-deleted');
+  const shared = runCliJson(fixture, ['share', uri, '--duration', '30d']);
+  runCliJson(fixture, ['unregister', uri]);
+
+  const text = runCliText(fixture, ['share-info', shared.tokenId]);
+
+  const document = fieldOf(text, 'Document');
+  assert.ok(document.startsWith(uri), `must still name the document, got: ${document}`);
+  // A bare "Document: output/info-deleted" would read as "it is right there".
+  assert.match(document, /deleted/, `must say the document is gone, got: ${document}`);
+  assert.equal(fieldOf(text, 'Status'), 'document_deleted');
+});
+
 test('`share-info` default output accepts the full share URL', () => {
   const fixture = makeFixture();
   const uri = registerPage(fixture, 'output/info-url');
