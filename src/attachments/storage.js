@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { mkdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { DATA_DIR } from '../lib/config.js';
-import { assertValidArtifactId, assertValidAttachmentId } from './validation.js';
+import { assertValidAttachmentId, assertValidPageId } from './validation.js';
 
 export const IMAGE_MIME_TO_EXTENSION = new Map([
   ['image/jpeg', '.jpg'],
@@ -41,9 +41,11 @@ function assertInside(root, target) {
   }
 }
 
-export async function ensureAttachmentDirs(artifact) {
-  assertValidArtifactId(artifact);
-  await mkdir(path.join(attachmentRoot(), artifact), { recursive: true });
+// Directories are named by page id, so they follow a page across a rename for
+// the same reason the metadata rows do.
+export async function ensureAttachmentDirs(pageId) {
+  assertValidPageId(pageId);
+  await mkdir(path.join(attachmentRoot(), pageId), { recursive: true });
   await mkdir(tmpRoot(), { recursive: true });
 }
 
@@ -59,16 +61,16 @@ export function finalStoredFilename(attachmentId, extension) {
   return `${attachmentId}${extension}`;
 }
 
-export function resolveFinalPath(artifact, storedFilename) {
-  assertValidArtifactId(artifact);
+export function resolveFinalPath(pageId, storedFilename) {
+  assertValidPageId(pageId);
   if (!/^[a-f0-9]{32}\.(jpg|png|webp)$/.test(storedFilename || '')) {
     throw Object.assign(new Error('Invalid stored filename'), { statusCode: 400 });
   }
   const root = attachmentRoot();
-  const artifactDir = path.join(root, artifact);
-  const filePath = path.join(artifactDir, storedFilename);
+  const pageDir = path.join(root, pageId);
+  const filePath = path.join(pageDir, storedFilename);
   assertInside(root, filePath);
-  assertInside(artifactDir, filePath);
+  assertInside(pageDir, filePath);
   return filePath;
 }
 

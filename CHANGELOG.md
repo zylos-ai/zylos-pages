@@ -86,7 +86,34 @@ per-artifact ceiling of its own.
   on sessions that are already open, because the share row is re-read on every
   request rather than snapshotted into the cookie.
 
+### Fixed after review (PR #114, `REQUEST_CHANGES`)
+- **The storage ceilings were not ceilings.** They compared `current >= max`
+  before the upload was read, so anything that started under the line finished
+  over it by its own size — with a 12-byte cap, two 8-byte uploads both
+  succeeded and left 16 bytes stored. The comparison now counts the incoming
+  size, and the decision is made in the same step that writes the row, so two
+  uploads that both pass the check before either commits can no longer both be
+  admitted. A cheap pre-check remains, but only as a courtesy that avoids
+  reading an upload for an obviously-full page; it is not the authority.
+- **Attachments are keyed by `page_id`, not by the artifact string.** They were
+  keyed by the page's *current* uri while the share grant follows the stable
+  page id — so a rename carried the grant to the new name while the stored
+  bytes stayed behind under the old one: absent from the total (a fresh ceiling
+  on every rename) and unreachable by listing or deletion. Metadata rows,
+  storage totals and on-disk directories now all use the page id, with a
+  migration that re-keys existing rows, moves their directories, and logs any
+  row whose uri no longer resolves rather than dropping it silently.
+- **The audit contract now matches the code.** CSRF rejections, invalid delete
+  parameters, and both 404 delete outcomes bypassed `auditMutation`, so
+  repeated delete probes from a valid token left no record. Every terminal
+  outcome of both mutation routes is audited, with "never existed" and "someone
+  else deleted it first" recorded as distinct reasons.
+
 ### Tests
+- Overshoot and concurrency are pinned by tests that fail against the previous
+  implementation, as is the rename case: an upload after a rename must still be
+  refused by the ceiling, and the earlier attachment must still be listed under
+  the new name.
 - **The page binding is tested directly rather than through HTTP, because over
   HTTP it cannot be tested at all.** The auth middleware refuses a mismatched
   page before a request can reach the gate, so every route-level assertion

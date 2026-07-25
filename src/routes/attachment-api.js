@@ -4,12 +4,14 @@ import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { logger } from '../utils/logger.js';
 import {
-  artifactByteTotal,
+  countAttachments,
   deleteAttachmentMetadata,
   getAttachment,
   initAttachmentStore,
   insertAttachment,
+  insertAttachmentWithinQuota,
   listAttachments,
+  pageByteTotal,
 } from '../attachments/attachment-store.js';
 import {
   assertMagicMatchesMime,
@@ -113,6 +115,18 @@ export function shareMutationGrant(res, artifact) {
 
 function clientIp(req) {
   return req.ip || req.socket?.remoteAddress || null;
+}
+
+// Every artifact that can hold attachments is a registered logical page
+// (resolvePageDescriptor refuses anything else), so this always resolves for a
+// request that got past ensureArtifactExists. It is the single point where the
+// name in the URL is turned into the identity everything else uses.
+function requirePageId(artifact) {
+  const page = getLogicalPage(artifact);
+  if (!page) {
+    throw Object.assign(new Error('Artifact not found'), { statusCode: 404 });
+  }
+  return page.pageId;
 }
 
 // One line per mutation, allowed or refused. It cannot name a person — a share
@@ -348,28 +362,38 @@ function parseMultipartUpload(req, maxFileSizeBytes) {
   });
 }
 
+function quotaFor(config) {
+  return {
+    maxPerItem: config.attachments?.maxPerItem ?? DEFAULT_MAX_ATTACHMENTS_PER_ITEM,
+    maxArtifactBytes: config.attachments?.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES,
+  };
+}
+
+const QUOTA_MESSAGE = {
+  count: limits => `This list already holds the maximum of ${limits.maxPerItem} attachments`,
+  bytes: () => 'This page has reached its attachment storage limit',
+};
+
 async function createAttachment({ req, res, config, hooks }) {
   const { artifact, key } = req.params;
   assertValidArtifactId(artifact);
   assertValidItemKey(key);
   await ensureArtifactExists(artifact, config.contentDir);
+  const pageId = requirePageId(artifact);
 
-  // Checked before the upload is read, so a link holder hitting a ceiling costs
-  // two DB reads rather than a full file write that then has to unwind.
-  if (res.locals.attachmentWriter?.kind === 'share') {
-    const maxPerItem = config.attachments?.maxPerItem ?? DEFAULT_MAX_ATTACHMENTS_PER_ITEM;
-    if (listAttachments(artifact, key).length >= maxPerItem) {
-      throw Object.assign(
-        new Error(`This list already holds the maximum of ${maxPerItem} attachments`),
-        { statusCode: 409 }
-      );
+  const rationed = res.locals.attachmentWriter?.kind === 'share';
+  const limits = quotaFor(config);
+
+  // A cheap look before the upload is read, so an obviously-full page costs two
+  // DB reads instead of a whole file write that then unwinds. This is a
+  // courtesy, not the decision — the authority is the transaction below, which
+  // is the only place the ceiling can be enforced against a concurrent upload.
+  if (rationed) {
+    if (countAttachments(pageId, key) >= limits.maxPerItem) {
+      throw Object.assign(new Error(QUOTA_MESSAGE.count(limits)), { statusCode: 409 });
     }
-    const maxArtifactBytes = config.attachments?.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
-    if (artifactByteTotal(artifact) >= maxArtifactBytes) {
-      throw Object.assign(
-        new Error('This page has reached its attachment storage limit'),
-        { statusCode: 409 }
-      );
+    if (pageByteTotal(pageId) >= limits.maxArtifactBytes) {
+      throw Object.assign(new Error(QUOTA_MESSAGE.bytes()), { statusCode: 409 });
     }
   }
 
@@ -386,14 +410,14 @@ async function createAttachment({ req, res, config, hooks }) {
     const sizeBytes = await fileSize(upload.tempPath);
     const attachmentId = generateAttachmentId();
     const storedFilename = finalStoredFilename(attachmentId, extension);
-    finalPath = resolveFinalPath(artifact, storedFilename);
-    await ensureAttachmentDirs(artifact);
+    finalPath = resolveFinalPath(pageId, storedFilename);
+    await ensureAttachmentDirs(pageId);
     await hooks?.beforeMove?.({ tempPath: upload.tempPath, finalPath, artifact, key });
     await moveTempToFinal(upload.tempPath, finalPath);
     await hooks?.beforeInsert?.({ finalPath, artifact, key, attachmentId });
     const record = {
       attachmentId,
-      artifact,
+      pageId,
       itemKey: key,
       originalFilename: upload.originalFilename,
       storedFilename,
@@ -401,8 +425,20 @@ async function createAttachment({ req, res, config, hooks }) {
       sizeBytes,
       createdAt: Date.now(),
     };
-    insertAttachment(record);
-    return record;
+
+    // Ceiling and insert in one transaction, with this upload's own size
+    // counted. Deciding before the write makes the limit advisory: two uploads
+    // that both read the total before either writes are both admitted, and an
+    // upload that starts under the line finishes over it by its own size.
+    if (rationed) {
+      const admitted = insertAttachmentWithinQuota(record, limits);
+      if (!admitted.ok) {
+        throw Object.assign(new Error(QUOTA_MESSAGE[admitted.reason](limits)), { statusCode: 409 });
+      }
+    } else {
+      insertAttachment(record);
+    }
+    return { ...record, artifact };
   } catch (err) {
     await unlinkIfExists(upload.tempPath);
     if (finalPath) await unlinkIfExists(finalPath);
@@ -418,11 +454,11 @@ export function setupAttachmentApi(app, config, options = {}) {
     if (rejectInvalidFileParams(req, res)) return;
 
     try {
-      const record = getAttachment(req.params.artifact, req.params.attachmentId);
+      const record = getAttachment(requirePageId(req.params.artifact), req.params.attachmentId);
       if (!record) {
         return res.status(404).json({ error: 'Attachment not found' });
       }
-      const filePath = resolveFinalPath(record.artifact, record.storedFilename);
+      const filePath = resolveFinalPath(record.pageId, record.storedFilename);
       res.setHeader('Content-Type', record.mimeType);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Content-Disposition', contentDispositionForAttachment(record));
@@ -443,17 +479,21 @@ export function setupAttachmentApi(app, config, options = {}) {
     if (rejectInvalidListParams(req, res)) return;
 
     try {
-      const attachments = listAttachments(req.params.artifact, req.params.key)
-        .map(record => attachmentResponse(req, record));
+      const attachments = listAttachments(requirePageId(req.params.artifact), req.params.key)
+        .map(record => attachmentResponse(req, { ...record, artifact: req.params.artifact }));
       return res.json({ ok: true, attachments });
     } catch (err) {
+      const status = err.statusCode || 500;
       logger.error('attachment list failed', { artifact: req.params.artifact, key: req.params.key, err: err.message });
-      return res.status(500).json({ error: 'Internal Server Error' });
+      return res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message });
     }
   });
 
   app.post('/api/attachments/:artifact/:key', async (req, res) => {
-    if (!csrfCheck(req, res)) return;
+    if (!csrfCheck(req, res)) {
+      auditMutation(req, res, 'upload', { result: 'denied', status: 403, reason: 'csrf' });
+      return;
+    }
     if (!requireAttachmentMutation(req, res, req.params.artifact, config, 'upload')) return;
 
     try {
@@ -481,23 +521,50 @@ export function setupAttachmentApi(app, config, options = {}) {
   });
 
   app.delete('/api/attachments/:artifact/:attachmentId', async (req, res) => {
-    if (!csrfCheck(req, res)) return;
+    if (!csrfCheck(req, res)) {
+      auditMutation(req, res, 'delete', { result: 'denied', status: 403, reason: 'csrf' });
+      return;
+    }
     if (!requireAttachmentMutation(req, res, req.params.artifact, config, 'delete')) return;
-    if (rejectInvalidFileParams(req, res)) return;
+    if (rejectInvalidFileParams(req, res)) {
+      auditMutation(req, res, 'delete', {
+        result: 'denied',
+        status: 400,
+        attachmentId: req.params.attachmentId,
+        reason: 'invalid_params',
+      });
+      return;
+    }
 
     try {
-      // Looked up by (artifact, attachmentId), never by id alone — an id from
+      // Looked up by (pageId, attachmentId), never by id alone — an id from
       // another page finds nothing here, so a mismatched artifact is refused
       // before any row or file is touched.
-      const record = getAttachment(req.params.artifact, req.params.attachmentId);
+      const pageId = requirePageId(req.params.artifact);
+      const record = getAttachment(pageId, req.params.attachmentId);
       if (!record) {
+        auditMutation(req, res, 'delete', {
+          result: 'failed',
+          status: 404,
+          attachmentId: req.params.attachmentId,
+          reason: 'not_found',
+        });
         return res.status(404).json({ error: 'Attachment not found' });
       }
-      const deleted = deleteAttachmentMetadata(req.params.artifact, req.params.attachmentId);
+      const deleted = deleteAttachmentMetadata(pageId, req.params.attachmentId);
       if (!deleted) {
+        // Lost a race with another deleter. Recorded as its own outcome rather
+        // than folded into the plain 404 above, because "someone else got here
+        // first" and "there was never such an attachment" are different facts.
+        auditMutation(req, res, 'delete', {
+          result: 'failed',
+          status: 404,
+          attachmentId: req.params.attachmentId,
+          reason: 'already_deleted',
+        });
         return res.status(404).json({ error: 'Attachment not found' });
       }
-      const filePath = resolveFinalPath(record.artifact, record.storedFilename);
+      const filePath = resolveFinalPath(record.pageId, record.storedFilename);
       // Metadata first, file second. If the unlink fails the row is already
       // gone, so the file is orphaned: invisible to every read path but still
       // on disk. The audit line below records that outcome explicitly rather

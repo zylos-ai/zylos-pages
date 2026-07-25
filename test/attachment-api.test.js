@@ -16,7 +16,8 @@ const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
 const { getAttachment } = await import('../src/attachments/attachment-store.js');
-const { registerLogicalPage, unregisterLogicalPage } = await import('../src/pages/page-store.js');
+const { getLogicalPage, registerLogicalPage, unregisterLogicalPage, updateLogicalPage } =
+  await import('../src/pages/page-store.js');
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -185,9 +186,34 @@ async function rawRequest(origin, requestPath, headers = {}) {
   });
 }
 
+// Read the stored totals straight from the DB, so a ceiling assertion is about
+// what was actually persisted rather than about what the API said.
+function storedBytesFor(uri) {
+  const page = getLogicalPage(uri);
+  return getPagesDb()
+    .prepare('SELECT COALESCE(SUM(size_bytes), 0) AS total FROM artifact_attachments WHERE page_id = ?')
+    .get(page.pageId).total;
+}
+
+function storedCountFor(uri, itemKey) {
+  const page = getLogicalPage(uri);
+  return getPagesDb()
+    .prepare('SELECT COUNT(*) AS n FROM artifact_attachments WHERE page_id = ? AND item_key = ?')
+    .get(page.pageId, itemKey).n;
+}
+
+// Attachments are stored under the page's stable id, not its uri.
+function pageIdFor(uri) {
+  return getLogicalPage(uri).pageId;
+}
+
+function storedAttachment(uri, attachmentId) {
+  return getAttachment(pageIdFor(uri), attachmentId);
+}
+
 async function artifactAttachmentFiles(artifact) {
   try {
-    return await readdir(path.join(dataDir, 'attachments', artifact));
+    return await readdir(path.join(dataDir, 'attachments', pageIdFor(artifact)));
   } catch (err) {
     if (err.code === 'ENOENT') return [];
     throw err;
@@ -399,11 +425,11 @@ test('a writable share link can upload and delete on its own page', async () => 
       const res = await upload(origin, 'renovation-checklist', 'photo-log', cookies);
       assert.equal(res.status, 201);
       const { attachment } = await res.json();
-      assert.ok(getAttachment('renovation-checklist', attachment.attachmentId));
+      assert.ok(storedAttachment('renovation-checklist', attachment.attachmentId));
 
       const del = await deleteAttachment(origin, 'renovation-checklist', attachment.attachmentId, cookies);
       assert.equal(del.status, 200);
-      assert.equal(getAttachment('renovation-checklist', attachment.attachmentId), null);
+      assert.equal(storedAttachment('renovation-checklist', attachment.attachmentId), null);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -481,13 +507,13 @@ test('a writable share is confined to its own page for both upload and delete', 
       // Delete aimed at the other page, by an id that really exists there.
       res = await deleteAttachment(origin, 'notes', foreignId, cookies);
       expectLoginRedirect(res);
-      assert.ok(getAttachment('notes', foreignId), 'foreign attachment must survive');
+      assert.ok(storedAttachment('notes', foreignId), 'foreign attachment must survive');
 
       // And the same id addressed through its own page finds nothing, so an id
       // alone is never enough to delete anything.
       res = await deleteAttachment(origin, 'renovation-checklist', foreignId, cookies);
       assert.equal(res.status, 404);
-      assert.ok(getAttachment('notes', foreignId), 'foreign attachment must still survive');
+      assert.ok(storedAttachment('notes', foreignId), 'foreign attachment must still survive');
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -565,6 +591,74 @@ test('share uploads are capped by attachment count and by total stored bytes', a
       // bound total storage — which is what the byte ceiling is for.
       assert.equal((await upload(origin, 'renovation-checklist', 'other-key', cookies)).status, 201);
     });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The ceilings must hold against the upload being made, not merely against
+// what was already stored. Checking `current >= max` lets every upload that
+// starts under the line finish over it, by as much as one whole maxFileSizeBytes.
+test('the byte ceiling counts the incoming upload, not just what is already stored', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'overshoot.html'), '<!doctype html><h1>x</h1>');
+    registerContentPage(contentDir, 'overshoot');
+
+    const config = baseConfig(contentDir, authConfig(), {
+      // Room for one 8-byte JPEG and not two: the second must be refused
+      // *before* it is stored, not after it has pushed the page to 16.
+      attachments: { maxFileSizeBytes: 128, maxArtifactBytes: 12 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('overshoot', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      assert.equal((await upload(origin, 'overshoot', 'k', cookies)).status, 201);
+      assert.equal((await upload(origin, 'overshoot', 'k', cookies)).status, 409);
+      assert.equal(storedBytesFor('overshoot'), JPEG.length, 'the ceiling must not be overshot');
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// Two uploads that both pass the pre-check before either has inserted. The
+// decision has to be atomic with the insert, or the ceiling is advisory.
+test('concurrent share uploads cannot both slip past the count ceiling', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'race.html'), '<!doctype html><h1>x</h1>');
+    registerContentPage(contentDir, 'race');
+
+    let release;
+    const bothInFlight = new Promise(resolve => { release = resolve; });
+    let arrived = 0;
+    const hooks = {
+      // Hold each request just before it commits, until both are past the
+      // pre-check — the exact interleaving a non-atomic limit permits.
+      async beforeMove() {
+        arrived += 1;
+        if (arrived >= 2) release();
+        else await bothInFlight;
+      },
+    };
+
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, maxPerItem: 1 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('race', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const [a, b] = await Promise.all([
+        upload(origin, 'race', 'k', cookies),
+        upload(origin, 'race', 'k', cookies),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      assert.deepEqual(statuses, [201, 409], 'exactly one of the two may be stored');
+      assert.equal(storedCountFor('race', 'k'), 1);
+    }, { hooks });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
   }
@@ -738,6 +832,49 @@ test('every share mutation leaves an audit line naming the token, page and outco
       for (const line of audits) {
         assert.equal(JSON.stringify(line).includes('__Secure-'), false);
       }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// A share follows its page across a rename, because the grant is keyed by
+// page_id. Storage and quota must follow the same identity, or a rename hands
+// the page a fresh ceiling and leaves the previous bytes behind — invisible to
+// listing and deletion but still on disk.
+test('renaming a page carries its attachments, its listing and its quota with it', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'movable.html'), '<!doctype html><h1>x</h1>');
+    const page = registerContentPage(contentDir, 'movable');
+
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, maxArtifactBytes: 12 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('movable', '24h', { canWriteAttachments: true });
+      let cookies = await openShare(origin, share.tokenId);
+
+      assert.equal((await upload(origin, 'movable', 'k', cookies)).status, 201);
+      assert.equal((await upload(origin, 'movable', 'k', cookies)).status, 409);
+
+      updateLogicalPage(page.pageId, { uri: 'moved' });
+
+      // The same grant, now addressing the page by its new name.
+      cookies = await openShare(origin, share.tokenId);
+
+      // The already-stored bytes still count, so the ceiling is not reset.
+      const afterRename = await upload(origin, 'moved', 'k', cookies);
+      assert.equal(afterRename.status, 409, 'a rename must not hand the page a fresh quota');
+
+      // And the earlier upload is still listed under the new name, rather than
+      // being stranded under the old one.
+      const list = await fetch(`${origin}/api/attachments/moved/k`, {
+        redirect: 'manual',
+        headers: { Cookie: cookies },
+      });
+      assert.equal(list.status, 200);
+      assert.equal((await list.json()).attachments.length, 1);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -929,8 +1066,8 @@ test('delete succeeds when stored file is missing and returns 404 when metadata 
       let res = await upload(origin, 'delete-artifact', 'delete-missing-file', cookie);
       assert.equal(res.status, 201);
       const attachment = (await res.json()).attachment;
-      const record = getAttachment('delete-artifact', attachment.attachmentId);
-      await unlink(path.join(dataDir, 'attachments', 'delete-artifact', record.storedFilename));
+      const record = storedAttachment('delete-artifact', attachment.attachmentId);
+      await unlink(path.join(dataDir, 'attachments', pageIdFor('delete-artifact'), record.storedFilename));
 
       res = await fetch(`${origin}/api/attachments/delete-artifact/${attachment.attachmentId}`, {
         method: 'DELETE',
