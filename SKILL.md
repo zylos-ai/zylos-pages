@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.7.5
+version: 0.7.6
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
@@ -63,6 +63,10 @@ node $PAGES_DIR/src/cli/pages.js list
 node $PAGES_DIR/src/cli/pages.js shares reports/q3
 node $PAGES_DIR/src/cli/pages.js shares --all
 
+# The inverse: someone hands you a link, find out which document it is.
+# Resolves expired and revoked links too, and takes the full URL or the token.
+node $PAGES_DIR/src/cli/pages.js share-info https://domain/s/<token-id>
+
 # Mint a passwordless link. NOT a default step — see Sharing below.
 node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
 
@@ -107,14 +111,23 @@ Revoking:
 - `unshare <uri>` revokes **every** token on that page. Run
   `shares <uri>` first and look at what else is live — this is how a
   routine cleanup takes out a permanent link somebody was still using.
-- Revocation is not deletion: revoked rows stay in the table so a link can
-  still be accounted for afterwards. Expired links are a different story —
-  hourly cleanup deletes them outright, so the table is not a full history
-  of every link ever minted.
+- **Revocation is a reversible marker, not destruction.** It sets a flag;
+  the row and its token stay in the table, so a revoked link can be brought
+  back by clearing that flag. This is deliberate — it is how a mistaken
+  `unshare <uri>` gets undone — but it means "revoked" is not a guarantee
+  that the URL can never work again. Do not rely on it as one.
 
-`shares --all` lists every live share on the instance. Use it before
-concluding anything about this box's exposure; per-page `shares <uri>`
-cannot answer that question.
+Accounting for links:
+
+- Rows are never deleted. Expired links stay in the table alongside revoked
+  ones, so every link ever minted can still be traced back to its document.
+- `shares --all` lists every **live** share on the instance. Use it before
+  concluding anything about this box's exposure; per-page `shares <uri>`
+  cannot answer that question.
+- `share-info <token-or-url>` goes the other way: hand it a link somebody
+  sends you and it names the document, when it was shared, for how long, and
+  whether it is still active, expired, or revoked. It takes the full URL or
+  just the token.
 
 ## Creating HTML Pages (CLI)
 

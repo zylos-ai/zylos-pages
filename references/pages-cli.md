@@ -27,12 +27,13 @@ node src/cli/pages.js list --q report --json
 
 Lists registered logical pages from the DB. `--q` searches page titles.
 
-### Share / Shares / Unshare
+### Share / Shares / Share-info / Unshare
 
 ```bash
 node src/cli/pages.js share reports/q3 --duration 7d
 node src/cli/pages.js shares reports/q3
 node src/cli/pages.js shares --all
+node src/cli/pages.js share-info <token-id-or-url>
 node src/cli/pages.js unshare --token <token-id>
 node src/cli/pages.js unshare reports/q3
 ```
@@ -45,8 +46,9 @@ no login. Read the Sharing section of `SKILL.md` before minting one.
 - Share link base URL priority is `PAGES_BASE_URL` env var, then `publicBaseUrl` in `config.json`, then the neutral `/pages` path fallback.
 - `shares <uri>` lists active share tokens for one page.
 - `shares --all` lists every live share on the instance, with the uri each token exposes. This is the only way to answer "what passwordless links exist on this box right now?" without reading the SQLite file directly.
+- `share-info <token-or-url>` goes the other way: it resolves a link back to its document. It accepts the full share URL or the bare token, and unlike `shares` it deliberately resolves **expired and revoked** links too, reporting `status` as `active`, `expired`, or `revoked`. Unknown tokens and non-token input both fail with `share_not_found`.
 - **`unshare --token <token-id>` revokes exactly one link. `unshare <uri>` revokes EVERY active token on that page** — run `shares <uri>` first and look at what else is live. An unknown token and an already-revoked token both fail with `share_not_found`; the CLI does not distinguish them.
-- Revocation sets a flag. The row and its token stay in the table, so revoking is reversible and is not a guarantee that the URL can never work again.
+- Revocation sets a flag. The row and its token stay in the table, so revoking is reversible and is not a guarantee that the URL can never work again. Share rows are never deleted, including expired ones, which is what keeps `share-info` able to answer for old links.
 
 ### Allow Root
 

@@ -46,7 +46,6 @@ let _revokeShare;
 let _revokeAllForPage;
 let _listSharesForPage;
 let _listAllShares;
-let _deleteExpiredShares;
 let _insertShareSession;
 let _getShareSession;
 let _touchShareSession;
@@ -130,7 +129,6 @@ function initShareStore() {
     WHERE revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
   `);
-  _deleteExpiredShares = db.prepare('DELETE FROM shares WHERE expires_at != 0 AND expires_at <= ?');
   _insertShareSession = db.prepare(`
     INSERT OR REPLACE INTO share_sessions (token_hash, token_id, page_id, created_at, last_activity_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -547,13 +545,59 @@ export function listAllShares() {
   });
 }
 
+// Accepts either a bare token id or the whole share URL someone pasted, since
+// what people actually hold is the link, not the id inside it.
+export function tokenIdFromInput(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const candidate = raw.includes('/') ? raw.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() : raw;
+  return isTokenId(candidate) ? candidate : null;
+}
+
+function durationLabel(createdAt, expiresAt) {
+  if (expiresAt === 0) return 'permanent';
+  const span = expiresAt - createdAt;
+  const match = Object.entries(DURATION_MAP).find(([, ms]) => ms !== 0 && ms === span);
+  return match ? match[0] : `${Math.round(span / (60 * 60 * 1000))}h`;
+}
+
+// Answers "here is a link — which document is it, and is it still live?".
+// Unlike listSharesForSlug/listAllShares this deliberately ignores liveness:
+// the whole point is to resolve links that are already expired or revoked.
+export function describeShare(input) {
+  const tokenId = tokenIdFromInput(input);
+  if (!tokenId) return null;
+  initShareStore();
+  const record = _getShare.get(tokenId);
+  if (!record) return null;
+  const page = getLogicalPageById(record.page_id);
+  const expired = record.expires_at !== 0 && nowMs() > record.expires_at;
+  // Revoked wins over expired: it is the deliberate act, and both timestamps
+  // are returned anyway for anyone who needs to see the full history.
+  const status = record.revoked ? 'revoked' : (expired ? 'expired' : 'active');
+  return {
+    tokenId: record.token_id,
+    pageId: record.page_id,
+    // Shares outlive their page row; a null uri is a real state, not an error.
+    uri: page ? page.uri : null,
+    status,
+    createdAt: record.created_at,
+    expiresAt: record.expires_at,
+    revokedAt: record.revoked_at,
+    duration: durationLabel(record.created_at, record.expires_at),
+    canWriteAttachments: record.can_write_attachments === 1,
+  };
+}
+
+// Sessions only. Share rows are never deleted: an expired row is the sole
+// record that a link existed at all, and deleting it means "someone hands you
+// an old link, which document was it?" has no answer. Sessions are the
+// opposite — transient browser state, worth nothing after expiry.
 export function cleanupShares() {
   initShareStore();
-  const current = nowMs();
-  const sessions = _deleteExpiredShareSessions.run(current).changes;
-  const shares = _deleteExpiredShares.run(current).changes;
-  if (sessions > 0 || shares > 0) {
-    logger.info('shares cleanup', { removedShares: shares, removedSessions: sessions });
+  const sessions = _deleteExpiredShareSessions.run(nowMs()).changes;
+  if (sessions > 0) {
+    logger.info('share sessions cleanup', { removedSessions: sessions });
   }
 }
 

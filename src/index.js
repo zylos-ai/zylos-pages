@@ -133,8 +133,9 @@ async function main() {
     logger.info('server started', { port, contentDir: config.contentDir });
   });
 
-  // Hourly cleanup of EXPIRED shares only — revoked rows are deliberately kept
-  // (see cleanupShares), so a revoked link stays auditable after the fact.
+  // Hourly cleanup of expired share SESSIONS only. Share rows themselves are
+  // never deleted (see cleanupShares) so that expired and revoked links stay
+  // resolvable — `share-info` needs the row to answer which document a link was.
   cleanupTimer = setInterval(() => {
     try { cleanupShares(); } catch (err) {
       logger.error('share cleanup failed', { err: err.message });

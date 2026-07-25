@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
 import { getLogicalPage, registerLogicalPage, searchLogicalPages, unregisterLogicalPage } from '../pages/page-store.js';
-import { createShare, getActiveShare, listAllShares, listSharesForSlug, revokeAllForSlug, revokeShare } from '../sharing/share-manager.js';
+import { createShare, describeShare, getActiveShare, listAllShares, listSharesForSlug, revokeAllForSlug, revokeShare } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
 
 class CliError extends Error {
@@ -29,6 +29,7 @@ Usage:
   node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--json]
   node pages.js shares <uri> [--json]
   node pages.js shares --all [--json]                  # every live share on this instance
+  node pages.js share-info <token-or-url> [--json]     # which document is this link, and is it still live?
   node pages.js unshare <uri> [--json]                 # revokes ALL tokens on that uri
   node pages.js unshare --token <token-id> [--json]    # revokes exactly one token
   node pages.js unregister <uri> [--json]
@@ -39,6 +40,7 @@ Examples:
   node pages.js register --source /abs/report.md --uri reports/q3 --title "Q3 Report"
   node pages.js share reports/q3 --duration 7d
   node pages.js shares --all
+  node pages.js share-info https://example.com/s/7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js unshare --token 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js allow-root add /Users/howard/zylos/workspace/reports --name reports`);
 }
@@ -106,6 +108,17 @@ function humanize(result) {
     // A revoked share whose page row is gone has no uri to report; say that
     // rather than printing "undefined".
     return `revoked ${result.revoked} share(s) for ${result.uri ?? result.tokenId}`;
+  }
+  if (result.command === 'share-info') {
+    const share = result.share;
+    return [
+      `Document: ${share.uri ?? '(page no longer registered)'}`,
+      `Status:   ${share.status}`,
+      `Created:  ${new Date(Number(share.createdAt)).toISOString()}`,
+      `Duration: ${share.duration}`,
+      `Expires:  ${share.expiresAt ? new Date(Number(share.expiresAt)).toISOString() : 'never'}`,
+      ...(share.revokedAt ? [`Revoked:  ${new Date(Number(share.revokedAt)).toISOString()}`] : []),
+    ].join('\n');
   }
   if (result.command === 'unregister') return `unregistered ${result.uri}`;
   if (result.command === 'allow-root') return `allowed root ${result.name}: ${result.path}`;
@@ -302,6 +315,21 @@ function commandShares(args) {
   output({ ok: true, command: 'shares', uri, slug, shares }, args.json);
 }
 
+// The inverse of `share`: someone hands you a link and you need to know what
+// it points at. Expired and revoked links resolve too — those are exactly the
+// ones whose origin nobody remembers.
+function commandShareInfo(args) {
+  const input = args._[0] || args.token || args.tokenId || args.url;
+  if (!input) {
+    throw new CliError('invalid_args', 'share-info requires a share token or URL');
+  }
+  const share = describeShare(input);
+  if (!share) {
+    throw new CliError('share_not_found', `no share found for: ${input}`);
+  }
+  output({ ok: true, command: 'share-info', share }, args.json);
+}
+
 function commandUnshare(args) {
   // Revoking one token requires --token: `unshare <uri>` revokes EVERY token on
   // that uri, which is easy to reach for when only one link was meant to die.
@@ -404,6 +432,8 @@ export function main(argv) {
       return commandShare(args);
     case 'shares':
       return commandShares(args);
+    case 'share-info':
+      return commandShareInfo(args);
     case 'unshare':
       return commandUnshare(args);
     case 'unregister':

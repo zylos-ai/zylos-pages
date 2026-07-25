@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.6] - 2026-07-25
+
+Closes the other half of the share-link incident follow-up. 0.7.5 made revocation
+precise and the live inventory visible; this makes the ledger complete and adds
+the lookup that answers "someone just sent me an old link — what was it?".
+
+Note on scope: destroying the plaintext token on revocation was proposed and
+**rejected by the owner**. Revocation stays a reversible marker so a mistaken
+`unshare <uri>` can still be undone — the one recovery that has actually been
+needed. SKILL.md now states that plainly rather than leaving it implied.
+
+### Added
+- **`share-info <token-or-url>`**: resolves a share link back to its document, reporting `status` (`active` / `expired` / `revoked`), creation time, duration, expiry, and revocation time. Deliberately resolves expired and revoked links — those are exactly the ones whose origin nobody remembers. Accepts the full `/s/<token>` URL or the bare token id. Unknown tokens and non-token input both fail with `share_not_found`. No such command existed: `shares` only lists live links and `unshare` revokes, so a link in hand could only be traced by opening the SQLite file by hand.
+
+### Changed
+- **Expired share rows are no longer deleted.** The hourly job ran `DELETE FROM shares WHERE expires_at != 0 AND expires_at <= now`, so once a timed link lapsed there was no record it had existed — the table was a complete ledger for revocations and amnesiac about expirations, and an inventory count was a snapshot rather than a history. Cleanup is now sessions-only; `share_sessions` rows are still deleted on expiry, since those are transient browser state. Growth from retaining rows is measured, not assumed: ~3.6 shares/day observed over 23 days, ~108 bytes/row, i.e. roughly 0.2 MB/year — no retention cap is set because none is needed at that scale.
+- **`revoked` takes precedence over `expired` in reported status.** A link that was revoked and then outlived its expiry still reports `revoked`; the deliberate act should not be quietly rewritten by the passage of time.
+- **SKILL.md states that revocation is a reversible marker, not destruction.** Previously it said "revocation is not deletion", which described the row but let the reader assume the credential was gone. It also no longer claims expired links are deleted.
+- **`references/pages-cli.md` brought back in sync.** It still described `share --duration permanent` as gated by config (that gate was removed in 0.7.5) and documented neither `unshare --token` nor `shares --all`. Corrected here rather than by adding a commit to the 0.7.5 branch while it was under review.
+
+### Tests
+- **`test/share-ledger-retention.test.js` (new).** Nine cases: an expired row surviving cleanup; `share-info` resolving expired, active, and revoked links; revoked-then-expired precedence; the full-URL input form; two negative controls (a well-formed but never-issued token, and non-token input, both required to fail rather than return something); and that cleanup still deletes expired sessions, so a narrowed `cleanupShares` cannot be mistaken for a gutted one. The two retention tests were verified to **fail** with the old `DELETE` reinstated — the other seven pass either way, which is the point of separating them.
+
 ## [0.7.5] - 2026-07-25
 
 Follow-up to an incident where a routine `unshare <uri>` cleanup revoked two
