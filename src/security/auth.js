@@ -600,7 +600,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
 
     const shortShareEnabled = sharingConfig?.enabled !== false;
     if (req.path.startsWith('/_assets')
-        || (shortShareEnabled && /^\/s\/[a-f0-9]{32}$/.test(req.path))
+        || (shortShareEnabled && /^\/s\/[a-f0-9]{32}(\.md)?$/.test(req.path))
         || req.path === loginPath || req.path === logoutPath) {
       return next();
     }

@@ -14,6 +14,7 @@ import {
   listSharesForSlug,
   updateShareAttachmentPermission,
 } from '../sharing/share-manager.js';
+import { readFile } from 'node:fs/promises';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath, cookiePathFromBase } from '../lib/browser-base.js';
 import { renderSharePage } from './pages.js';
@@ -117,6 +118,34 @@ function registeredShareSlug(rawSlug) {
  * @param {object} sharingConfig - { enabled }
  */
 export function setupShareApi(app, sharingConfig, config = {}) {
+  // GET /s/:tokenId.md — raw markdown of the shared page. Audience and reach
+  // match the share token itself (one page, read-only, expiry and revocation
+  // honoured). The representation does not: this returns the source file
+  // verbatim, including the frontmatter block, while the rendered view strips
+  // it and projects only title/description/date/tags — and unlike the render
+  // path it applies no maxFileSizeBytes ceiling. Registered before /s/:tokenId
+  // because that param would otherwise swallow the ".md" suffix.
+  app.get('/s/:tokenId.md', async (req, res) => {
+    const share = getActiveShare(req.params.tokenId);
+    if (!share) {
+      return res.status(404).send('Share not found');
+    }
+    const pageUri = share.slug.startsWith('p/') ? share.slug.slice(2) : share.slug;
+    const page = getLogicalPage(pageUri);
+    if (!page || page.sourceExt !== '.md') {
+      return res.status(404).send('Not a markdown page');
+    }
+    try {
+      const markdown = await readFile(page.sourcePath, 'utf8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+      return res.status(200).send(markdown);
+    } catch (err) {
+      logger.error('share raw markdown read failed', { tokenId: req.params.tokenId, err: err.message });
+      return res.status(err.code === 'ENOENT' ? 404 : 500).send('Error reading page');
+    }
+  });
+
   // GET /s/:tokenId — short share link rendered in place
   app.get('/s/:tokenId', async (req, res, next) => {
     const share = getActiveShare(req.params.tokenId);
