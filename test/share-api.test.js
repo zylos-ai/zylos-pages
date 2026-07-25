@@ -578,13 +578,24 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
     const identity = (setCookie) => new Set(
       [...attributes(setCookie)].filter(attribute => /^(Path=|Domain=|Secure$)/i.test(attribute))
     );
+    const issuedIdentity = identity(shareVisit.headers.get('set-cookie'));
+    const clearedIdentity = identity(logout.headers.get('set-cookie'));
+
+    // Guard: without this, an extractor that stopped finding Path would leave
+    // {Secure} on both sides — deepEqual passes, the Secure assertion passes,
+    // and the Path half of the identity would silently stop being tested.
+    assert.ok(
+      [...issuedIdentity].some(attribute => /^Path=\S/i.test(attribute)),
+      'share_access issuance should carry a non-empty Path'
+    );
+
     assert.deepEqual(
-      identity(logout.headers.get('set-cookie')),
-      identity(shareVisit.headers.get('set-cookie')),
+      clearedIdentity,
+      issuedIdentity,
       'share_access should be deleted under the identity it was issued with'
     );
     assert.ok(
-      identity(logout.headers.get('set-cookie')).has('Secure'),
+      clearedIdentity.has('Secure'),
       '__Secure- prefixed names are rejected without the Secure attribute'
     );
   } finally {
