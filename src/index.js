@@ -41,7 +41,13 @@ console.log(`[pages] Content dir: ${config.contentDir}`);
 console.log(`[pages] Security: rawHtml=${config.security.allowRawHtml}, maxFileSize=${config.security.maxFileSizeBytes}, timeout=${config.security.renderTimeoutMs}ms`);
 console.log(`[pages] Cache: max=${config.cache.maxEntries}, ttl=${config.cache.ttlSeconds}s`);
 console.log(`[pages] Auth: ${config.auth?.enabled && config.auth?.password ? 'enabled' : 'disabled'}`);
-console.log(`[pages] Sharing: enabled=${config.sharing?.enabled ?? true}, allowPermanent=${config.sharing?.allowPermanent ?? false}`);
+console.log(`[pages] Sharing: enabled=${config.sharing?.enabled ?? true}`);
+// `sharing.allowPermanent` was removed in 0.7.5 — permanent links are always
+// allowed now. Removing the gate LOOSENS behaviour for anyone who had set it
+// to false, so say so out loud rather than silently ignoring their setting.
+if (config.sharing && 'allowPermanent' in config.sharing) {
+  console.warn('[pages] config sharing.allowPermanent is no longer supported and is ignored; permanent share links are always allowed. Remove the key from config.json.');
+}
 
 if (!config.enabled) {
   console.log(`[pages] Component disabled in config, exiting.`);
@@ -91,7 +97,7 @@ async function main() {
   app.use('/_assets', express.static(assetsDir, staticOptions));
 
   // Share API routes (after auth — requires authenticated session)
-  const sharingConfig = config.sharing || { enabled: true, allowPermanent: false };
+  const sharingConfig = config.sharing || { enabled: true };
 
   // Cookie-based session authentication
   setupAuth(app, config.auth || {}, sharingConfig);
@@ -127,7 +133,8 @@ async function main() {
     logger.info('server started', { port, contentDir: config.contentDir });
   });
 
-  // Hourly cleanup of expired/revoked shares
+  // Hourly cleanup of EXPIRED shares only — revoked rows are deliberately kept
+  // (see cleanupShares), so a revoked link stays auditable after the fact.
   cleanupTimer = setInterval(() => {
     try { cleanupShares(); } catch (err) {
       logger.error('share cleanup failed', { err: err.message });

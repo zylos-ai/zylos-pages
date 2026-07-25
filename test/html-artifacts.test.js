@@ -66,7 +66,7 @@ async function withServer(config, fn) {
   const app = express();
   app.use(securityHeaders());
   setupAuth(app, config.auth || { enabled: false, password: null });
-  setupShareApi(app, config.sharing || { enabled: true, allowPermanent: false }, config);
+  setupShareApi(app, config.sharing || { enabled: true }, config);
   setupRawApi(app, config);
   app.get('/:slug(*)', pageRoute(config));
 
@@ -212,8 +212,8 @@ test('shared html artifacts render directly while shared markdown keeps page hea
     await writeFile(sharedMarkdownPath, '# Shared Markdown\n');
     registerPage(config, 'shared', sharedPath, 'Shared');
     registerPage(config, 'shared-markdown', sharedMarkdownPath, 'Shared Markdown');
-    const htmlShare = createShare('shared', '24h', { allowPermanent: false });
-    const markdownShare = createShare('shared-markdown', '24h', { allowPermanent: false });
+    const htmlShare = createShare('shared', '24h');
+    const markdownShare = createShare('shared-markdown', '24h');
 
     await withServer({
       ...config,
@@ -278,7 +278,7 @@ test('raw API returns markdown when both html and markdown exist, and share view
     await writeFile(path.join(contentDir, 'source.html'), '<!doctype html><title>HTML</title>');
     await writeFile(sourcePath, '# Markdown Source\n');
     registerPage(config, 'source', sourcePath, 'Source');
-    const token = createShare('source', '24h', { allowPermanent: false }).token;
+    const token = createShare('source', '24h').token;
 
     await withServer({
       ...config,

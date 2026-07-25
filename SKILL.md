@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.7.4
+version: 0.7.5
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
@@ -58,9 +58,17 @@ node $PAGES_DIR/src/cli/pages.js register --source /absolute/report.md --uri rep
 # List registered logical pages.
 node $PAGES_DIR/src/cli/pages.js list
 
-# Create, inspect, and revoke share links for a registered page.
-node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
+# Inspect share links. `shares --all` covers the whole instance and is the
+# way to answer "what passwordless links exist on this box right now?".
 node $PAGES_DIR/src/cli/pages.js shares reports/q3
+node $PAGES_DIR/src/cli/pages.js shares --all
+
+# Mint a passwordless link. NOT a default step — see Sharing below.
+node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
+
+# Revoke. Prefer --token: the uri form revokes EVERY token on that page,
+# which will also kill links you did not mean to touch.
+node $PAGES_DIR/src/cli/pages.js unshare --token <token-id>
 node $PAGES_DIR/src/cli/pages.js unshare reports/q3
 
 # Remove a logical page registration and page-id keyed share/session rows.
@@ -72,6 +80,41 @@ node $PAGES_DIR/src/cli/pages.js allow-root add /absolute/reports --name reports
 ```
 
 Long-form parameter details and safety notes: `references/pages-cli.md`.
+
+## Sharing
+
+Registering a page protects it with the pages password. `share` does not:
+it mints `/s/<token>`, which is served through a share-access session that
+skips authentication entirely. Anyone holding the URL can read the page —
+no login, no account, no audit trail of who opened it.
+
+So:
+
+- **Registering is the default. Sharing is not.** Finish the job by
+  reporting the internal URL or the file path.
+- **Mint a link only on an explicit request** from whoever owns the
+  document, and tell them it is public and passwordless when you hand it
+  over. "Visible inside the company" is a different thing from "readable by
+  anyone on the internet who has the URL" — do not treat the first as
+  license for the second.
+- **Prefer a duration over `permanent`.** Nothing in the config gates
+  permanent links — an expiry is the only thing that limits how long a
+  passwordless URL keeps working, so pick the shortest one that does the job.
+
+Revoking:
+
+- `unshare --token <token-id>` revokes exactly that link.
+- `unshare <uri>` revokes **every** token on that page. Run
+  `shares <uri>` first and look at what else is live — this is how a
+  routine cleanup takes out a permanent link somebody was still using.
+- Revocation is not deletion: revoked rows stay in the table so a link can
+  still be accounted for afterwards. Expired links are a different story —
+  hourly cleanup deletes them outright, so the table is not a full history
+  of every link ever minted.
+
+`shares --all` lists every live share on the instance. Use it before
+concluding anything about this box's exposure; per-page `shares <uri>`
+cannot answer that question.
 
 ## Creating HTML Pages (CLI)
 
@@ -85,10 +128,16 @@ node $PAGES_DIR/src/cli/pages.js templates
 node $PAGES_DIR/src/cli/pages.js create --template technical-proposal --slug docs/my-report
 
 # Edit the file — replace {{PLACEHOLDER}} values with content
-
-# Create a public share link (no login required)
-node $PAGES_DIR/src/cli/pages.js share docs/my-report --duration 30d
 ```
+
+The page is now registered and reachable behind the pages password. That is
+the end of the normal flow — report the internal URL and stop there.
+
+**Do not create a share link as a routine step.** `share` mints a
+`/s/<token>` URL that bypasses login entirely: anyone with the link reads the
+page, no password, no account. Create one only when the person who owns the
+document asks for a link they can hand to someone, and when you do, say
+plainly that it is public and passwordless. See the "Sharing" section above.
 
 Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
 

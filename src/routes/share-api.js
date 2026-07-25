@@ -114,7 +114,7 @@ function registeredShareSlug(rawSlug) {
  * Register share API routes on the Express app.
  * Must be called AFTER auth middleware so that only authenticated users reach these.
  * @param {Express} app
- * @param {object} sharingConfig - { allowPermanent }
+ * @param {object} sharingConfig - { enabled }
  */
 export function setupShareApi(app, sharingConfig, config = {}) {
   // GET /s/:tokenId — short share link rendered in place
@@ -152,7 +152,6 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     try {
       const body = await parseJsonBody(req);
       const { slug, duration } = body;
-      const canWriteAttachments = body.canWriteAttachments === true;
 
       if (!slug || typeof slug !== 'string') {
         return res.status(400).json({ error: 'Missing slug' });
@@ -162,7 +161,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
       }
 
       const shareSlug = registeredShareSlug(slug);
-      const result = createShare(shareSlug, duration, sharingConfig, { canWriteAttachments });
+      const result = createShare(shareSlug, duration);
 
       const share = formatShareResponse(req, result);
 

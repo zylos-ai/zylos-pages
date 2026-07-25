@@ -24,3 +24,10 @@ build/
 # Temporary files
 *.tmp
 *.bak
+
+# Stray local databases. Running the CLI from the repo root drops a pages.db
+# here; a real one holds share token_ids in plaintext, so it must never be
+# committable by an absent-minded `git add -A`.
+pages.db
+*.sqlite
+*.sqlite3

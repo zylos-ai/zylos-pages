@@ -45,6 +45,7 @@ let _getShare;
 let _revokeShare;
 let _revokeAllForPage;
 let _listSharesForPage;
+let _listAllShares;
 let _deleteExpiredShares;
 let _insertShareSession;
 let _getShareSession;
@@ -121,6 +122,12 @@ function initShareStore() {
     SELECT token_id, expires_at, created_at, can_write_attachments
     FROM shares
     WHERE page_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)
+    ORDER BY created_at DESC
+  `);
+  _listAllShares = db.prepare(`
+    SELECT token_id, page_id, expires_at, created_at, can_write_attachments
+    FROM shares
+    WHERE revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
   `);
   _deleteExpiredShares = db.prepare('DELETE FROM shares WHERE expires_at != 0 AND expires_at <= ?');
@@ -252,18 +259,17 @@ function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
   return Math.max(0, Math.min(maxAgeSeconds, remaining));
 }
 
-export function createShare(slug, duration, sharingConfig = {}, options = {}) {
+export function createShare(slug, duration) {
   initShareStore();
   const uri = pageUriFromSlug(slug);
   const page = getLogicalPage(uri);
   if (!page) {
     throw Object.assign(new Error('Page not found'), { statusCode: 404 });
   }
+  // Share tokens are read-only. Kept as a named constant because it is written
+  // to the row and returned to callers, but there is deliberately no way to
+  // turn it on from the outside.
   const canWriteAttachments = false;
-
-  if (duration === 'permanent' && !sharingConfig.allowPermanent) {
-    throw Object.assign(new Error('Permanent shares are disabled'), { statusCode: 403 });
-  }
 
   const durationMs = DURATION_MAP[duration];
   if (durationMs === undefined) {
@@ -519,6 +525,26 @@ export function listSharesForSlug(slug) {
     createdAt: record.created_at,
     canWriteAttachments: record.can_write_attachments === 1,
   }));
+}
+
+// Every live share on this instance, across all pages. `listSharesForSlug`
+// answers "what links exist for this page?"; auditing an instance asks the
+// inverse and had no answer before this. Same liveness predicate as that
+// function: revoked = 0 AND (permanent OR not yet expired).
+export function listAllShares() {
+  initShareStore();
+  return _listAllShares.all(nowMs()).map(record => {
+    const page = getLogicalPageById(record.page_id);
+    return {
+      tokenId: record.token_id,
+      pageId: record.page_id,
+      // Shares outlive their page row; a null uri is a real state, not an error.
+      uri: page ? page.uri : null,
+      expiresAt: record.expires_at,
+      createdAt: record.created_at,
+      canWriteAttachments: record.can_write_attachments === 1,
+    };
+  });
 }
 
 export function cleanupShares() {
