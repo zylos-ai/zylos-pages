@@ -586,19 +586,6 @@ export function describeShare(input) {
 // link, which document was it?" has no answer. Sessions are the opposite —
 // transient browser state, worth nothing after expiry, and the thing that
 // could otherwise still open an unregistered page.
-// All active shares joined to their pages — powers the public llms.txt
-// discovery index (only shared pages are exposed externally).
-export function listActiveShares() {
-  initShareStore();
-  return db.prepare(`
-    SELECT s.token_id AS tokenId, s.expires_at AS expiresAt,
-           p.uri, p.title, p.source_path AS sourcePath, p.source_ext AS sourceExt
-    FROM shares s JOIN logical_pages p ON p.page_id = s.page_id
-    WHERE s.revoked = 0 AND (s.expires_at = 0 OR s.expires_at > ?)
-    ORDER BY p.uri, s.expires_at
-  `).all(nowMs());
-}
-
 export function cleanupShares() {
   initShareStore();
   const sessions = _deleteExpiredShareSessions.run(nowMs()).changes;

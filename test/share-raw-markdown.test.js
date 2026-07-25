@@ -105,42 +105,28 @@ test('GET /s/:tokenId.md rejects unknown, revoked, and non-markdown shares', asy
   }
 });
 
-test('llms.txt lists only actively shared markdown pages and drops revoked shares', async () => {
-  const { server } = await makeServer();
-  const origin = `http://127.0.0.1:${server.address().port}`;
-  const mdShare = createShare('p/docs/shared', '24h', { allowPermanent: false });
-  const htmlShare = createShare('p/docs/artifact', '24h', { allowPermanent: false });
-  try {
-    let response = await fetch(`${origin}/llms.txt`);
-    assert.equal(response.status, 200);
-    assert.match(response.headers.get('content-type'), /text\/markdown/);
-    let body = await response.text();
-    assert.ok(body.includes(`/s/${mdShare.tokenId}.md`), 'shared markdown page is listed');
-    assert.ok(body.includes('A shared markdown document.'), 'frontmatter description is included');
-    assert.ok(!body.includes('unshared'), 'registered but unshared page is not exposed');
-    assert.ok(!body.includes(htmlShare.tokenId), 'html artifact shares are not listed');
-
-    const full = await (await fetch(`${origin}/llms-full.txt`)).text();
-    assert.ok(full.includes('Hello from markdown.'), 'full variant inlines the shared content');
-    assert.ok(!full.includes('Private doc'), 'full variant excludes unshared content');
-
-    revokeShare(mdShare.tokenId);
-    body = await (await fetch(`${origin}/llms.txt`)).text();
-    assert.ok(!body.includes(mdShare.tokenId), 'revoked share disappears from the index');
-  } finally {
-    revokeShare(htmlShare.tokenId);
-    server.close();
-  }
-});
-
-test('auth middleware allows /s/:tokenId.md and llms indexes without a session', async () => {
+test('auth middleware admits /s/:tokenId.md without a session, and nothing else new', async () => {
   const { server } = await makeServer({ auth: true });
   const origin = `http://127.0.0.1:${server.address().port}`;
   const share = createShare('p/docs/shared', '24h', { allowPermanent: false });
   try {
-    for (const requestPath of [`/s/${share.tokenId}.md`, '/llms.txt', '/llms-full.txt']) {
+    const allowed = await fetch(`${origin}/s/${share.tokenId}.md`, { redirect: 'manual' });
+    assert.equal(allowed.status, 200, 'the token-scoped raw route should not require login');
+
+    // Negative control for the line above: the allowlist must be an extension
+    // of the share-token rule, not a wider hole. A path that no share token
+    // can name has to stay behind auth, otherwise a 200 on the .md route
+    // would prove nothing about how narrow the allowlist is.
+    const gated = await fetch(`${origin}/docs/shared`, { redirect: 'manual' });
+    assert.equal(gated.status, 302, 'an ordinary page must still redirect to login');
+
+    // The public llms.txt indexes were deliberately not adopted: a share token
+    // is an unguessable capability, and a public index would turn the whole
+    // set of them into a directory. Pinned so re-adding one is a test failure,
+    // not a silent change of exposure.
+    for (const requestPath of ['/llms.txt', '/llms-full.txt']) {
       const response = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
-      assert.equal(response.status, 200, `${requestPath} should not require login`);
+      assert.notEqual(response.status, 200, `${requestPath} must not be publicly served`);
     }
   } finally {
     revokeShare(share.tokenId);
@@ -162,4 +148,37 @@ test('pageTemplate declares a text/markdown alternate pointing at the raw API', 
   assert.ok(html.includes(
     '<link rel="alternate" type="text/markdown" href="/pages/api/raw/p/docs/shared" title="Markdown version">',
   ));
+});
+
+// The alternate link is baked into the cached render pointing at /api/raw,
+// which share viewers are forbidden from using, and is rewritten to the
+// token-scoped route only on the share path. A rewrite that silently stops
+// matching would leave share viewers holding a link that 403s, and nothing
+// else would fail — so both halves are asserted: the token route is present,
+// and no /api/raw reference survives.
+test('a rendered share view points its markdown alternate at the token route, never /api/raw', async () => {
+  const { server } = await makeServer();
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const share = createShare('p/docs/shared', '24h', { allowPermanent: false });
+  try {
+    const response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+    assert.equal(response.status, 200);
+    const html = await response.text();
+
+    // Guard: an empty or error body would satisfy "does not contain /api/raw"
+    // no matter what the rewrite did.
+    assert.ok(html.includes('rel="alternate"'), 'the share render should carry an alternate declaration');
+
+    assert.ok(
+      html.includes(`/s/${share.tokenId}.md`),
+      'the alternate should point at the token-scoped raw route',
+    );
+    assert.ok(
+      !html.includes('/api/raw/'),
+      'no /api/raw reference may survive into a share view',
+    );
+  } finally {
+    revokeShare(share.tokenId);
+    server.close();
+  }
 });
