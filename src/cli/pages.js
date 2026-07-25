@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
 import { getLogicalPage, registerLogicalPage, searchLogicalPages, unregisterLogicalPage } from '../pages/page-store.js';
-import { createShare, listSharesForSlug, revokeAllForSlug } from '../sharing/share-manager.js';
+import { createShare, listAllShares, listSharesForSlug, revokeAllForSlug, revokeShare } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
 
 class CliError extends Error {
@@ -28,7 +28,9 @@ Usage:
   node pages.js list [--q <query>] [--json]
   node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--json]
   node pages.js shares <uri> [--json]
-  node pages.js unshare <uri> [--json]
+  node pages.js shares --all [--json]                  # every live share on this instance
+  node pages.js unshare <uri> [--json]                 # revokes ALL tokens on that uri
+  node pages.js unshare --token <token-id> [--json]    # revokes exactly one token
   node pages.js unregister <uri> [--json]
   node pages.js allow-root add <path> [--name <name>] [--json]
   node pages.js status [--json]
@@ -36,16 +38,22 @@ Usage:
 Examples:
   node pages.js register --source /abs/report.md --uri reports/q3 --title "Q3 Report"
   node pages.js share reports/q3 --duration 7d
+  node pages.js shares --all
+  node pages.js unshare --token 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js allow-root add /Users/howard/zylos/workspace/reports --name reports`);
 }
+
+// Flags that stand alone. Everything else consumes the next argv entry, so a
+// value-less flag not listed here fails with "missing value for --x".
+const BOOLEAN_FLAGS = new Set(['json', 'all']);
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
   const args = { command, _: [], json: false };
   for (let i = 0; i < rest.length; i += 1) {
     const token = rest[i];
-    if (token === '--json') {
-      args.json = true;
+    if (token.startsWith('--') && BOOLEAN_FLAGS.has(token.slice(2))) {
+      args[token.slice(2)] = true;
       continue;
     }
     if (token.startsWith('--')) {
@@ -265,14 +273,36 @@ function commandShare(args) {
 }
 
 function commandShares(args) {
-  const uri = normalizeUri(args._[0] || args.uri || args.slug);
   const config = getConfig();
+  // `shares --all` answers "what share links are live on this box?". Without it
+  // the only way to audit is to read the SQLite file directly, which is what an
+  // incident response had to resort to.
+  if (args.all) {
+    const shares = listAllShares().map(share => ({
+      ...formatShare(share, config),
+      uri: share.uri,
+    }));
+    output({ ok: true, command: 'shares', all: true, count: shares.length, shares }, args.json);
+    return;
+  }
+  const uri = normalizeUri(args._[0] || args.uri || args.slug);
   const slug = shareSlugForUri(uri);
   const shares = listSharesForSlug(slug).map(share => formatShare(share, config));
   output({ ok: true, command: 'shares', uri, slug, shares }, args.json);
 }
 
 function commandUnshare(args) {
+  // Revoking one token requires --token: `unshare <uri>` revokes EVERY token on
+  // that uri, which is easy to reach for when only one link was meant to die.
+  const tokenId = args.token || args.tokenId;
+  if (tokenId) {
+    const revoked = revokeShare(tokenId);
+    if (!revoked) {
+      throw new CliError('share_not_found', `no active share with token ${tokenId} (unknown token, or already revoked)`);
+    }
+    output({ ok: true, command: 'unshare', tokenId, revoked: 1 }, args.json);
+    return;
+  }
   const uri = normalizeUri(args._[0] || args.uri || args.slug);
   const slug = shareSlugForUri(uri);
   const revoked = revokeAllForSlug(slug);

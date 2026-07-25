@@ -127,7 +127,8 @@ async function main() {
     logger.info('server started', { port, contentDir: config.contentDir });
   });
 
-  // Hourly cleanup of expired/revoked shares
+  // Hourly cleanup of EXPIRED shares only — revoked rows are deliberately kept
+  // (see cleanupShares), so a revoked link stays auditable after the fact.
   cleanupTimer = setInterval(() => {
     try { cleanupShares(); } catch (err) {
       logger.error('share cleanup failed', { err: err.message });
