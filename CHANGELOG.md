@@ -8,8 +8,8 @@ this one", and could not list what links existed at all, so neither the mistake
 nor its blast radius was visible before or after the fact.
 
 ### Added
-- **`unshare --token <token-id>`**: revokes exactly one share. `revokeShare(tokenId)` and `DELETE /api/share/:tokenId` already existed for the web client; the CLI only imported `revokeAllForSlug`, so agents could revoke a whole page but never a single link. Unknown and already-revoked token ids report distinct errors.
-- **`shares --all`**: lists every live share on the instance. Previously `shares <uri>` could only answer per-page, so "what passwordless links exist on this box right now?" had no CLI answer and required reading the SQLite file directly.
+- **`unshare --token <token-id>`**: revokes exactly one share. `revokeShare(tokenId)` and `DELETE /api/share/:tokenId` already existed for the web client; the CLI only imported `revokeAllForSlug`, so agents could revoke a whole page but never a single link. Unknown and already-revoked token ids both fail with `share_not_found` — the CLI deliberately does not distinguish them, and the error message says so.
+- **`shares --all`**: lists every live share on the instance, with the uri each token exposes. Previously `shares <uri>` could only answer per-page, so "what passwordless links exist on this box right now?" had no CLI answer and required reading the SQLite file directly.
 
 ### Changed
 - **`sharing.allowPermanent` removed; permanent links are always allowed.** The option defaulted to `false` in code while deployments set it to `true`, so the same command behaved differently per machine with nothing in the CLI surfacing which. If the key is still present in `config.json` it is ignored and startup logs a warning — removing the gate *loosens* behaviour for anyone who had set it to `false`, so that change is announced rather than silent. `createShare()` drops both of its now-dead parameters: `sharingConfig` (only ever read for `allowPermanent`) and `options` (already dead before this change — `canWriteAttachments` has been hardcoded `false` in the function body, so every caller's `options` was silently discarded). Test call sites were passing `{ allowPermanent: false }` positionally and would have silently re-bound it to `options` otherwise.
@@ -18,12 +18,17 @@ nor its blast radius was visible before or after the fact.
 
 ### Tests
 - **`test/share-permanent.test.js` (new).** The suite had no `permanent` case whatsoever, so it could not have caught the old gate or its removal. Covers permanent shares from a config with no `sharing` key (the exact shape the removed default governed), their appearance in `shares --all`, and — as a negative control — that an unknown duration is still rejected. Verified to fail when the old gate is reinstated.
+- **`test/share-cli-output.test.js` (new).** Every existing share test asserted on `--json`, so the default human-readable path — the one an operator reads during an incident — had no coverage at all, which is exactly how both output bugs below shipped green. Asserts on raw stdout for `shares --all` and `unshare --token`, plus a negative control that per-page `shares <uri>` does *not* grow a uri column. Three of the four fail without the fix.
 
 ### Fixed
 - **Hourly-cleanup comment corrected.** It claimed to clean up "expired/revoked shares", but the SQL only ever deleted expired rows — revoked rows stay forever. The comment implied revocation destroys the record, which is the opposite of what happens (and is why two revoked links could be restored by hand).
+- **`shares --all` non-JSON output now prints the uri for each token.** It listed token id and expiry only, so the command built to answer "what is exposed on this box?" could not say *which document* each link exposed — the default output was unusable for the one job the flag exists for. Per-page `shares <uri>` is unchanged; the uri is implied there.
+- **`unshare --token` no longer prints `revoked 1 share(s) for undefined`.** The `--token` branch never put a uri in its result, and the humanizer interpolated the missing field. It now resolves the share before revoking (afterwards it is no longer active and cannot be looked up) and falls back to the token id when the page row is gone.
 
-### Known limitation (not addressed here)
-- Expired shares are hard-deleted, so the `shares` table is a snapshot rather than a full ledger of every link ever minted. Related: `token_id` is the secret in the `/s/<token>` URL and is stored in plaintext, so a revoked row still holds a re-activatable credential. Both are being handled as a separate change with its own review — the retention contract needs to be settled before the schema moves.
+### Known limitations (not addressed here)
+- Expired shares are hard-deleted, so the `shares` table is a snapshot rather than a full ledger of every link ever minted. Fixed in 0.7.6.
+- `token_id` is the secret in the `/s/<token>` URL and is stored in plaintext, so a revoked row still holds a re-activatable credential. **This is now a deliberate decision, not a pending item:** the owner chose to keep revocation reversible, because it is what allowed a mistaken bulk `unshare <uri>` to be undone. 0.7.6 states that contract explicitly in `SKILL.md`.
+- **`canWriteAttachments` is handled inconsistently across the HTTP API**: `POST /api/share` accepts `true` and silently ignores it, while `PATCH /api/share/:tokenId` rejects the same value with 410. Pre-existing, untouched here, and deliberately out of scope for a CLI-focused change — fixing it means changing HTTP response codes, which needs its own review and its own tests. Tracked as a follow-up rather than left undecided.
 
 ## [0.7.4] - 2026-07-06
 

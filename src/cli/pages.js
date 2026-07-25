@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
 import { getLogicalPage, registerLogicalPage, searchLogicalPages, unregisterLogicalPage } from '../pages/page-store.js';
-import { createShare, listAllShares, listSharesForSlug, revokeAllForSlug, revokeShare } from '../sharing/share-manager.js';
+import { createShare, getActiveShare, listAllShares, listSharesForSlug, revokeAllForSlug, revokeShare } from '../sharing/share-manager.js';
 import { normalizeSlug } from '../utils/slug.js';
 
 class CliError extends Error {
@@ -93,9 +93,20 @@ function humanize(result) {
     ].join('\n');
   }
   if (result.command === 'shares') {
-    return result.shares.map(share => `${share.tokenId} ${share.expiresAt ? new Date(Number(share.expiresAt)).toISOString() : 'never'}`).join('\n') || 'no active shares';
+    // `shares --all` spans pages, so the uri has to be on every line or the
+    // output cannot answer the question the flag exists for: which document is
+    // each of these links exposing? Per-page `shares <uri>` has no uri per row.
+    return result.shares.map(share => [
+      share.tokenId,
+      ...(result.all ? [share.uri ?? '(page no longer registered)'] : []),
+      share.expiresAt ? new Date(Number(share.expiresAt)).toISOString() : 'never',
+    ].join(' ')).join('\n') || 'no active shares';
   }
-  if (result.command === 'unshare') return `revoked ${result.revoked} share(s) for ${result.uri}`;
+  if (result.command === 'unshare') {
+    // A revoked share whose page row is gone has no uri to report; say that
+    // rather than printing "undefined".
+    return `revoked ${result.revoked} share(s) for ${result.uri ?? result.tokenId}`;
+  }
   if (result.command === 'unregister') return `unregistered ${result.uri}`;
   if (result.command === 'allow-root') return `allowed root ${result.name}: ${result.path}`;
   return JSON.stringify(result, null, 2);
@@ -296,11 +307,15 @@ function commandUnshare(args) {
   // that uri, which is easy to reach for when only one link was meant to die.
   const tokenId = args.token || args.tokenId;
   if (tokenId) {
+    // Resolve before revoking: afterwards the share is no longer active and the
+    // uri can no longer be looked up, which is what left the output saying
+    // "revoked 1 share(s) for undefined".
+    const target = getActiveShare(tokenId);
     const revoked = revokeShare(tokenId);
     if (!revoked) {
       throw new CliError('share_not_found', `no active share with token ${tokenId} (unknown token, or already revoked)`);
     }
-    output({ ok: true, command: 'unshare', tokenId, revoked: 1 }, args.json);
+    output({ ok: true, command: 'unshare', tokenId, uri: target?.uri ?? null, revoked: 1 }, args.json);
     return;
   }
   const uri = normalizeUri(args._[0] || args.uri || args.slug);
