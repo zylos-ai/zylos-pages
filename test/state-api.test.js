@@ -346,6 +346,43 @@ test('state API allows short-share cookie CRUD for the matching artifact', async
   });
 });
 
+// Negative control for the attachment capability added in 0.7.9.
+//
+// State CRUD is a *base* ability of any share on its matching page — it is what
+// makes a shared interactive page able to remember a ticked checkbox, and it
+// has been the contract since v0.3.0. `canWriteAttachments` governs one thing
+// only: persistent file storage. This test exists so that a future change
+// cannot quietly widen that bit into a general "may this link write anything"
+// switch, in either direction: turning it on must not be required for state
+// CRUD, and turning it off must not take state CRUD away.
+test('the attachment capability does not govern state CRUD, in either position', async () => {
+  await registerStatePage('capability-independence');
+
+  for (const canWriteAttachments of [false, true]) {
+    const share = createShare('capability-independence', '24h', { canWriteAttachments });
+
+    await withServer(authConfig(), async ({ origin }) => {
+      const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+      assert.equal(redirect.status, 200);
+      const cookies = cookieHeader(redirect.headers.get('set-cookie'));
+
+      const key = `state-${canWriteAttachments}`;
+      let res = await fetch(`${origin}/api/state/capability-independence/${key}`, {
+        method: 'PUT',
+        headers: sameOriginHeaders(origin, { Cookie: cookies }),
+        body: JSON.stringify({ value: { done: true } }),
+      });
+      assert.equal(res.status, 200, `state PUT must not depend on canWriteAttachments=${canWriteAttachments}`);
+
+      res = await fetch(`${origin}/api/state/capability-independence/${key}`, {
+        method: 'DELETE',
+        headers: sameOriginHeaders(origin, { Cookie: cookies }),
+      });
+      assert.equal(res.status, 200, `state DELETE must not depend on canWriteAttachments=${canWriteAttachments}`);
+    });
+  }
+});
+
 test('state API share-token scope mismatch falls through to auth wall', async () => {
   await registerStatePage('scope-source');
   const token = createShare('scope-source', '24h').token;

@@ -4,6 +4,7 @@ import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { logger } from '../utils/logger.js';
 import {
+  artifactByteTotal,
   deleteAttachmentMetadata,
   getAttachment,
   initAttachmentStore,
@@ -29,8 +30,20 @@ import {
   assertValidAttachmentId,
   assertValidItemKey,
 } from '../attachments/validation.js';
+import { consumeShareWriteQuota } from '../security/share-write-limit.js';
+import { getLogicalPage } from '../pages/page-store.js';
 
 const DEFAULT_MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
+// Ceilings that apply only when the writer is a share link. A logged-in owner
+// is not capped: they can already write the disk by other means, so a limit
+// there protects nothing. These bound what an unauthenticated link holder can
+// deposit before anyone notices — a count so one item cannot accumulate
+// endlessly, and a byte total so the count cannot be honoured with 50 files of
+// the maximum size. Together they are what stops a passwordless link from
+// quietly becoming free image hosting.
+const DEFAULT_MAX_ATTACHMENTS_PER_ITEM = 50;
+const DEFAULT_MAX_ARTIFACT_BYTES = 100 * 1024 * 1024;
 
 function csrfCheck(req, res) {
   const expectedHost = req.headers.host;
@@ -59,11 +72,110 @@ function csrfCheck(req, res) {
   return true;
 }
 
-function requireAttachmentMutation(req, res, artifact) {
-  if (res.locals.authenticated === true) return true;
-  logger.info('attachment mutation rejected', { path: req.path, viewer: res.locals.viewerType || 'none' });
-  res.status(403).json({ error: 'Authentication required for attachment mutation' });
-  return false;
+// Every attachment mutation passes through here — there is deliberately one
+// gate, not one per route, so a new mutation route cannot be added without
+// crossing it.
+//
+// Two ways through, and only two:
+//   1. a logged-in session, which may write anything;
+//   2. a share token that carries the attachment-write capability *and* is
+//      bound to the very page the artifact resolves to.
+//
+// The binding in (2) compares canonical page ids, not strings. The share row is
+// keyed by page_id precisely so a link survives a rename, so the identity that
+// the grant was issued against is the page id — comparing the uri instead would
+// compare two names for the thing rather than the thing, and names move.
+// Resolving the artifact through the page store also means an unregistered or
+// tombstoned page has no id to match and is refused here rather than deeper in.
+//
+// This re-checks a fact the auth middleware already established. That is not
+// redundancy for its own sake: the middleware decides "may this request proceed
+// at all", this decides "may it write *this* page", and the day those two stop
+// meaning the same thing is the day one of them is wrong.
+// res.locals.shareContext is re-read from the DB on every request, so a revoked
+// token, an expired one, or one whose capability was withdrawn a second ago
+// fails here with nothing needing to be invalidated.
+//
+// Exported for tests. Over HTTP the auth middleware refuses a mismatched page
+// before a request can ever reach this function, so a route-level test cannot
+// tell whether this check exists — the whole point of the check is to still be
+// standing if that middleware ever changes. Testing it therefore has to be
+// direct, or it is not being tested at all.
+export function shareMutationGrant(res, artifact) {
+  if (res.locals.viewerType !== 'share') return null;
+  if (res.locals.shareCanWriteAttachments !== true) return null;
+  const share = res.locals.shareContext;
+  if (!share || !share.pageId) return null;
+  const page = getLogicalPage(artifact);
+  if (!page || page.pageId !== share.pageId) return null;
+  return share;
+}
+
+function clientIp(req) {
+  return req.ip || req.socket?.remoteAddress || null;
+}
+
+// One line per mutation, allowed or refused. It cannot name a person — a share
+// link is not an identity — but "which grant, against what page, doing what,
+// with what result, from where, when" is answerable, and that is what makes a
+// bad link revocable rather than merely regrettable. Never carries the cookie
+// or token value itself, only the token id, which is already public in the URL.
+function auditMutation(req, res, action, fields) {
+  const writer = res.locals.attachmentWriter || { kind: res.locals.viewerType || 'none' };
+  logger.info('attachment mutation audit', {
+    action,
+    writer: writer.kind,
+    tokenId: writer.tokenId ?? res.locals.shareContext?.tokenId ?? null,
+    pageId: res.locals.shareContext?.pageId ?? null,
+    artifact: req.params.artifact ?? null,
+    ip: clientIp(req),
+    ...fields,
+  });
+}
+
+function requireAttachmentMutation(req, res, artifact, config, operation) {
+  if (res.locals.authenticated === true) {
+    res.locals.attachmentWriter = { kind: 'session' };
+    return true;
+  }
+
+  const share = shareMutationGrant(res, artifact);
+  if (!share) {
+    auditMutation(req, res, operation, {
+      result: 'denied',
+      status: 403,
+      reason: res.locals.viewerType === 'share' ? 'share_not_writable_or_wrong_page' : 'unauthenticated',
+    });
+    res.status(403).json({ error: 'Authentication required for attachment mutation' });
+    return false;
+  }
+
+  // Rationed per token and per operation, not per IP: the capability travels
+  // with the link, so the link is the thing that has to have a ceiling. Note
+  // the order — a revoked or non-writable token is refused above and never
+  // reaches this counter, so it cannot consume or pollute a live token's quota.
+  const quota = consumeShareWriteQuota(
+    share.tokenId,
+    operation,
+    config.attachments?.shareWriteRateLimit,
+    clientIp(req)
+  );
+  if (!quota.allowed) {
+    res.locals.attachmentWriter = { kind: 'share', tokenId: share.tokenId };
+    auditMutation(req, res, operation, {
+      result: 'denied',
+      status: 429,
+      reason: 'rate_limited',
+      dimension: quota.dimension,
+      retryAfterSeconds: quota.retryAfterSeconds,
+    });
+    res.setHeader('Retry-After', String(quota.retryAfterSeconds));
+    res.status(429).json({ error: 'Too many attachment writes for this share link' });
+    return false;
+  }
+
+  res.locals.attachmentWriter = { kind: 'share', tokenId: share.tokenId };
+  return true;
 }
 
 function attachmentResponse(req, record) {
@@ -236,11 +348,30 @@ function parseMultipartUpload(req, maxFileSizeBytes) {
   });
 }
 
-async function createAttachment({ req, config, hooks }) {
+async function createAttachment({ req, res, config, hooks }) {
   const { artifact, key } = req.params;
   assertValidArtifactId(artifact);
   assertValidItemKey(key);
   await ensureArtifactExists(artifact, config.contentDir);
+
+  // Checked before the upload is read, so a link holder hitting a ceiling costs
+  // two DB reads rather than a full file write that then has to unwind.
+  if (res.locals.attachmentWriter?.kind === 'share') {
+    const maxPerItem = config.attachments?.maxPerItem ?? DEFAULT_MAX_ATTACHMENTS_PER_ITEM;
+    if (listAttachments(artifact, key).length >= maxPerItem) {
+      throw Object.assign(
+        new Error(`This list already holds the maximum of ${maxPerItem} attachments`),
+        { statusCode: 409 }
+      );
+    }
+    const maxArtifactBytes = config.attachments?.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
+    if (artifactByteTotal(artifact) >= maxArtifactBytes) {
+      throw Object.assign(
+        new Error('This page has reached its attachment storage limit'),
+        { statusCode: 409 }
+      );
+    }
+  }
 
   const maxFileSizeBytes = config.attachments?.maxFileSizeBytes ?? DEFAULT_MAX_FILE_SIZE_BYTES;
   const upload = await parseMultipartUpload(req, maxFileSizeBytes);
@@ -323,24 +454,41 @@ export function setupAttachmentApi(app, config, options = {}) {
 
   app.post('/api/attachments/:artifact/:key', async (req, res) => {
     if (!csrfCheck(req, res)) return;
-    if (!requireAttachmentMutation(req, res, req.params.artifact)) return;
+    if (!requireAttachmentMutation(req, res, req.params.artifact, config, 'upload')) return;
 
     try {
-      const record = await createAttachment({ req, config, hooks });
+      const record = await createAttachment({ req, res, config, hooks });
+      auditMutation(req, res, 'upload', {
+        result: 'allowed',
+        status: 201,
+        itemKey: record.itemKey,
+        attachmentId: record.attachmentId,
+        mimeType: record.mimeType,
+        sizeBytes: record.sizeBytes,
+      });
       return res.status(201).json({ ok: true, attachment: attachmentResponse(req, record) });
     } catch (err) {
       const status = err.statusCode || 500;
       logger.warn('attachment upload failed', { artifact: req.params.artifact, key: req.params.key, status, err: err.message });
+      auditMutation(req, res, 'upload', {
+        result: 'failed',
+        status,
+        itemKey: req.params.key,
+        reason: status === 500 ? 'internal_error' : err.message,
+      });
       return res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message });
     }
   });
 
   app.delete('/api/attachments/:artifact/:attachmentId', async (req, res) => {
     if (!csrfCheck(req, res)) return;
-    if (!requireAttachmentMutation(req, res, req.params.artifact)) return;
+    if (!requireAttachmentMutation(req, res, req.params.artifact, config, 'delete')) return;
     if (rejectInvalidFileParams(req, res)) return;
 
     try {
+      // Looked up by (artifact, attachmentId), never by id alone — an id from
+      // another page finds nothing here, so a mismatched artifact is refused
+      // before any row or file is touched.
       const record = getAttachment(req.params.artifact, req.params.attachmentId);
       if (!record) {
         return res.status(404).json({ error: 'Attachment not found' });
@@ -350,14 +498,35 @@ export function setupAttachmentApi(app, config, options = {}) {
         return res.status(404).json({ error: 'Attachment not found' });
       }
       const filePath = resolveFinalPath(record.artifact, record.storedFilename);
+      // Metadata first, file second. If the unlink fails the row is already
+      // gone, so the file is orphaned: invisible to every read path but still
+      // on disk. The audit line below records that outcome explicitly rather
+      // than leaving it to a warning nobody correlates — on a publicly
+      // writable path, "DB deleted, file remains" has to be greppable.
+      let fileRemoved = true;
       try {
         await unlinkIfExists(filePath);
       } catch (err) {
+        fileRemoved = false;
         logger.warn('attachment file cleanup failed', { artifact: record.artifact, attachmentId: record.attachmentId, err: err.message });
       }
+      auditMutation(req, res, 'delete', {
+        result: 'allowed',
+        status: 200,
+        itemKey: record.itemKey,
+        attachmentId: record.attachmentId,
+        sizeBytes: record.sizeBytes,
+        fileRemoved,
+      });
       return res.json({ ok: true });
     } catch (err) {
       logger.error('attachment delete failed', { artifact: req.params.artifact, attachmentId: req.params.attachmentId, err: err.message });
+      auditMutation(req, res, 'delete', {
+        result: 'failed',
+        status: err.statusCode || 500,
+        attachmentId: req.params.attachmentId,
+        reason: err.statusCode ? err.message : 'internal_error',
+      });
       return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Internal Server Error' });
     }
   });

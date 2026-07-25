@@ -1,5 +1,118 @@
 # Changelog
 
+## [0.7.9] - 2026-07-26
+
+A share link can once again be given permission to upload and delete a page's
+photos. This restores the original point of issue #49 — a passwordless link a
+family member can use to help collect renovation photos — which PR #50 built,
+PR #71 switched off, and which has been dead code with a live UI ever since.
+
+**This reverses a previous security decision, so the reasoning is recorded in
+full rather than summarised.** An audit of #49, #50 and #71 (their
+descriptions, diffs and review comments) establishes only that #71
+*deliberately* deprecated and tested away the capability during the DB-backed
+page registry work. It records **no specific vulnerability, incident, or stated
+concern** as the motive. Everything below is therefore a **present-day
+re-evaluation**, not a reconstruction of what anyone decided in June — a
+distinction worth keeping, because a guess about the past dressed as history is
+the kind of thing the next reader would have no way to check.
+
+**What a share link is, stated accurately.** A share is not a globally
+read-only principal, and describing it that way would have been wrong before
+this release too. Since v0.3.0 a share has had **state CRUD on its matching
+page** — that is what lets a shared interactive page remember a ticked
+checkbox. What this release adds is a *separate, opt-in* capability covering
+**persistent file storage**, which is a different kind of risk: bytes on disk,
+content hosted under someone else's domain, a link that can be forwarded. The
+ceilings below exist for that risk specifically. The state surface is
+deliberately **not** folded into this capability — governing checkbox saves
+with a bit named "can write attachments" would be both semantically wrong and
+an unannounced compatibility break — and is instead logged as its own security
+backlog item, since it has no capability bit, no per-token audit and no
+per-artifact ceiling of its own.
+
+### Added
+- **`canWriteAttachments`, an explicit per-token capability.** Off unless asked
+  for, and only a real `true` grants it — `"true"`, `1` or a stray object are
+  refused with a 400 rather than coerced in either direction. Available when
+  creating a share (`POST /api/share`, the share dialog's existing "Allow photo
+  upload/delete" checkbox, or `pages share <uri> --writable`) and toggleable
+  afterwards on an existing link without changing its URL (`PATCH
+  /api/share/:tokenId`, restoring what issue #51 asked for). Granting is
+  refused on exactly the rows withdrawal is: a revoked, expired or tombstoned
+  token cannot be brought back to life by upgrading it.
+- **Ceilings that apply to share writers only.** A logged-in owner can already
+  write the disk by other means, so capping them protects nothing; these bound
+  what an unauthenticated link holder can deposit. `attachments.maxPerItem`
+  (default 50) caps attachments on one item key, and
+  `attachments.maxArtifactBytes` (default 100 MiB) caps total stored bytes per
+  page — the count alone cannot bound storage, since it can be honoured with 50
+  files of the maximum size. Both refuse with 409 before the upload is read.
+- **Per-token, per-operation rate limiting** (`attachments.shareWriteRateLimit`,
+  default 12/minute per token and 30/minute per source address). The app-wide
+  limiter keys on IP, which is the wrong unit here: one link handed to twenty
+  people is twenty addresses against a single grant, so the primary bucket is
+  the token — the thing that was issued and the thing that can be revoked. IP
+  remains as a secondary dimension because a single source hammering one link
+  is invisible to a token bucket generous enough to be usable; neither subsumes
+  the other, so a request charges both. Uploads and deletes are rationed
+  separately, so a spent upload budget cannot strand the files it just created.
+  A refused token never reaches the counter at all, so it cannot drain a live
+  token's allowance.
+- **A token- and operation-level audit line for every attachment mutation,
+  allowed or refused**, carrying token id, page id, artifact, item key,
+  attachment id, MIME type, size, result, status and source address, and never
+  the cookie or token value. It cannot name a person — a share link is not an
+  identity — but "which grant, against what page, doing what, with what result,
+  from where, when" is now answerable, which is what makes a bad link revocable
+  rather than merely regrettable. Deletes additionally record whether the file
+  itself was removed, so the one outcome that is otherwise invisible to every
+  read path — metadata gone, file orphaned on disk — is greppable.
+
+### Changed
+- **The attachment mutation gate is one function, crossed by both the upload
+  and the delete route**, rather than a check per route, so a future mutation
+  route cannot be added without passing it. It admits a logged-in session, or a
+  share token that carries the capability **and** whose grant resolves to the
+  same canonical `page_id` as the artifact being written. The binding compares
+  page identity rather than the uri string: shares are keyed by `page_id`
+  precisely so a link survives a rename, so comparing names would compare two
+  labels for the thing instead of the thing. An unregistered or tombstoned page
+  has no id to match and is refused there.
+- A writable share viewer remains `authenticated=false`. The capability grants
+  attachment writes on one page and nothing else — share creation, listing,
+  revocation and every other auth-only surface stay out of reach.
+- Revocation, expiry and withdrawal of the capability take effect immediately
+  on sessions that are already open, because the share row is re-read on every
+  request rather than snapshotted into the cookie.
+
+### Tests
+- **The page binding is tested directly rather than through HTTP, because over
+  HTTP it cannot be tested at all.** The auth middleware refuses a mismatched
+  page before a request can reach the gate, so every route-level assertion
+  passes whether or not the gate re-checks the binding — which is precisely the
+  property the gate exists for, being the check still standing if that
+  middleware ever changes. This was found by falsification: deleting the
+  binding left the entire route suite green. The direct suite fails on that
+  same deletion.
+- The route suite covers the grant end to end and its refusals: upload and
+  delete on the owned page; a read-only link refused; grant and withdrawal
+  taking effect mid-session on an already-issued cookie; revocation killing an
+  open session; cross-page upload and cross-page delete refused with the
+  foreign attachment asserted to survive; an attachment id addressed through
+  the wrong page finding nothing, so an id alone can never delete anything; a
+  page unregistered underneath a live session; count and byte ceilings; rate
+  limiting including the separate upload and delete allowances and the proof
+  that a refused token drains no budget; and that share management stays
+  unreachable while the grant itself remains intact.
+- **A negative control pins the state surface as independent of this
+  capability**, asserting state CRUD works identically with the bit on and off,
+  so a later change cannot quietly widen "can write attachments" into "can
+  write anything" in either direction.
+- The audit trail is asserted from the log output an operator would actually
+  read, for an allowed write, a rate-limited one and a refused one, including
+  that no cookie value appears anywhere in it.
+
 ## [0.7.8] - 2026-07-26
 
 A shared link can now hand its Markdown source to a tool instead of its

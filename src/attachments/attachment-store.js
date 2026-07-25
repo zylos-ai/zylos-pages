@@ -5,6 +5,7 @@ let _listForItem;
 let _getOne;
 let _insertOne;
 let _deleteOne;
+let _artifactBytes;
 
 function mapRow(row) {
   return {
@@ -61,6 +62,13 @@ export function initAttachmentStore() {
     DELETE FROM artifact_attachments
     WHERE artifact = ? AND attachment_id = ?
   `);
+  // COALESCE because SUM over no rows is NULL, and a fresh artifact is the
+  // common case for the caller that asks this (a first upload against a quota).
+  _artifactBytes = db.prepare(`
+    SELECT COALESCE(SUM(size_bytes), 0) AS total
+    FROM artifact_attachments
+    WHERE artifact = ?
+  `);
 
   initialized = true;
 }
@@ -78,6 +86,13 @@ export function getAttachment(artifact, attachmentId) {
   ensureInitialized();
   const row = _getOne.get(artifact, attachmentId);
   return row ? mapRow(row) : null;
+}
+
+// Bytes currently stored against one artifact, per the metadata rows. Used as a
+// storage ceiling for share-link writers; see src/routes/attachment-api.js.
+export function artifactByteTotal(artifact) {
+  ensureInitialized();
+  return _artifactBytes.get(artifact)?.total ?? 0;
 }
 
 export function insertAttachment(record) {

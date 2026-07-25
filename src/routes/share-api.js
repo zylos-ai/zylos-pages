@@ -1,6 +1,6 @@
 // Share API route handlers
 // POST /api/share — create share (requires login + CSRF)
-// PATCH /api/share/:tokenId — deprecated write permission endpoint (requires login + CSRF)
+// PATCH /api/share/:tokenId — toggle the attachment-write capability (requires login + CSRF)
 // DELETE /api/share/:tokenId — revoke share (requires login + CSRF)
 // GET /api/shares/:slug(*) — list active shares for slug (requires login)
 // DELETE /api/shares/:slug(*) — revoke all shares for slug (requires login + CSRF)
@@ -188,9 +188,17 @@ export function setupShareApi(app, sharingConfig, config = {}) {
       if (!duration || typeof duration !== 'string') {
         return res.status(400).json({ error: 'Missing duration' });
       }
+      // Absent means read-only. Anything present must be an actual boolean, so
+      // a client that sends "true" or 1 gets a 400 instead of silently either
+      // granting or dropping the capability.
+      if (body.canWriteAttachments !== undefined && typeof body.canWriteAttachments !== 'boolean') {
+        return res.status(400).json({ error: 'Invalid canWriteAttachments' });
+      }
 
       const shareSlug = registeredShareSlug(slug);
-      const result = createShare(shareSlug, duration);
+      const result = createShare(shareSlug, duration, {
+        canWriteAttachments: body.canWriteAttachments === true,
+      });
 
       const share = formatShareResponse(req, result);
 
@@ -209,7 +217,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     }
   });
 
-  // PATCH /api/share/:tokenId — attachment writes are no longer supported for public shares
+  // PATCH /api/share/:tokenId — grant or withdraw attachment writes on one token
   app.patch('/api/share/:tokenId', async (req, res) => {
     if (!csrfCheck(req, res)) return;
 
@@ -227,11 +235,8 @@ export function setupShareApi(app, sharingConfig, config = {}) {
       if (typeof body.canWriteAttachments !== 'boolean') {
         return res.status(400).json({ error: 'Invalid canWriteAttachments' });
       }
-      if (body.canWriteAttachments === true) {
-        return res.status(410).json({ error: 'Public attachment writes are deprecated' });
-      }
 
-      const updated = updateShareAttachmentPermission(tokenId, false);
+      const updated = updateShareAttachmentPermission(tokenId, body.canWriteAttachments);
       if (!updated) {
         return res.status(404).json({ error: 'Share not found' });
       }

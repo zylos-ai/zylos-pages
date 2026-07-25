@@ -52,6 +52,15 @@ export const DEFAULT_CONFIG = {
   },
   attachments: {
     maxFileSizeBytes: 5 * 1024 * 1024,
+    // Both of the following bound share-link writers only; a logged-in owner is
+    // not rationed. See src/routes/attachment-api.js.
+    maxPerItem: 50,
+    maxArtifactBytes: 100 * 1024 * 1024,
+    shareWriteRateLimit: {
+      windowMs: 60000,
+      max: 12,
+      ipMax: 30,
+    },
   },
   externalFiles: {
     enabled: true,

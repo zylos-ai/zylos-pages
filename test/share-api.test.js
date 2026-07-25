@@ -146,33 +146,51 @@ test('create share returns short URL only', async () => {
   }
 });
 
-test('create share ignores deprecated attachment write requests', async () => {
+test('create share grants attachment writes only when asked, and only for a real boolean', async () => {
   const { server, origin } = await makeServer();
   try {
-    const response = await fetch(`${origin}/api/share`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: origin,
-        'X-Forwarded-Proto': 'http',
-      },
-      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', canWriteAttachments: true }),
-    });
+    async function create(payload) {
+      return fetch(`${origin}/api/share`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: origin,
+          'X-Forwarded-Proto': 'http',
+        },
+        body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', ...payload }),
+      });
+    }
 
+    // Explicit opt-in.
+    let response = await create({ canWriteAttachments: true });
     assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.canWriteAttachments, false);
+    const writable = await response.json();
+    assert.equal(writable.canWriteAttachments, true);
+
+    // Omitted means read-only — the default must never drift.
+    response = await create({});
+    assert.equal(response.status, 200);
+    const readOnly = await response.json();
+    assert.equal(readOnly.canWriteAttachments, false);
+
+    // A truthy non-boolean is a client bug, not consent. It must not be
+    // silently coerced in either direction.
+    for (const bad of ['true', 1, {}]) {
+      response = await create({ canWriteAttachments: bad });
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: 'Invalid canWriteAttachments' });
+    }
 
     const list = await fetch(`${origin}/api/shares/p/docs/page`, {
       headers: { 'X-Forwarded-Proto': 'http' },
     });
     assert.equal(list.status, 200);
     const listed = await list.json();
-    const created = listed.shares.find(share => share.tokenId === body.tokenId);
-    assert.ok(created);
-    assert.equal(created.canWriteAttachments, false);
-    assert.equal(created.shortUrl, `${origin}/s/${created.tokenId}`);
+    const listedWritable = listed.shares.find(share => share.tokenId === writable.tokenId);
+    const listedReadOnly = listed.shares.find(share => share.tokenId === readOnly.tokenId);
+    assert.equal(listedWritable.canWriteAttachments, true);
+    assert.equal(listedReadOnly.canWriteAttachments, false);
+    assert.equal(listedWritable.shortUrl, `${origin}/s/${listedWritable.tokenId}`);
   } finally {
     server.close();
   }
@@ -198,38 +216,34 @@ test('create share rejects unregistered content slugs', async () => {
   }
 });
 
-test('patch cannot upgrade share attachment permission and can keep read-only state', async () => {
+test('patch toggles the attachment capability in both directions on the same link', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const cookie = await login(origin);
-    const readOnly = await createShareViaApi(origin, cookie);
 
-    let response = await patchShare(origin, readOnly.tokenId, true, cookie);
-    assert.equal(response.status, 410);
+    async function storedFlag(tokenId) {
+      const list = await fetch(`${origin}/api/shares/p/docs/page`, { headers: { Cookie: cookie } });
+      assert.equal(list.status, 200);
+      const found = (await list.json()).shares.find(share => share.tokenId === tokenId);
+      assert.ok(found, 'share must still be listed');
+      return found.canWriteAttachments;
+    }
+
+    // The point of #51: change the capability without changing the URL.
+    const share = await createShareViaApi(origin, cookie);
+    assert.equal(await storedFlag(share.tokenId), false);
+
+    let response = await patchShare(origin, share.tokenId, true, cookie);
+    assert.equal(response.status, 200);
     let body = await response.json();
-    assert.deepEqual(body, { error: 'Public attachment writes are deprecated' });
+    assert.equal(body.canWriteAttachments, true);
+    assert.equal(await storedFlag(share.tokenId), true);
 
-    let list = await fetch(`${origin}/api/shares/p/docs/page`, { headers: { Cookie: cookie } });
-    assert.equal(list.status, 200);
-    let listed = await list.json();
-    let updated = listed.shares.find(share => share.tokenId === readOnly.tokenId);
-    assert.ok(updated);
-    assert.equal(updated.canWriteAttachments, false);
-
-    const editable = await createShareViaApi(origin, cookie, { canWriteAttachments: true });
-    response = await patchShare(origin, editable.tokenId, false, cookie);
+    response = await patchShare(origin, share.tokenId, false, cookie);
     assert.equal(response.status, 200);
     body = await response.json();
-    assert.equal(body.ok, true);
-    assert.equal(body.tokenId, editable.tokenId);
     assert.equal(body.canWriteAttachments, false);
-
-    list = await fetch(`${origin}/api/shares/p/docs/page`, { headers: { Cookie: cookie } });
-    assert.equal(list.status, 200);
-    listed = await list.json();
-    updated = listed.shares.find(share => share.tokenId === editable.tokenId);
-    assert.ok(updated);
-    assert.equal(updated.canWriteAttachments, false);
+    assert.equal(await storedFlag(share.tokenId), false);
   } finally {
     server.close();
   }
@@ -286,7 +300,7 @@ test('share viewers cannot patch share attachment permission', async () => {
   }
 });
 
-test('patch rejects revoked expired malformed unknown and deprecated write share updates', async () => {
+test('patch rejects revoked, expired, malformed and unknown tokens in both directions', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const cookie = await login(origin);
@@ -314,8 +328,14 @@ test('patch rejects revoked expired malformed unknown and deprecated write share
     });
     assert.equal(response.status, 400);
 
+    // Granting is refused on exactly the same rows as withdrawing — a dead
+    // token cannot be brought back to life by upgrading it.
+    response = await patchShare(origin, revoked.tokenId, true, cookie);
+    assert.equal(response.status, 404);
     response = await patchShare(origin, expired.tokenId, true, cookie);
-    assert.equal(response.status, 410);
+    assert.equal(response.status, 404);
+    response = await patchShare(origin, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', true, cookie);
+    assert.equal(response.status, 404);
   } finally {
     server.close();
   }
@@ -404,7 +424,11 @@ test('auth middleware allows short share URL cookies to access target page', asy
   }
 });
 
-test('auth middleware keeps short share cookies read-only', async () => {
+// The capability must reach res.locals, and it must not drag `authenticated`
+// up with it. A writable share is still an unauthenticated viewer that happens
+// to hold one extra, narrowly scoped permission — if `authenticated` ever went
+// true here, every auth-only surface in the app would open at once.
+test('a writable share cookie carries the capability without becoming authenticated', async () => {
   const { server, origin } = await makeServer({ auth: true });
   try {
     const login = await fetch(`${origin}/login`, {
@@ -415,28 +439,38 @@ test('auth middleware keeps short share cookies read-only', async () => {
     });
     const cookie = login.headers.get('set-cookie');
 
-    const create = await fetch(`${origin}/api/share`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: origin,
-        'X-Forwarded-Proto': 'http',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', canWriteAttachments: true }),
-    });
-    assert.equal(create.status, 200);
-    const share = await create.json();
+    async function localsFor(payload) {
+      const create = await fetch(`${origin}/api/share`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: origin,
+          'X-Forwarded-Proto': 'http',
+          Cookie: cookie,
+        },
+        body: JSON.stringify({ slug: 'p/docs/page', duration: '24h', ...payload }),
+      });
+      assert.equal(create.status, 200);
+      const share = await create.json();
 
-    const direct = await fetch(share.url, { redirect: 'manual' });
-    assert.equal(direct.status, 200);
-    const cookies = cookieHeader(direct.headers.get('set-cookie'));
+      const direct = await fetch(share.url, { redirect: 'manual' });
+      assert.equal(direct.status, 200);
+      const cookies = cookieHeader(direct.headers.get('set-cookie'));
 
-    const appCheck = await fetch(`${origin}/p/docs/page?locals=1`, {
-      headers: { Cookie: cookies },
+      const appCheck = await fetch(`${origin}/p/docs/page?locals=1`, {
+        headers: { Cookie: cookies },
+      });
+      assert.equal(appCheck.status, 200);
+      return appCheck.json();
+    }
+
+    assert.deepEqual(await localsFor({ canWriteAttachments: true }), {
+      viewerType: 'share',
+      authenticated: false,
+      shareCanWriteAttachments: true,
     });
-    assert.equal(appCheck.status, 200);
-    assert.deepEqual(await appCheck.json(), {
+
+    assert.deepEqual(await localsFor({}), {
       viewerType: 'share',
       authenticated: false,
       shareCanWriteAttachments: false,
