@@ -9,7 +9,6 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-test-'));
 process.env.PAGES_DATA_DIR = tmpDir;
 
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
-const { createShareScopeCookie } = await import('../src/sharing/share-manager.js');
 const express = (await import('express')).default;
 
 // Set-Cookie headers arrive joined by ", " — split on the cookie-name boundary.
@@ -401,11 +400,12 @@ test('logout clears session, share-access, and share-scope cookies at the mount 
   }
 });
 
-// RFC 6265 identifies a stored cookie by name + Domain + Path, so those are
-// what a deletion has to match to land on the right cookie. Secure is checked
-// alongside them only because these names carry the __Secure- prefix, which a
-// user agent rejects outright when the attribute is absent (RFC 6265bis
-// 4.1.3.1) — that is taken from the spec, not measured here. HttpOnly and
+// RFC 6265 §5.3 identifies a stored cookie by name + Domain + Path, so those
+// are what a deletion has to match to land on the right cookie. Secure is
+// checked alongside them only because these names carry the __Secure- prefix,
+// which a user agent rejects outright when the attribute is absent
+// (draft-ietf-httpbis-rfc6265bis-22 §4.1.3.1 — a work-in-progress draft, so
+// the section number is version-bound; cited, not measured here). HttpOnly and
 // SameSite are deliberately excluded: see the policy-consistency test below.
 test('logout deletes each cookie under the identity it was issued with', async () => {
   const { server, origin } = await makeServer();
@@ -414,14 +414,13 @@ test('logout deletes each cookie under the identity it was issued with', async (
     const headers = { 'X-Forwarded-Prefix': cookiePath };
     const cleared = await logout(origin, headers);
     const issuedSession = findCookie(await loginCookies(origin, headers), '__Secure-zylos_pages_session');
-    const tokenId = 'a'.repeat(32);
-    const expiresAt = Date.now() + 3600_000;
 
-    // share_access issuance needs a real share row, so its check lives in
-    // share-api.test.js where a share link is actually visited.
+    // Only cookies this server actually issues can be compared against their
+    // issuance. share_access is checked in share-api.test.js, where a share
+    // link is really visited; share_scope has no issuer left at all and is
+    // asserted directly below.
     const pairs = [
       ['__Secure-zylos_pages_session', issuedSession],
-      ['__Secure-share_scope', createShareScopeCookie('page', tokenId, expiresAt, cookiePath).header],
     ];
 
     for (const [name, issued] of pairs) {
@@ -460,6 +459,30 @@ test('logout deletes each cookie under the identity it was issued with', async (
   }
 });
 
+// share_scope is clear-only — no code issues it, so there is no issuance to
+// compare against and no "attributes match issuance" contract to uphold. What
+// remains is the standalone deletion contract: it must be expired at the mount
+// path, and it must keep Secure or a user agent will reject the Set-Cookie
+// outright for a __Secure--prefixed name (draft-ietf-httpbis-rfc6265bis-22
+// 4.1.3.1, a work-in-progress draft — cited, not measured here).
+test('logout expires the issuer-less share-scope cookie on its own terms', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    for (const [prefix, expectedPath] of [[null, '/'], ['/coco/pages', '/coco/pages']]) {
+      const header = await logout(origin, prefix ? { 'X-Forwarded-Prefix': prefix } : {});
+      const clear = findCookie(header, '__Secure-share_scope');
+      const identity = identityAttributes(clear);
+
+      assert.equal(cookieValue(clear), '', 'share_scope should be cleared');
+      assert.match(clear, /Max-Age=0/, 'share_scope should expire immediately');
+      assert.equal(identity.get('path'), expectedPath, `share_scope should be cleared at ${expectedPath}`);
+      assert.ok(identity.has('secure'), 'a __Secure- name is rejected without the Secure attribute');
+    }
+  } finally {
+    server.close();
+  }
+});
+
 // Policy consistency, NOT a deletion requirement. HttpOnly and SameSite are
 // not part of cookie identity, so a mismatch would not stop the clear from
 // landing — this only keeps issuance and logout describable as one policy. A
@@ -473,11 +496,9 @@ test('logout policy attributes stay consistent with issuance', async () => {
     const headers = { 'X-Forwarded-Prefix': cookiePath };
     const cleared = await logout(origin, headers);
     const issuedSession = findCookie(await loginCookies(origin, headers), '__Secure-zylos_pages_session');
-    const tokenId = 'a'.repeat(32);
 
     const pairs = [
       ['__Secure-zylos_pages_session', issuedSession],
-      ['__Secure-share_scope', createShareScopeCookie('page', tokenId, Date.now() + 3600_000, cookiePath).header],
     ];
 
     for (const [name, issued] of pairs) {

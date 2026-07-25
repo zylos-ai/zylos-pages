@@ -13,13 +13,16 @@ const SECRET_BYTES = 32;
 const TOKEN_ID_BYTES = 16;
 const SHARE_ACCESS_BYTES = 32;
 const SHARE_SESSION_MAX_AGE_SECONDS = 3600;
-const SHARE_SCOPE_MAX_AGE_SECONDS = 3600;
 const SHARE_ASSET_MAX_AGE_MS = 3600_000;
 
 // __Secure- (not __Host-) so the Path can be bound to the instance's mount
 // prefix — __Host- mandates Path=/, which makes cookies collide between
 // multiple pages instances on one host (issue #104).
 export const SHARE_ACCESS_COOKIE_NAME = '__Secure-share_access';
+
+// Clear-only. Shares moved to signed asset URLs in 0.7.0 (#73) and nothing has
+// issued or read this cookie since; the name survives so login and logout can
+// still expire copies left in browsers by earlier versions.
 export const SHARE_SCOPE_COOKIE_NAME = '__Secure-share_scope';
 
 // Host-wide cookie names used before path scoping; expired on login/logout so
@@ -260,29 +263,10 @@ function legacyTokenFor(record) {
   return encodeToken(record.pageId, record.expiresAt, record.tokenId, hmac);
 }
 
-function directoryScope(slug) {
-  const normalized = normalizeSlug(slug);
-  const index = normalized.lastIndexOf('/');
-  return index === -1 ? '' : normalized.slice(0, index);
-}
-
-function computeShareScopeHmac(directory, tokenId, expiresAt, secret) {
-  return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
-    .update(`${directory}:${tokenId}:${expiresAt}`)
-    .digest('hex');
-}
-
 function computeShareAssetHmac(uri, realPath, expiresAt, tokenId, secret) {
   return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
     .update(`${normalizeSlug(uri)}|${realPath}|${expiresAt}|${tokenId}`)
     .digest('hex');
-}
-
-function isAssetWithinScope(assetPath, directory) {
-  const normalizedAsset = normalizeSlug(assetPath);
-  const assetDir = directoryScope(normalizedAsset);
-  if (!directory) return assetDir === '';
-  return assetDir === directory || assetDir.startsWith(`${directory}/`);
 }
 
 function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
@@ -417,53 +401,8 @@ export function verifyShare(token, requestSlug) {
   };
 }
 
-export function createShareScopeCookie(slug, tokenId, tokenExpiresAt, cookiePath = '/') {
-  const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SCOPE_MAX_AGE_SECONDS);
-  const expiresAt = nowMs() + maxAge * 1000;
-  const directory = directoryScope(slug);
-  const hmac = computeShareScopeHmac(directory, tokenId, expiresAt, getSecret());
-  const value = `${directory}:${tokenId}:${expiresAt}:${hmac}`;
-  return {
-    value,
-    maxAge,
-    header: `${SHARE_SCOPE_COOKIE_NAME}=${value}; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=${maxAge}`,
-  };
-}
-
 export function clearShareScopeCookieHeader(cookiePath = '/') {
   return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=0`;
-}
-
-export function verifyShareScopeCookie(cookieValue, assetPath) {
-  if (!cookieValue || typeof cookieValue !== 'string') return { valid: false };
-
-  const parts = cookieValue.split(':');
-  if (parts.length < 4) return { valid: false };
-  const hmac = parts.pop();
-  const expiresAtRaw = parts.pop();
-  const tokenId = parts.pop();
-  const directory = parts.join(':');
-  const expiresAt = Number(expiresAtRaw);
-  if (!isTokenId(tokenId) || !Number.isFinite(expiresAt) || !hmac) return { valid: false };
-  if (isPastDeadline(expiresAt)) return { valid: false };
-
-  const expected = computeShareScopeHmac(directory, tokenId, expiresAt, getSecret());
-  const actualBuffer = Buffer.from(hmac, 'hex');
-  const expectedBuffer = Buffer.from(expected, 'hex');
-  if (actualBuffer.length !== expectedBuffer.length) return { valid: false };
-  if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return { valid: false };
-
-  const record = activeShareRecord(tokenId);
-  if (!record) return { valid: false };
-  if (directoryScope(record.slug) !== directory) return { valid: false };
-
-  try {
-    if (!isAssetWithinScope(assetPath, directory)) return { valid: false };
-  } catch {
-    return { valid: false };
-  }
-
-  return { valid: true, directory, viewerType: 'share' };
 }
 
 export function shareAssetExpiresAt(shareExpiresAt) {

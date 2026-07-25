@@ -19,7 +19,13 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi } = await import('../src/routes/state-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { securityHeaders } = await import('../src/security/headers.js');
-const { SHARE_SCOPE_COOKIE_NAME, createShare, createShareScopeCookie, revokeShare } = await import('../src/sharing/share-manager.js');
+const { SHARE_SCOPE_COOKIE_NAME, createShare, revokeShare } = await import('../src/sharing/share-manager.js');
+
+// The scope cookie has no issuer: shares moved to signed asset URLs in 0.7.0
+// (#73) and the minting/verifying code was deleted. Anything a browser still
+// carries under this name is opaque bytes to the server, so tests construct it
+// as such — there is no longer a "valid" or "expired" variant to distinguish.
+const RESIDUAL_SCOPE_COOKIE = `${SHARE_SCOPE_COOKIE_NAME}=left-over-from-an-older-version`;
 
 test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
@@ -99,12 +105,6 @@ function sessionCookie(setCookieHeader) {
   const match = setCookieHeader.match(/__Secure-zylos_pages_session=([^;,]+)/);
   assert.ok(match, 'session cookie should be present');
   return `__Secure-zylos_pages_session=${match[1]}`;
-}
-
-function shareScopeCookie(setCookieHeader) {
-  const match = setCookieHeader.match(/__Secure-share_scope=([^;,]+)/);
-  assert.ok(match, 'share-scope cookie should be present');
-  return `${SHARE_SCOPE_COOKIE_NAME}=${match[1]}`;
 }
 
 function cookieHeader(setCookieHeader) {
@@ -476,40 +476,12 @@ test('signed share assets work for p-prefixed logical page shares', async () => 
   }
 });
 
-test('expired and tampered share-scope cookies fall through to auth wall', async () => {
-  const contentDir = await makeContentDir();
-  try {
-    await writeFile(path.join(contentDir, 'image.jpg'), 'image');
-    const expiredShare = createShare('page', '24h');
-    const validShare = createShare('page', '24h');
-    const expired = createShareScopeCookie('page', expiredShare.tokenId, Date.now() - 1000).value;
-    const valid = createShareScopeCookie('page', validShare.tokenId, Date.now() + 3600_000).value;
-    const tampered = valid.replace(/[0-9a-f]$/, (char) => char === '0' ? '1' : '0');
-
-    await new Promise(resolve => setTimeout(resolve, 5));
-    await withServer(baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }), async ({ origin }) => {
-      let res = await fetch(`${origin}/image.jpg`, {
-        redirect: 'manual',
-        headers: { Cookie: `${SHARE_SCOPE_COOKIE_NAME}=${expired}` },
-      });
-      expectAssetDenied(res);
-
-      res = await fetch(`${origin}/image.jpg`, {
-        redirect: 'manual',
-        headers: { Cookie: `${SHARE_SCOPE_COOKIE_NAME}=${tampered}` },
-      });
-      expectAssetDenied(res);
-    });
-  } finally {
-    await rm(contentDir, { recursive: true, force: true });
-  }
-});
-
-// The scope cookie was retired when shares moved to signed asset URLs (#73):
-// nothing issues it and nothing verifies it. Pinned here so a stale copy left
-// in a browser is known to grant nothing, and so re-wiring the still-exported
-// helper would break a test rather than silently restore a bypass.
-test('a valid share-scope cookie grants nothing on any route', async () => {
+// With the verifier deleted, "grants nothing" is true by construction — no
+// code path reads this cookie at all. Kept anyway because the claim being
+// pinned is about the request, not the helper: a browser that still carries a
+// scope cookie from an old version must be answered exactly as one that
+// carries none, and that is a property of the routes, which do still exist.
+test('a residual share-scope cookie grants nothing on any route', async () => {
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
@@ -519,7 +491,7 @@ test('a valid share-scope cookie grants nothing on any route', async () => {
     await writeFile(path.join(contentDir, 'loose.jpg'), 'loose');
     registerPage(config, 'scoped', pagePath, 'Scoped');
     const share = createShare('scoped', '24h');
-    const scopeCookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('scoped', share.tokenId, Date.now() + 3600_000).value}`;
+    const scopeCookie = RESIDUAL_SCOPE_COOKIE;
 
     await withServer(config, async ({ origin }) => {
       const page = await fetch(`${origin}/s/${share.tokenId}`);
@@ -538,11 +510,38 @@ test('a valid share-scope cookie grants nothing on any route', async () => {
       ];
 
       for (const [label, requestPath, expectDenied] of probes) {
-        const res = await fetch(`${origin}${requestPath}`, {
+        const withCookie = await fetch(`${origin}${requestPath}`, {
           redirect: 'manual',
           headers: { Cookie: scopeCookie },
         });
-        expectDenied(res, `${label} should not be granted by a share-scope cookie`);
+        expectDenied(withCookie, `${label} should not be granted by a share-scope cookie`);
+
+        // The claim is equality with a cookie-less browser, so run that pairing
+        // rather than infer it: same status, same redirect target, and no
+        // Set-Cookie either way (the server must not answer the residual cookie
+        // at all, including by refreshing or clearing it here).
+        const withoutCookie = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
+
+        // Guard: on the 403 probe both Locations are null, so that comparison
+        // is vacuous there and the status carries it. Where a redirect IS
+        // expected, require a real target so the comparison has something to
+        // compare.
+        if (expectDenied === expectLoginRedirect) {
+          assert.equal(typeof withCookie.headers.get('location'), 'string', `${label}: expected a redirect target`);
+        }
+
+        assert.equal(
+          withCookie.status,
+          withoutCookie.status,
+          `${label}: residual cookie changed the status vs no cookie`
+        );
+        assert.equal(
+          withCookie.headers.get('location'),
+          withoutCookie.headers.get('location'),
+          `${label}: residual cookie changed the redirect target vs no cookie`
+        );
+        assert.equal(withCookie.headers.get('set-cookie'), null, `${label}: no Set-Cookie expected`);
+        assert.equal(withoutCookie.headers.get('set-cookie'), null, `${label}: no Set-Cookie expected`);
       }
 
       const session = sessionCookie(await login(origin));
@@ -604,8 +603,7 @@ test('asset route rejects traversal, null byte, and double-encoded traversal', a
     const pagePath = path.join(contentDir, 'page.md');
     await writeFile(pagePath, '# Page\n');
     registerPage(config, 'page', pagePath, 'Page');
-    const share = createShare('page', '24h');
-    const cookie = `${SHARE_SCOPE_COOKIE_NAME}=${createShareScopeCookie('page', share.tokenId, Date.now() + 3600_000).value}`;
+    const cookie = RESIDUAL_SCOPE_COOKIE;
     await withServer(config, async ({ origin }) => {
       let res = await rawGet(origin, '/assets/page?path=%2e%2e%2Fsecret.jpg');
       assert.equal(res.statusCode, 400);
@@ -638,9 +636,7 @@ test('login clears legacy share-scope cookie without overwriting session cookie'
 
     await withServer(config, async ({ origin }) => {
       await fetch(`${origin}/shared?token=${encodeURIComponent(token)}`);
-      const legacy = createShareScopeCookie('shared', createShare('shared', '24h').tokenId, Date.now() + 3600_000).value;
-      const shareCookie = `${SHARE_SCOPE_COOKIE_NAME}=${legacy}`;
-      const loginCookies = await login(origin, { Cookie: shareCookie });
+      const loginCookies = await login(origin, { Cookie: RESIDUAL_SCOPE_COOKIE });
       assert.match(loginCookies, /__Secure-zylos_pages_session=/);
       assert.match(loginCookies, /__Secure-share_scope=;/);
       assert.match(loginCookies, /Max-Age=0/);
