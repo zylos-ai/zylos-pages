@@ -36,6 +36,28 @@ function cookieAttributes(cookie) {
   );
 }
 
+// What decides which stored cookie a Set-Cookie replaces: name + Domain +
+// Path (RFC 6265 5.3), plus Secure for __Secure--prefixed names.
+function identityAttributes(cookie) {
+  const found = new Map();
+  for (const attribute of cookieAttributes(cookie)) {
+    const [key, ...rest] = attribute.split('=');
+    const name = key.trim().toLowerCase();
+    if (name === 'path' || name === 'domain' || name === 'secure') {
+      found.set(name, rest.join('=') || true);
+    }
+  }
+  return found;
+}
+
+// Attributes that govern how a cookie may be used, not which cookie it is.
+function policyAttributes(cookie) {
+  return new Set(
+    [...cookieAttributes(cookie)]
+      .filter(attribute => /^(HttpOnly|SameSite=)/i.test(attribute))
+  );
+}
+
 async function logout(origin, extraHeaders = {}) {
   const response = await fetch(`${origin}/logout`, {
     method: 'POST',
@@ -379,9 +401,13 @@ test('logout clears session, share-access, and share-scope cookies at the mount 
   }
 });
 
-// A clear only expires the cookie when its attributes match the ones used to
-// issue it, so compare against the real issuing headers rather than literals.
-test('logout clear headers match the attributes each cookie is issued with', async () => {
+// RFC 6265 identifies a stored cookie by name + Domain + Path, so those are
+// what a deletion has to match to land on the right cookie. Secure is checked
+// alongside them only because these names carry the __Secure- prefix, which a
+// user agent rejects outright when the attribute is absent (RFC 6265bis
+// 4.1.3.1) — that is taken from the spec, not measured here. HttpOnly and
+// SameSite are deliberately excluded: see the policy-consistency test below.
+test('logout deletes each cookie under the identity it was issued with', async () => {
   const { server, origin } = await makeServer();
   try {
     const cookiePath = '/coco/pages';
@@ -391,18 +417,82 @@ test('logout clear headers match the attributes each cookie is issued with', asy
     const tokenId = 'a'.repeat(32);
     const expiresAt = Date.now() + 3600_000;
 
-    // share_access issuance needs a real share row, so its parity check lives
-    // in share-api.test.js where a share link is actually visited.
+    // share_access issuance needs a real share row, so its check lives in
+    // share-api.test.js where a share link is actually visited.
     const pairs = [
       ['__Secure-zylos_pages_session', issuedSession],
       ['__Secure-share_scope', createShareScopeCookie('page', tokenId, expiresAt, cookiePath).header],
     ];
 
     for (const [name, issued] of pairs) {
+      const clear = findCookie(cleared, name);
+      const clearIdentity = identityAttributes(clear);
+      const issuedIdentity = identityAttributes(issued);
+
+      // Guard: an extractor that silently found nothing would make every
+      // comparison below pass by comparing undefined to undefined.
+      assert.equal(typeof issuedIdentity.get('path'), 'string', `${name} issuance should carry a Path`);
+      assert.ok(issuedIdentity.get('path').length > 0, `${name} issued Path should not be empty`);
+
+      assert.equal(cookieValue(clear), '', `${name} should be cleared`);
+      assert.match(clear, /Max-Age=0/, `${name} should expire immediately`);
+      assert.equal(
+        clearIdentity.get('path'),
+        issuedIdentity.get('path'),
+        `${name} should be deleted at the Path it was issued with`
+      );
+      // Neither side sets Domain today, which is itself the contract: a host
+      // cookie is deleted by a host cookie. Asserted as presence + value so a
+      // Domain appearing on one side alone fails rather than reading as equal.
+      assert.equal(
+        clearIdentity.has('domain'),
+        issuedIdentity.has('domain'),
+        `${name} should be deleted with the same Domain scope it was issued with`
+      );
+      assert.equal(clearIdentity.get('domain'), issuedIdentity.get('domain'), `${name} Domain should match`);
+      assert.ok(
+        identityAttributes(clear).has('secure'),
+        `${name} carries the __Secure- prefix, so the clear must keep Secure`
+      );
+    }
+  } finally {
+    server.close();
+  }
+});
+
+// Policy consistency, NOT a deletion requirement. HttpOnly and SameSite are
+// not part of cookie identity, so a mismatch would not stop the clear from
+// landing — this only keeps issuance and logout describable as one policy. A
+// failure here means the two sides drifted; it does not mean logout broke, so
+// deliberately hardening issuance should update this side too rather than be
+// read as a regression.
+test('logout policy attributes stay consistent with issuance', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const cookiePath = '/coco/pages';
+    const headers = { 'X-Forwarded-Prefix': cookiePath };
+    const cleared = await logout(origin, headers);
+    const issuedSession = findCookie(await loginCookies(origin, headers), '__Secure-zylos_pages_session');
+    const tokenId = 'a'.repeat(32);
+
+    const pairs = [
+      ['__Secure-zylos_pages_session', issuedSession],
+      ['__Secure-share_scope', createShareScopeCookie('page', tokenId, Date.now() + 3600_000, cookiePath).header],
+    ];
+
+    for (const [name, issued] of pairs) {
+      const issuedPolicy = policyAttributes(issued);
+      // Guard: comparing two empty sets would pass no matter what either side
+      // does, so require the extractor to have actually found the policy.
+      assert.ok(issuedPolicy.has('HttpOnly'), `${name} issuance should be HttpOnly`);
+      assert.ok(
+        [...issuedPolicy].some(attribute => /^SameSite=/i.test(attribute)),
+        `${name} issuance should carry SameSite`
+      );
       assert.deepEqual(
-        cookieAttributes(findCookie(cleared, name)),
-        cookieAttributes(issued),
-        `${name} clear attributes should match its issuing attributes`
+        policyAttributes(findCookie(cleared, name)),
+        issuedPolicy,
+        `${name} clear policy attributes should match issuance`
       );
     }
   } finally {

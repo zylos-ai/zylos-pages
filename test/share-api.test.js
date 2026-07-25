@@ -564,8 +564,10 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
     assert.equal(logout.status, 302);
     assert.match(logout.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
 
-    // The clear only expires the cookie if its attributes match the issuing
-    // ones — compare against the header the share visit actually sent.
+    // Which stored cookie a Set-Cookie replaces is decided by name + Domain +
+    // Path (RFC 6265 5.3); Secure is required on top only because the name
+    // carries the __Secure- prefix. Compare those against the header the share
+    // visit actually sent, rather than against hand-written literals.
     const attributes = (setCookie) => new Set(
       setCookie.split(/,\s*(?=__Secure-|__Host-)/)
         .find(entry => entry.startsWith('__Secure-share_access='))
@@ -573,10 +575,17 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
         .map(part => part.trim())
         .filter(part => part && !/^Max-Age=/i.test(part))
     );
+    const identity = (setCookie) => new Set(
+      [...attributes(setCookie)].filter(attribute => /^(Path=|Domain=|Secure$)/i.test(attribute))
+    );
     assert.deepEqual(
-      attributes(logout.headers.get('set-cookie')),
-      attributes(shareVisit.headers.get('set-cookie')),
-      'share_access clear attributes should match its issuing attributes'
+      identity(logout.headers.get('set-cookie')),
+      identity(shareVisit.headers.get('set-cookie')),
+      'share_access should be deleted under the identity it was issued with'
+    );
+    assert.ok(
+      identity(logout.headers.get('set-cookie')).has('Secure'),
+      '__Secure- prefixed names are rejected without the Secure attribute'
     );
   } finally {
     server.close();
