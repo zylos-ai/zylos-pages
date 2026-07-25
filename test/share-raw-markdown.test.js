@@ -17,16 +17,22 @@ const { pageTemplate } = await import('../src/templates/pageTemplate.js');
 
 const MD_BODY = '# Shared doc\n\nHello from markdown.\n';
 
+// A frontmatter key the renderer never projects into the page — it passes only
+// title/description/date/tags to the template. Used to pin the one asymmetry
+// the raw route really does introduce.
+const SOURCE_ONLY_KEY = 'internal-note';
+const SOURCE_ONLY_VALUE = 'kept-out-of-the-rendered-page';
+
 test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-function makeServer({ auth = false } = {}) {
+function makeServer({ auth = false, maxFileSizeBytes = 1024 * 1024 } = {}) {
   const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-share-raw-content-'));
   fs.mkdirSync(path.join(contentDir, 'docs'), { recursive: true });
   fs.writeFileSync(
     path.join(contentDir, 'docs', 'shared.md'),
-    `---\ntitle: Shared doc\ndescription: A shared markdown document.\n---\n${MD_BODY}`,
+    `---\ntitle: Shared doc\ndescription: A shared markdown document.\n${SOURCE_ONLY_KEY}: ${SOURCE_ONLY_VALUE}\n---\n${MD_BODY}`,
   );
   fs.writeFileSync(path.join(contentDir, 'docs', 'unshared.md'), '# Private doc\n');
   fs.writeFileSync(
@@ -37,7 +43,7 @@ function makeServer({ auth = false } = {}) {
   const config = {
     contentDir,
     externalFiles: { allowedSources: { content: contentDir } },
-    security: { allowRawHtml: false, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
+    security: { allowRawHtml: false, maxFileSizeBytes, renderTimeoutMs: 5000 },
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
   };
@@ -78,6 +84,63 @@ test('GET /s/:tokenId.md returns the raw markdown of the shared page', async () 
     const body = await response.text();
     assert.ok(body.includes('Hello from markdown.'));
     assert.ok(body.includes('title: Shared doc'), 'serves the original source including frontmatter');
+  } finally {
+    revokeShare(share.tokenId);
+    server.close();
+  }
+});
+
+// The raw route does not widen audience or page scope, but it does widen the
+// representation, and the CHANGELOG now says so. Pinned here so that claim is
+// falsifiable rather than prose: a frontmatter key the template never projects
+// is readable through .md and absent from the rendered share view. If the raw
+// route were ever narrowed to the rendered projection, or the renderer started
+// emitting arbitrary frontmatter, one of these two halves fails.
+test('the raw route exposes source-only frontmatter that the rendered share view does not', async () => {
+  const { server } = await makeServer();
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const share = createShare('p/docs/shared', '24h', { allowPermanent: false });
+  try {
+    const raw = await fetch(`${origin}/s/${share.tokenId}.md`);
+    assert.equal(raw.status, 200);
+    const rawBody = await raw.text();
+    assert.ok(
+      rawBody.includes(`${SOURCE_ONLY_KEY}: ${SOURCE_ONLY_VALUE}`),
+      'the raw route serves the frontmatter block verbatim',
+    );
+
+    const rendered = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+    assert.equal(rendered.status, 200);
+    const html = await rendered.text();
+
+    // Guard: an empty or error body would satisfy "does not contain the key"
+    // regardless of what the renderer projects.
+    assert.ok(html.includes('Hello from markdown.'), 'the share render should carry the page body');
+
+    assert.ok(
+      !html.includes(SOURCE_ONLY_VALUE),
+      'the rendered view must not carry frontmatter the template does not project',
+    );
+  } finally {
+    revokeShare(share.tokenId);
+    server.close();
+  }
+});
+
+// The other half of the same asymmetry: the render path refuses a source over
+// maxFileSizeBytes, the raw route has no such ceiling. Asserted as a pair so
+// the raw 200 is evidence about the ceiling rather than about nothing.
+test('the raw route has no size ceiling where the rendered share view does', async () => {
+  const { server } = await makeServer({ maxFileSizeBytes: 64 });
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const share = createShare('p/docs/shared', '24h', { allowPermanent: false });
+  try {
+    const rendered = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
+    assert.notEqual(rendered.status, 200, 'the renderer must refuse a source over the ceiling');
+
+    const raw = await fetch(`${origin}/s/${share.tokenId}.md`);
+    assert.equal(raw.status, 200, 'the raw route serves the same oversized source in full');
+    assert.ok((await raw.text()).includes('Hello from markdown.'));
   } finally {
     revokeShare(share.tokenId);
     server.close();

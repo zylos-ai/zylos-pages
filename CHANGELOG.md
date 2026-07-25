@@ -3,14 +3,16 @@
 ## [0.7.8] - 2026-07-26
 
 A shared link can now hand its Markdown source to a tool instead of its
-rendered page, without widening who can read what.
+rendered page. Who can read, and which page, are unchanged; what a holder of
+that token gets back is not — the source is a wider representation than the
+rendered page, and the difference is spelled out below rather than glossed.
 
 This lands two of the three parts of a contributed PR (#106). The third — a
 public `/llms.txt` index — was **rejected by the owner** and is deliberately
 absent; the reasoning is recorded below rather than left to be rediscovered.
 
 ### Added
-- **`GET /s/<tokenId>.md` — the Markdown behind a share link.** Appending `.md` to a short share link returns the shared page's original Markdown as `text/markdown`. It carries exactly the capability the token already carries: one page, read-only, honouring expiry and revocation, and 404 for a share whose page has no Markdown source. A rendered link can go to a person and its `.md` twin to a tool without either of them reaching further. Registered ahead of `/s/:tokenId`, which would otherwise swallow the suffix.
+- **`GET /s/<tokenId>.md` — the Markdown behind a share link.** Appending `.md` to a short share link returns the shared page's original Markdown as `text/markdown`. **Audience and reach are unchanged** — the same one page, read-only, honouring expiry and revocation, 404 for a share whose page has no Markdown source, and no way to walk from it to a page that was never shared. **The representation is wider, and that is a real change, not a null one:** the route returns the source file verbatim, so a token holder now sees the frontmatter block itself and every key in it, whereas the rendered page strips that block and projects only `title`, `description`, `date` and `tags`. Anything else parked in frontmatter — internal notes, draft flags, ownership fields — was invisible to a share viewer before and is readable now. The raw route also has no size ceiling, so a page too large for the renderer to serve at all (`maxFileSizeBytes`, 1 MiB by default) is still returned in full here. Both follow from "hand the source to a tool" and neither widens who or which page; they are recorded because a reader deciding what is safe to share needs them stated, not inferred. Registered ahead of `/s/:tokenId`, which would otherwise swallow the suffix.
 - **A `text/markdown` alternate declaration in the page `<head>`**, pointing at `/api/raw/<slug>` so convention-following tools can find the source the same way they find an RSS feed. Share views rewrite it to the token-scoped `/s/<tokenId>.md`, because `/api/raw` refuses share viewers outright.
 
 ### Rejected, not deferred
@@ -19,6 +21,7 @@ absent; the reasoning is recorded below rather than left to be rediscovered.
 ### Tests
 - **The auth allowlist is tested as an extension of the share-token rule, not just as a hole that lets the new route through.** A 200 on `/s/<tokenId>.md` says nothing about how narrow the allowlist is on its own, so it is paired with an ordinary page that must still redirect to login.
 - **The share view's alternate link is asserted from both sides.** The rewrite happens after the render is cached, on the share path only, so a rewrite that quietly stopped matching would leave share viewers holding a link that 403s and break no test. The rendered share HTML is now asserted to point at the token route *and* to contain no `/api/raw` reference at all, guarded by a check that an alternate declaration is present in the first place — otherwise an empty body would satisfy the absence half. Verified by falsification: breaking the rewrite pattern turns this test red.
+- **The widened representation is pinned rather than only described.** Two paired assertions hold the statement above to the code: a frontmatter key the template never projects is readable through `.md` and absent from the rendered share view, and a source over `maxFileSizeBytes` is refused by the renderer while the raw route still serves it whole. Each pair is guarded so the negative half cannot pass on an empty or errored body. Verified by falsification on both: stripping frontmatter in the raw route, leaking an unprojected key into the template, and adding a size ceiling to the raw route each turn the corresponding test red.
 
 ## [0.7.7] - 2026-07-25
 

@@ -118,10 +118,13 @@ function registeredShareSlug(rawSlug) {
  * @param {object} sharingConfig - { enabled }
  */
 export function setupShareApi(app, sharingConfig, config = {}) {
-  // GET /s/:tokenId.md — raw markdown of the shared page. Same capability
-  // scope as the share token itself (one page, read-only), so no privilege
-  // escalation vs the rendered view. Registered before /s/:tokenId because
-  // that param would otherwise swallow the ".md" suffix.
+  // GET /s/:tokenId.md — raw markdown of the shared page. Audience and reach
+  // match the share token itself (one page, read-only, expiry and revocation
+  // honoured). The representation does not: this returns the source file
+  // verbatim, including the frontmatter block, while the rendered view strips
+  // it and projects only title/description/date/tags — and unlike the render
+  // path it applies no maxFileSizeBytes ceiling. Registered before /s/:tokenId
+  // because that param would otherwise swallow the ".md" suffix.
   app.get('/s/:tokenId.md', async (req, res) => {
     const share = getActiveShare(req.params.tokenId);
     if (!share) {
