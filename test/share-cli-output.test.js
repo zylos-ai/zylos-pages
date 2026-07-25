@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
 const pagesCliPath = path.join(repoRoot, 'src/cli/pages.js');
@@ -95,6 +96,92 @@ test('`unshare --token` reports the uri in JSON too', () => {
 
   assert.equal(revoked.uri, uri);
   assert.equal(revoked.revoked, 1);
+});
+
+// --- share-info default output ---
+//
+// `share-info` was added with nine tests, every one of them on `--json`. That
+// is the same blind spot that shipped the two bugs at the top of this file, on
+// a command whose whole audience is a person holding a link they cannot place.
+
+function expireRow(fixture, tokenId) {
+  const db = new Database(path.join(fixture.dataDir, 'pages.db'));
+  const changed = db.prepare('UPDATE shares SET expires_at = ? WHERE token_id = ?')
+    .run(Date.now() - 60_000, tokenId).changes;
+  db.close();
+  assert.equal(changed, 1, 'fixture must actually age the row');
+}
+
+function fieldOf(text, label) {
+  const line = text.split('\n').find(row => row.startsWith(`${label}:`));
+  assert.ok(line, `output has no "${label}:" line:\n${text}`);
+  return line.slice(label.length + 1).trim();
+}
+
+test('`share-info` default output names the document and its status', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'output/info-active');
+  const shared = runCliJson(fixture, ['share', uri, '--duration', '30d']);
+
+  const text = runCliText(fixture, ['share-info', shared.tokenId]);
+
+  assert.equal(fieldOf(text, 'Document'), uri);
+  assert.equal(fieldOf(text, 'Status'), 'active');
+  assert.equal(fieldOf(text, 'Duration'), '30d');
+  // An active, non-permanent share must print a real date, not "never".
+  assert.ok(!Number.isNaN(Date.parse(fieldOf(text, 'Expires'))), `Expires must be a date:\n${text}`);
+  assert.ok(!text.includes('Revoked:'), `an active share must not report a revocation:\n${text}`);
+  assert.ok(!text.includes('undefined'), `output must not contain "undefined":\n${text}`);
+});
+
+test('`share-info` default output says "never" for a permanent share', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'output/info-permanent');
+  const shared = runCliJson(fixture, ['share', uri, '--duration', 'permanent']);
+
+  const text = runCliText(fixture, ['share-info', shared.tokenId]);
+
+  assert.equal(fieldOf(text, 'Status'), 'active');
+  assert.equal(fieldOf(text, 'Duration'), 'permanent');
+  // The raw value is 0; printing "1970-01-01" here would read as long expired.
+  assert.equal(fieldOf(text, 'Expires'), 'never');
+});
+
+test('`share-info` default output still names the document of an expired link', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'output/info-expired');
+  const shared = runCliJson(fixture, ['share', uri, '--duration', '24h']);
+  expireRow(fixture, shared.tokenId);
+
+  const text = runCliText(fixture, ['share-info', shared.tokenId]);
+
+  assert.equal(fieldOf(text, 'Document'), uri, 'the whole point is that a dead link still names its document');
+  assert.equal(fieldOf(text, 'Status'), 'expired');
+  assert.ok(!text.includes('Revoked:'), `expired is not revoked:\n${text}`);
+});
+
+test('`share-info` default output reports the revocation time of a revoked link', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'output/info-revoked');
+  const shared = runCliJson(fixture, ['share', uri, '--duration', '7d']);
+  runCliJson(fixture, ['unshare', '--token', shared.tokenId]);
+
+  const text = runCliText(fixture, ['share-info', shared.tokenId]);
+
+  assert.equal(fieldOf(text, 'Document'), uri);
+  assert.equal(fieldOf(text, 'Status'), 'revoked');
+  assert.ok(!Number.isNaN(Date.parse(fieldOf(text, 'Revoked'))), `Revoked must be a date:\n${text}`);
+});
+
+test('`share-info` default output accepts the full share URL', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'output/info-url');
+  const shared = runCliJson(fixture, ['share', uri, '--duration', '7d']);
+
+  const text = runCliText(fixture, ['share-info', shared.shortUrl]);
+
+  assert.equal(fieldOf(text, 'Document'), uri);
+  assert.equal(fieldOf(text, 'Status'), 'active');
 });
 
 // Negative control: `shares <uri>` is per-page, so a uri column there would be

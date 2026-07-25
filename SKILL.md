@@ -119,8 +119,16 @@ Revoking:
 
 Accounting for links:
 
-- Rows are never deleted. Expired links stay in the table alongside revoked
-  ones, so every link ever minted can still be traced back to its document.
+- Expiry no longer deletes rows. An expired link stays in the table alongside
+  revoked ones, so a link that merely lapsed can still be traced back to its
+  document.
+- **Deleting the page still deletes its share rows.** `unregister <uri>` drops
+  every share row for that page, so links to a page you unregistered become
+  untraceable — `share-info` answers `share_not_found`, not "that was
+  <uri>, since deleted". Trace a link *before* unregistering the page it
+  points at. Whether unregister should instead leave an auditable tombstone is
+  an open decision (#108); until it is settled this is the one hole in the
+  ledger.
 - `shares --all` lists every **live** share on the instance. Use it before
   concluding anything about this box's exposure; per-page `shares <uri>`
   cannot answer that question.

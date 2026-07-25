@@ -65,6 +65,22 @@ function isTokenId(value) {
   return /^[a-f0-9]{32}$/.test(value || '');
 }
 
+// One expiry boundary for the whole share surface. `expires_at = 0` is
+// permanent. The comparison is `>=`, not `>`, so it agrees with the SQL
+// liveness predicate (`expires_at > ?`), which already treats a row whose
+// expires_at equals now as no longer live. describeShare used the loose `>`
+// and so called that exact row `active` while `shares --all` omitted it.
+function hasExpired(expiresAt, now = nowMs()) {
+  return expiresAt !== 0 && now >= expiresAt;
+}
+
+// Sessions, scope cookies and asset signatures carry a plain deadline with no
+// permanent form, but they share the boundary rule so a share and the artifacts
+// derived from it never disagree about whether "now" is past the deadline.
+function isPastDeadline(deadline, now = nowMs()) {
+  return now >= deadline;
+}
+
 // Legacy slug-keyed share rows are not convertible to page_id keys — drop them.
 function dropSlugKeyedShareTables() {
   const hasSlugColumn = (table) =>
@@ -179,7 +195,7 @@ function activeShareRecord(tokenId) {
   initShareStore();
   const record = _getShare.get(tokenId);
   if (!record || record.revoked) return null;
-  if (record.expires_at !== 0 && nowMs() > record.expires_at) return null;
+  if (hasExpired(record.expires_at)) return null;
   const page = getLogicalPageById(record.page_id);
   if (!page) return null;
   return {
@@ -329,9 +345,9 @@ export function verifyShareAccessCookie(cookieValue, requestSlug) {
   if (!session) return { valid: false };
 
   const current = nowMs();
-  if (current > session.expires_at ||
+  if (isPastDeadline(session.expires_at, current) ||
       session.share_revoked ||
-      (session.share_expires_at !== 0 && current > session.share_expires_at)) {
+      hasExpired(session.share_expires_at, current)) {
     _deleteShareSession.run(hash);
     return { valid: false };
   }
@@ -359,7 +375,7 @@ export function verifyShare(token, requestSlug) {
   const decoded = decodeToken(token);
   if (!decoded) return { valid: false };
 
-  if (decoded.expiresAt !== 0 && nowMs() > decoded.expiresAt) return { valid: false };
+  if (hasExpired(decoded.expiresAt)) return { valid: false };
   if (!isTokenId(decoded.tokenId)) return { valid: false };
 
   const expected = computeHmac(decoded.pageId, decoded.expiresAt, decoded.tokenId, getSecret());
@@ -411,7 +427,7 @@ export function verifyShareScopeCookie(cookieValue, assetPath) {
   const directory = parts.join(':');
   const expiresAt = Number(expiresAtRaw);
   if (!isTokenId(tokenId) || !Number.isFinite(expiresAt) || !hmac) return { valid: false };
-  if (nowMs() > expiresAt) return { valid: false };
+  if (isPastDeadline(expiresAt)) return { valid: false };
 
   const expected = computeShareScopeHmac(directory, tokenId, expiresAt, getSecret());
   const actualBuffer = Buffer.from(hmac, 'hex');
@@ -460,7 +476,7 @@ export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, s
     actualSig = sig.slice(dotIndex + 1);
   }
   if (!isTokenId(actualTokenId)) return { valid: false };
-  if (nowMs() > exp) return { valid: false };
+  if (isPastDeadline(exp)) return { valid: false };
   const record = activeShareRecord(actualTokenId);
   if (!record || record.uri !== pageUriFromSlug(uri)) return { valid: false };
   if (record.expiresAt !== 0 && exp > record.expiresAt) return { valid: false };
@@ -536,7 +552,11 @@ export function listAllShares() {
     return {
       tokenId: record.token_id,
       pageId: record.page_id,
-      // Shares outlive their page row; a null uri is a real state, not an error.
+      // Unreachable today: unregister deletes a page's share rows along with
+      // the page, so a surviving share always resolves. Kept because the
+      // reverse — dropping the row and reporting nothing — is how the ledger
+      // loses history, and because #108 may turn unregister into a tombstone,
+      // at which point this is the live path rather than a guard.
       uri: page ? page.uri : null,
       expiresAt: record.expires_at,
       createdAt: record.created_at,
@@ -571,14 +591,14 @@ export function describeShare(input) {
   const record = _getShare.get(tokenId);
   if (!record) return null;
   const page = getLogicalPageById(record.page_id);
-  const expired = record.expires_at !== 0 && nowMs() > record.expires_at;
+  const expired = hasExpired(record.expires_at);
   // Revoked wins over expired: it is the deliberate act, and both timestamps
   // are returned anyway for anyone who needs to see the full history.
   const status = record.revoked ? 'revoked' : (expired ? 'expired' : 'active');
   return {
     tokenId: record.token_id,
     pageId: record.page_id,
-    // Shares outlive their page row; a null uri is a real state, not an error.
+    // See listAllShares: null is unreachable while unregister cascades.
     uri: page ? page.uri : null,
     status,
     createdAt: record.created_at,
@@ -589,10 +609,14 @@ export function describeShare(input) {
   };
 }
 
-// Sessions only. Share rows are never deleted: an expired row is the sole
-// record that a link existed at all, and deleting it means "someone hands you
-// an old link, which document was it?" has no answer. Sessions are the
+// Sessions only. Expiry no longer deletes share rows: an expired row is the
+// sole record that a link existed at all, and deleting it means "someone hands
+// you an old link, which document was it?" has no answer. Sessions are the
 // opposite — transient browser state, worth nothing after expiry.
+//
+// This is not the same as "share rows are never deleted": unregistering a page
+// still drops its share rows (page-store.js), which is the ledger's remaining
+// hole and an open decision (#108). Nothing here should be read as closing it.
 export function cleanupShares() {
   initShareStore();
   const sessions = _deleteExpiredShareSessions.run(nowMs()).changes;

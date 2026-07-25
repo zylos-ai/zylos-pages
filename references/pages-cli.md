@@ -48,7 +48,8 @@ no login. Read the Sharing section of `SKILL.md` before minting one.
 - `shares --all` lists every live share on the instance, with the uri each token exposes. This is the only way to answer "what passwordless links exist on this box right now?" without reading the SQLite file directly.
 - `share-info <token-or-url>` goes the other way: it resolves a link back to its document. It accepts the full share URL or the bare token, and unlike `shares` it deliberately resolves **expired and revoked** links too, reporting `status` as `active`, `expired`, or `revoked`. Unknown tokens and non-token input both fail with `share_not_found`.
 - **`unshare --token <token-id>` revokes exactly one link. `unshare <uri>` revokes EVERY active token on that page** — run `shares <uri>` first and look at what else is live. An unknown token and an already-revoked token both fail with `share_not_found`; the CLI does not distinguish them.
-- Revocation sets a flag. The row and its token stay in the table, so revoking is reversible and is not a guarantee that the URL can never work again. Share rows are never deleted, including expired ones, which is what keeps `share-info` able to answer for old links.
+- Revocation sets a flag. The row and its token stay in the table, so revoking is reversible and is not a guarantee that the URL can never work again. Expiry no longer deletes rows either, which is what keeps `share-info` able to answer for lapsed links.
+- One exception, and it is the ledger's only hole: `unregister <uri>` still deletes that page's share rows outright, so links to an unregistered page resolve to `share_not_found`. Resolve a link before unregistering its page. Whether unregister should leave a tombstone instead is an open decision (#108).
 
 ### Allow Root
 
