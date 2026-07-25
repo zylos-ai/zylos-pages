@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.7.5
+version: 0.7.6
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
@@ -63,6 +63,10 @@ node $PAGES_DIR/src/cli/pages.js list
 node $PAGES_DIR/src/cli/pages.js shares reports/q3
 node $PAGES_DIR/src/cli/pages.js shares --all
 
+# The inverse: someone hands you a link, find out which document it is.
+# Resolves expired and revoked links too, and takes the full URL or the token.
+node $PAGES_DIR/src/cli/pages.js share-info https://domain/s/<token-id>
+
 # Mint a passwordless link. NOT a default step — see Sharing below.
 node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
 
@@ -107,14 +111,37 @@ Revoking:
 - `unshare <uri>` revokes **every** token on that page. Run
   `shares <uri>` first and look at what else is live — this is how a
   routine cleanup takes out a permanent link somebody was still using.
-- Revocation is not deletion: revoked rows stay in the table so a link can
-  still be accounted for afterwards. Expired links are a different story —
-  hourly cleanup deletes them outright, so the table is not a full history
-  of every link ever minted.
+- **Revocation is a reversible marker, not destruction.** It sets a flag;
+  the row and its token stay in the table, so a revoked link can be brought
+  back by clearing that flag. This is deliberate — it is how a mistaken
+  `unshare <uri>` gets undone — but it means "revoked" is not a guarantee
+  that the URL can never work again. Do not rely on it as one.
 
-`shares --all` lists every live share on the instance. Use it before
-concluding anything about this box's exposure; per-page `shares <uri>`
-cannot answer that question.
+Accounting for links:
+
+- Rows are never deleted — not on expiry, not when the document itself is
+  unregistered. Every link ever minted can still be traced back to the document
+  it exposed. What dies is access, not the record.
+- **Unregistering a document leaves a tombstone.** `unregister <uri>` keeps
+  that page's share rows and stamps them with the uri the page had, because the
+  uri lives in the page row and that row is about to go. The links stop working
+  immediately — every access path resolves through the page row — but
+  `share-info` still answers "that was `q3/plan`, and the document is gone".
+  Live-exposure listings exclude tombstones: `shares --all` reports what this
+  box actually serves, not what it remembers.
+- `unregister` reports `tombstonedShares` (rows kept) and `removedSessions`
+  (browser sessions destroyed). It used to report `removedShares`; a count of
+  retained rows under a name saying "removed" is how an operator concludes the
+  links were purged.
+- `shares --all` lists every **live** share on the instance. Use it before
+  concluding anything about this box's exposure; per-page `shares <uri>`
+  cannot answer that question.
+- `share-info <token-or-url>` goes the other way: hand it a link somebody
+  sends you and it names the document, when it was shared, for how long, and
+  its status — `active`, `expired`, `revoked`, or `document_deleted`. Ranked
+  strongest claim first, so a revoked link that later lapsed still reads
+  `revoked`, and a deleted document outranks a spent clock. It takes the full
+  URL or just the token.
 
 ## Creating HTML Pages (CLI)
 

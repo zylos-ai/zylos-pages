@@ -13,7 +13,7 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
-const { registerLogicalPage } = await import('../src/pages/page-store.js');
+const { registerLogicalPage, unregisterLogicalPageById } = await import('../src/pages/page-store.js');
 
 test.after(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -230,6 +230,45 @@ test('patch cannot upgrade share attachment permission and can keep read-only st
     updated = listed.shares.find(share => share.tokenId === editable.tokenId);
     assert.ok(updated);
     assert.equal(updated.canWriteAttachments, false);
+  } finally {
+    server.close();
+  }
+});
+
+// A tombstoned row (page unregistered) is an audit record, not a live share.
+// The permission UPDATE used to check only revoked/expiry, which a tombstone
+// passes — so the row was written and the API reported 404 over a mutation
+// that had already happened. On an ordinary row that was false → false, but a
+// legacy or hand-edited row carrying 1 would be silently changed.
+test('patch on a tombstoned share is refused without mutating the row', async () => {
+  const { server, origin, contentDir } = await makeServer({ auth: true });
+  try {
+    const cookie = await login(origin);
+    // A page of its own: this test unregisters it, and the shared `docs/page`
+    // fixture has to survive for everything after it.
+    const sourcePath = path.join(contentDir, 'docs', 'doomed.html');
+    fs.writeFileSync(sourcePath, '<!doctype html><head><title>Doomed</title></head><h1>Doomed</h1>');
+    const page = registerLogicalPage({
+      uri: 'docs/doomed',
+      title: 'Doomed',
+      sourcePath,
+      component: 'content',
+    }, { contentDir, externalFiles: { allowedSources: { content: contentDir } } });
+    const share = createShare('docs/doomed', '24h');
+    const db = getPagesDb();
+
+    // Force the state a silent write would destroy.
+    const seeded = db.prepare('UPDATE shares SET can_write_attachments = 1 WHERE token_id = ?')
+      .run(share.tokenId).changes;
+    assert.equal(seeded, 1, 'fixture must actually set the flag it is guarding');
+
+    unregisterLogicalPageById(page.pageId);
+
+    const response = await patchShare(origin, share.tokenId, false, cookie);
+    assert.equal(response.status, 404);
+
+    const row = db.prepare('SELECT can_write_attachments FROM shares WHERE token_id = ?').get(share.tokenId);
+    assert.equal(row.can_write_attachments, 1, 'the refused request must not have written anything');
   } finally {
     server.close();
   }

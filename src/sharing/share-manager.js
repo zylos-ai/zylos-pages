@@ -4,8 +4,8 @@
 // verified only for backwards compatibility.
 
 import crypto from 'node:crypto';
-import { getPagesDb } from '../db/pages-db.js';
-import { getLogicalPage, getLogicalPageById } from '../pages/page-store.js';
+import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
+import { getLogicalPage, getLogicalPageById, initPageStore } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
@@ -46,7 +46,6 @@ let _revokeShare;
 let _revokeAllForPage;
 let _listSharesForPage;
 let _listAllShares;
-let _deleteExpiredShares;
 let _insertShareSession;
 let _getShareSession;
 let _touchShareSession;
@@ -66,6 +65,22 @@ function isTokenId(value) {
   return /^[a-f0-9]{32}$/.test(value || '');
 }
 
+// One expiry boundary for the whole share surface. `expires_at = 0` is
+// permanent. The comparison is `>=`, not `>`, so it agrees with the SQL
+// liveness predicate (`expires_at > ?`), which already treats a row whose
+// expires_at equals now as no longer live. describeShare used the loose `>`
+// and so called that exact row `active` while `shares --all` omitted it.
+function hasExpired(expiresAt, now = nowMs()) {
+  return expiresAt !== 0 && now >= expiresAt;
+}
+
+// Sessions, scope cookies and asset signatures carry a plain deadline with no
+// permanent form, but they share the boundary rule so a share and the artifacts
+// derived from it never disagree about whether "now" is past the deadline.
+function isPastDeadline(deadline, now = nowMs()) {
+  return now >= deadline;
+}
+
 // Legacy slug-keyed share rows are not convertible to page_id keys — drop them.
 function dropSlugKeyedShareTables() {
   const hasSlugColumn = (table) =>
@@ -81,6 +96,9 @@ function dropSlugKeyedShareTables() {
 function initShareStore() {
   if (initialized) return;
   db = getPagesDb();
+  // logical_pages is created lazily by the page store, and one statement below
+  // references it. Preparing that statement first would throw on a cold DB.
+  initPageStore();
   dropSlugKeyedShareTables();
   db.exec(`
     CREATE TABLE IF NOT EXISTS share_meta (
@@ -94,7 +112,8 @@ function initShareStore() {
       created_at INTEGER NOT NULL,
       can_write_attachments INTEGER NOT NULL DEFAULT 0,
       revoked INTEGER NOT NULL DEFAULT 0,
-      revoked_at INTEGER
+      revoked_at INTEGER,
+      origin_uri TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_shares_page_created ON shares(page_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS share_sessions (
@@ -108,6 +127,13 @@ function initShareStore() {
     );
     CREATE INDEX IF NOT EXISTS idx_share_sessions_token_id ON share_sessions(token_id);
   `);
+
+  // A share resolves its document through page_id while the page exists, so a
+  // rename or move is followed automatically. origin_uri is the fallback for
+  // the one case where that lookup can no longer work: the page was
+  // unregistered, and the uri it had at that moment is stamped here (by
+  // page-store) so the link is still answerable afterwards.
+  addColumnIfMissing(db, 'shares', 'origin_uri', 'TEXT');
 
   _getMeta = db.prepare('SELECT value FROM share_meta WHERE key = ?');
   _setMeta = db.prepare('INSERT OR REPLACE INTO share_meta (key, value) VALUES (?, ?)');
@@ -125,12 +151,11 @@ function initShareStore() {
     ORDER BY created_at DESC
   `);
   _listAllShares = db.prepare(`
-    SELECT token_id, page_id, expires_at, created_at, can_write_attachments
+    SELECT token_id, page_id, expires_at, created_at, can_write_attachments, origin_uri
     FROM shares
     WHERE revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
   `);
-  _deleteExpiredShares = db.prepare('DELETE FROM shares WHERE expires_at != 0 AND expires_at <= ?');
   _insertShareSession = db.prepare(`
     INSERT OR REPLACE INTO share_sessions (token_hash, token_id, page_id, created_at, last_activity_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -145,12 +170,19 @@ function initShareStore() {
   _touchShareSession = db.prepare('UPDATE share_sessions SET last_activity_at = ? WHERE token_hash = ?');
   _deleteShareSession = db.prepare('DELETE FROM share_sessions WHERE token_hash = ?');
   _deleteExpiredShareSessions = db.prepare('DELETE FROM share_sessions WHERE expires_at <= ?');
+  // The live-page requirement is part of the WHERE clause, not a check around
+  // it. Checking afterwards means the row is already written by the time the
+  // caller learns it should not have been: a tombstone passes revoked/expiry
+  // (it is neither), gets mutated, and only then does the resolver notice the
+  // page is gone and report "not found" over a write that happened. Tombstones
+  // are an audit record; no live operation may touch them.
   _updateShareAttachmentPermission = db.prepare(`
     UPDATE shares
     SET can_write_attachments = ?
     WHERE token_id = ?
       AND revoked = 0
       AND (expires_at = 0 OR expires_at > ?)
+      AND EXISTS (SELECT 1 FROM logical_pages WHERE logical_pages.page_id = shares.page_id)
   `);
 
   if (!_getMeta.get('secret')?.value) {
@@ -181,7 +213,7 @@ function activeShareRecord(tokenId) {
   initShareStore();
   const record = _getShare.get(tokenId);
   if (!record || record.revoked) return null;
-  if (record.expires_at !== 0 && nowMs() > record.expires_at) return null;
+  if (hasExpired(record.expires_at)) return null;
   const page = getLogicalPageById(record.page_id);
   if (!page) return null;
   return {
@@ -331,9 +363,9 @@ export function verifyShareAccessCookie(cookieValue, requestSlug) {
   if (!session) return { valid: false };
 
   const current = nowMs();
-  if (current > session.expires_at ||
+  if (isPastDeadline(session.expires_at, current) ||
       session.share_revoked ||
-      (session.share_expires_at !== 0 && current > session.share_expires_at)) {
+      hasExpired(session.share_expires_at, current)) {
     _deleteShareSession.run(hash);
     return { valid: false };
   }
@@ -361,7 +393,7 @@ export function verifyShare(token, requestSlug) {
   const decoded = decodeToken(token);
   if (!decoded) return { valid: false };
 
-  if (decoded.expiresAt !== 0 && nowMs() > decoded.expiresAt) return { valid: false };
+  if (hasExpired(decoded.expiresAt)) return { valid: false };
   if (!isTokenId(decoded.tokenId)) return { valid: false };
 
   const expected = computeHmac(decoded.pageId, decoded.expiresAt, decoded.tokenId, getSecret());
@@ -413,7 +445,7 @@ export function verifyShareScopeCookie(cookieValue, assetPath) {
   const directory = parts.join(':');
   const expiresAt = Number(expiresAtRaw);
   if (!isTokenId(tokenId) || !Number.isFinite(expiresAt) || !hmac) return { valid: false };
-  if (nowMs() > expiresAt) return { valid: false };
+  if (isPastDeadline(expiresAt)) return { valid: false };
 
   const expected = computeShareScopeHmac(directory, tokenId, expiresAt, getSecret());
   const actualBuffer = Buffer.from(hmac, 'hex');
@@ -462,7 +494,7 @@ export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, s
     actualSig = sig.slice(dotIndex + 1);
   }
   if (!isTokenId(actualTokenId)) return { valid: false };
-  if (nowMs() > exp) return { valid: false };
+  if (isPastDeadline(exp)) return { valid: false };
   const record = activeShareRecord(actualTokenId);
   if (!record || record.uri !== pageUriFromSlug(uri)) return { valid: false };
   if (record.expiresAt !== 0 && exp > record.expiresAt) return { valid: false };
@@ -531,29 +563,95 @@ export function listSharesForSlug(slug) {
 // answers "what links exist for this page?"; auditing an instance asks the
 // inverse and had no answer before this. Same liveness predicate as that
 // function: revoked = 0 AND (permanent OR not yet expired).
+//
+// Tombstones are excluded on top of that predicate. A share whose page was
+// unregistered cannot serve anything, so listing it would overstate what this
+// box exposes — which is the one question this function exists to answer.
+// `share-info` is where those rows remain visible.
 export function listAllShares() {
   initShareStore();
-  return _listAllShares.all(nowMs()).map(record => {
-    const page = getLogicalPageById(record.page_id);
-    return {
+  return _listAllShares.all(nowMs())
+    .map(record => ({ record, page: getLogicalPageById(record.page_id) }))
+    .filter(({ page }) => page !== null)
+    .map(({ record, page }) => ({
       tokenId: record.token_id,
       pageId: record.page_id,
-      // Shares outlive their page row; a null uri is a real state, not an error.
-      uri: page ? page.uri : null,
+      uri: page.uri,
       expiresAt: record.expires_at,
       createdAt: record.created_at,
       canWriteAttachments: record.can_write_attachments === 1,
-    };
-  });
+    }));
 }
 
+// Accepts either a bare token id or the whole share URL someone pasted, since
+// what people actually hold is the link, not the id inside it.
+export function tokenIdFromInput(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  const candidate = raw.includes('/') ? raw.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() : raw;
+  return isTokenId(candidate) ? candidate : null;
+}
+
+function durationLabel(createdAt, expiresAt) {
+  if (expiresAt === 0) return 'permanent';
+  const span = expiresAt - createdAt;
+  const match = Object.entries(DURATION_MAP).find(([, ms]) => ms !== 0 && ms === span);
+  return match ? match[0] : `${Math.round(span / (60 * 60 * 1000))}h`;
+}
+
+// Answers "here is a link — which document is it, and is it still live?".
+// Unlike listSharesForSlug/listAllShares this deliberately ignores liveness:
+// the whole point is to resolve links that are already expired, revoked, or
+// pointed at a document that no longer exists.
+export function describeShare(input) {
+  const tokenId = tokenIdFromInput(input);
+  if (!tokenId) return null;
+  initShareStore();
+  const record = _getShare.get(tokenId);
+  if (!record) return null;
+  const page = getLogicalPageById(record.page_id);
+  const documentDeleted = page === null;
+  const expired = hasExpired(record.expires_at);
+  // Precedence, strongest claim first:
+  //   revoked          — the deliberate act, and the only reversible one
+  //   document_deleted — there is no longer anything to serve
+  //   expired          — the clock ran out
+  // A deleted document outranks expiry because it says something about the
+  // content rather than the calendar. Every underlying fact is returned
+  // alongside, so nothing here hides state from a caller that wants it all.
+  let status = 'active';
+  if (record.revoked) status = 'revoked';
+  else if (documentDeleted) status = 'document_deleted';
+  else if (expired) status = 'expired';
+  return {
+    tokenId: record.token_id,
+    pageId: record.page_id,
+    // The page's current uri while it exists (so renames are followed), and
+    // the uri stamped at unregister once it does not. Null only for rows that
+    // predate the stamp and whose page is already gone.
+    uri: page ? page.uri : (record.origin_uri ?? null),
+    status,
+    documentDeleted,
+    createdAt: record.created_at,
+    expiresAt: record.expires_at,
+    revokedAt: record.revoked_at,
+    duration: durationLabel(record.created_at, record.expires_at),
+    canWriteAttachments: record.can_write_attachments === 1,
+  };
+}
+
+// Sessions only. Share rows are never deleted — not on expiry, and not when
+// the page is unregistered (page-store stamps them with the page's uri and
+// leaves them as tombstones). An expired or orphaned row is the sole record
+// that a link existed at all, and deleting it means "someone hands you an old
+// link, which document was it?" has no answer. Sessions are the opposite —
+// transient browser state, worth nothing after expiry, and the thing that
+// could otherwise still open an unregistered page.
 export function cleanupShares() {
   initShareStore();
-  const current = nowMs();
-  const sessions = _deleteExpiredShareSessions.run(current).changes;
-  const shares = _deleteExpiredShares.run(current).changes;
-  if (sessions > 0 || shares > 0) {
-    logger.info('shares cleanup', { removedShares: shares, removedSessions: sessions });
+  const sessions = _deleteExpiredShareSessions.run(nowMs()).changes;
+  if (sessions > 0) {
+    logger.info('share sessions cleanup', { removedSessions: sessions });
   }
 }
 

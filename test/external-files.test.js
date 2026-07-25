@@ -146,7 +146,10 @@ test('unified pages CLI registers, shares, lists shares, and unshares logical pa
   assert.deepEqual(after.shares, []);
 });
 
-test('pages CLI unregister removes registry and page-id keyed share rows but keeps source file', () => {
+// Unregister used to delete the page's share rows outright. It now keeps them
+// as an audit trail, stamped with the uri the page had — the sessions are what
+// must die, since those are what could still open the page.
+test('pages CLI unregister removes registry and sessions, keeps share rows and source file', () => {
   const fixture = makeFixture();
   const source = path.join(fixture.sourceRoot, 'obsolete.md');
   fs.writeFileSync(source, '# Obsolete\n');
@@ -172,12 +175,14 @@ test('pages CLI unregister removes registry and page-id keyed share rows but kee
   assert.equal(unregistered.command, 'unregister');
   assert.equal(unregistered.uri, 'recruit/obsolete');
   assert.equal(unregistered.pageId, page.page_id);
-  assert.equal(unregistered.removedShares, 1);
+  assert.equal(unregistered.tombstonedShares, 1);
   assert.equal(unregistered.removedSessions, 1);
   assert.equal(unregistered.sourcePath, fs.realpathSync(source));
 
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM logical_pages WHERE page_id = ?').get(page.page_id).count, 0);
-  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM shares WHERE page_id = ?').get(page.page_id).count, 0);
+  const kept = db.prepare('SELECT origin_uri FROM shares WHERE page_id = ?').all(page.page_id);
+  assert.equal(kept.length, 1, 'the share row is the only record this link ever existed');
+  assert.equal(kept[0].origin_uri, 'recruit/obsolete', 'the uri must be stamped before the page row goes');
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM share_sessions WHERE page_id = ?').get(page.page_id).count, 0);
   assert.equal(fs.existsSync(source), true);
 
