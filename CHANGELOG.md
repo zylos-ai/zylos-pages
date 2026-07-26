@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Owner sessions now survive safe links opened from another site** (#115).
+  The owner session cookie uses `SameSite=Lax` instead of `Strict`, so a
+  top-level GET navigation from a workspace, chat client, or email carries an
+  already-valid login instead of redirecting back to the login page. Unsafe
+  cross-site requests remain excluded by the browser policy, and mutation
+  routes keep their independent Origin/Referer CSRF checks.
+
 ## [0.7.9] - 2026-07-26
 
 A share link can once again be given permission to upload and delete a page's

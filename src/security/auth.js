@@ -198,14 +198,16 @@ function appendSetCookie(res, cookie) {
 
 function setSessionCookie(res, token, remember = false, cookiePath = '/') {
   const maxAge = remember ? 30 * 86400 : 86400;
+  // Lax keeps unsafe cross-site requests out while allowing an authenticated
+  // owner to open a page through a top-level link from another site (#115).
   appendSetCookie(res,
-    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Strict; Path=${cookiePath}; Max-Age=${maxAge}`
+    `${COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=${maxAge}`
   );
 }
 
 function clearSessionCookie(res, cookiePath = '/') {
   appendSetCookie(res,
-    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Strict; Path=${cookiePath}; Max-Age=0`
+    `${COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=0`
   );
 }
 
