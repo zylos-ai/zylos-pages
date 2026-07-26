@@ -4,6 +4,12 @@
 
 ### Added
 
+- **A pre-upgrade backup and executable rollback runbook for the one-way
+  `page_id` migration.** Operators must take a consistent SQLite backup and
+  preserve attachment storage before starting the new version, then run the
+  verifier. Rollback restores that backup and attachment tree before reverting
+  code; reverting code alone is explicitly unsupported because the old binary
+  cannot read the migrated schema.
 - **Read-only, database-authoritative post-migration acceptance command.**
   `npm run verify-migration -- --json` checks the final `page_id` schema,
   orphan and duplicate rows, state/attachment snapshot retirement, attachment
@@ -13,6 +19,15 @@
   of the current orphan set is classified explicitly as the crash/re-registration
   non-convergence case: the snapshot remains retry evidence and the command
   never advises manually dropping it.
+
+### Fixed
+
+- **Rowless empty legacy attachment directories now converge with the migration
+  verifier.** During the active migration window, a directory whose name is a
+  registered legacy URI is removed only when it is empty and is not a page-id
+  directory. Non-empty, unknown, temporary, and page-id directories remain
+  untouched; removal failures are logged and keep retry evidence for the next
+  start.
 - **Share-visitor governance for page state.** State writes made through a
   share link now have a per-page key ceiling (`state.maxKeysPerPage`, default
   50), a reachable aggregate UTF-8 JSON byte ceiling (`state.maxPageBytes`,

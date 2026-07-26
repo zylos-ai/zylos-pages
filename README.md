@@ -68,7 +68,21 @@ toc: true
 
 ### Verify a page-data migration
 
-After the one-time `page_id` migration has run, verify the database and
+The `page_id` schema migration is one-way for older Pages binaries: after it
+runs, reverting only the code makes the old binary fail against the re-keyed
+database. Take a consistent backup **before** starting the new version. A
+SQLite `.backup` includes committed WAL contents; copy attachment storage as
+well because attachment directories are also renamed during this migration:
+
+```bash
+pages_data_dir=~/zylos/components/pages
+pages_backup_dir="$(mktemp -d "${TMPDIR:-/tmp}/zylos-pages-pre-page-id.XXXXXX")"
+sqlite3 "$pages_data_dir/pages.db" ".backup '$pages_backup_dir/pages.db'"
+cp -a "$pages_data_dir/attachments" "$pages_backup_dir/attachments"
+```
+
+Keep that backup until the migration has passed acceptance. Start the new
+version so the one-time migration runs, then verify the database and
 attachment storage before retiring the migration window:
 
 ```bash
@@ -82,6 +96,12 @@ rows, missing/mismatched/untracked files, legacy URI directories, or residual
 snapshot tables. If a state snapshot remains, preserve it as retry evidence;
 do not manually drop it. This is a post-migration acceptance check, not a
 perpetual naming-convention check or an HTML scan.
+
+If the upgrade must be rolled back, stop Pages first, restore both `pages.db`
+and `attachments/` from the pre-migration backup, then revert the code and
+start Pages again. **Do not revert the code against the migrated database.**
+Confirm the restored old version starts and serves the expected page/state
+data before discarding the backup.
 
 ## Configuration
 
