@@ -5,9 +5,11 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { assertIsolatedPagesDataDir } from './helpers/assert-isolated-data-dir.js';
 
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-state-data-'));
 process.env.PAGES_DATA_DIR = dataDir;
+assertIsolatedPagesDataDir(dataDir);
 
 const express = (await import('express')).default;
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
@@ -16,7 +18,7 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi, RAW_BODY_LIMIT_BYTES, VALUE_JSON_LIMIT_BYTES } = await import('../src/routes/state-api.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
-const { registerLogicalPage } = await import('../src/pages/page-store.js');
+const { registerLogicalPage, updateLogicalPage } = await import('../src/pages/page-store.js');
 const {
   deleteStateValue,
   getArtifactState,
@@ -139,7 +141,7 @@ function expectLoginRedirect(response) {
 }
 
 test('state store round-trips JSON value types and explicit presence results', () => {
-  const artifact = 'store-roundtrip';
+  const pageId = crypto.randomUUID();
   const values = {
     bool: true,
     number: 42,
@@ -150,13 +152,13 @@ test('state store round-trips JSON value types and explicit presence results', (
   };
 
   for (const [key, value] of Object.entries(values)) {
-    setStateValue(artifact, key, value);
-    assert.deepEqual(getStateValue(artifact, key), { found: true, value });
+    setStateValue(pageId, key, value);
+    assert.deepEqual(getStateValue(pageId, key), { found: true, value });
   }
 
-  assert.deepEqual(getStateValue(artifact, 'missing'), { found: false });
-  assert.deepEqual(getArtifactState('unknown-artifact'), {});
-  assert.deepEqual(getArtifactState(artifact), {
+  assert.deepEqual(getStateValue(pageId, 'missing'), { found: false });
+  assert.deepEqual(getArtifactState(crypto.randomUUID()), {});
+  assert.deepEqual(getArtifactState(pageId), {
     array: ['a', 'b'],
     bool: true,
     nullValue: null,
@@ -167,25 +169,28 @@ test('state store round-trips JSON value types and explicit presence results', (
 });
 
 test('state store delete and upsert behavior', () => {
-  const artifact = 'store-upsert-delete';
-  setStateValue(artifact, 'key', 'first');
-  setStateValue(artifact, 'key', 'second');
-  assert.deepEqual(getStateValue(artifact, 'key'), { found: true, value: 'second' });
+  const pageId = crypto.randomUUID();
+  setStateValue(pageId, 'key', 'first');
+  setStateValue(pageId, 'key', 'second');
+  assert.deepEqual(getStateValue(pageId, 'key'), { found: true, value: 'second' });
 
-  deleteStateValue(artifact, 'key');
-  deleteStateValue(artifact, 'key');
-  assert.deepEqual(getStateValue(artifact, 'key'), { found: false });
+  deleteStateValue(pageId, 'key');
+  deleteStateValue(pageId, 'key');
+  assert.deepEqual(getStateValue(pageId, 'key'), { found: false });
 });
 
-test('state store isolates artifact namespaces', () => {
-  setStateValue('artifact-one', 'shared', true);
-  setStateValue('artifact-two', 'shared', false);
+test('state store isolates page identities', () => {
+  const pageOne = crypto.randomUUID();
+  const pageTwo = crypto.randomUUID();
+  setStateValue(pageOne, 'shared', true);
+  setStateValue(pageTwo, 'shared', false);
 
-  assert.deepEqual(getStateValue('artifact-one', 'shared'), { found: true, value: true });
-  assert.deepEqual(getStateValue('artifact-two', 'shared'), { found: true, value: false });
+  assert.deepEqual(getStateValue(pageOne, 'shared'), { found: true, value: true });
+  assert.deepEqual(getStateValue(pageTwo, 'shared'), { found: true, value: false });
 });
 
 test('state API works with auth disabled and supports CRUD', async () => {
+  await registerStatePage('api-crud');
   await withServer({ enabled: false, password: null }, async ({ origin }) => {
     const artifact = 'api-crud';
 
@@ -235,6 +240,7 @@ test('state API works with auth disabled and supports CRUD', async () => {
 });
 
 test('state API distinguishes stored null from missing key', async () => {
+  await registerStatePage('api-null');
   await withServer({ enabled: false, password: null }, async ({ origin }) => {
     const res = await fetch(`${origin}/api/state/api-null/null-key`, {
       method: 'PUT',
@@ -254,6 +260,7 @@ test('state API distinguishes stored null from missing key', async () => {
 });
 
 test('state API CSRF checks mutating requests only', async () => {
+  await registerStatePage('csrf');
   await withServer({ enabled: false, password: null }, async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/csrf/key`, {
       method: 'PUT',
@@ -283,6 +290,62 @@ test('state API CSRF checks mutating requests only', async () => {
 
     res = await fetch(`${origin}/api/state/csrf`);
     assert.equal(res.status, 200);
+  });
+});
+
+test('state API rejects an unregistered artifact instead of creating a namespace', async () => {
+  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+    const artifact = 'definitely-not-a-registered-page';
+    const db = getPagesDb();
+    const before = db.prepare('SELECT COUNT(*) AS n FROM artifact_state').get().n;
+
+    let res = await fetch(`${origin}/api/state/${artifact}`);
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'Artifact not found' });
+
+    res = await fetch(`${origin}/api/state/${artifact}/key`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: JSON.stringify({ value: true }),
+    });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'Artifact not found' });
+
+    res = await fetch(`${origin}/api/state/${artifact}/key`, {
+      method: 'DELETE',
+      headers: sameOriginHeaders(origin),
+    });
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'Artifact not found' });
+
+    assert.equal(
+      db.prepare('SELECT COUNT(*) AS n FROM artifact_state').get().n,
+      before,
+      'the rejected name must not leave an unowned state row'
+    );
+  });
+});
+
+test('state follows page_id across a logical page rename', async () => {
+  const page = await registerStatePage('state-before-rename');
+
+  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+    let res = await fetch(`${origin}/api/state/state-before-rename/checklist`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin),
+      body: JSON.stringify({ value: { done: true } }),
+    });
+    assert.equal(res.status, 200);
+
+    updateLogicalPage(page.pageId, { uri: 'state-after-rename' });
+
+    res = await fetch(`${origin}/api/state/state-after-rename/checklist`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { ok: true, key: 'checklist', value: { done: true } });
+
+    res = await fetch(`${origin}/api/state/state-before-rename/checklist`);
+    assert.equal(res.status, 404);
+    assert.deepEqual(await res.json(), { error: 'Artifact not found' });
   });
 });
 
@@ -467,6 +530,7 @@ test('state API invalid share tokens fall through to auth wall', async () => {
 });
 
 test('state API auth wall redirects unauthenticated and malformed-token API requests', async () => {
+  await registerStatePage('auth-wall');
   await withServer(authConfig(), async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/auth-wall`, { redirect: 'manual' });
     expectLoginRedirect(res);
@@ -533,6 +597,7 @@ test('state API validates artifact IDs and keys', async () => {
 });
 
 test('state API validates request body shape and JSON', async () => {
+  await registerStatePage('body');
   await withServer({ enabled: false, password: null }, async ({ origin }) => {
     let res = await fetch(`${origin}/api/state/body/key`, {
       method: 'PUT',
@@ -572,6 +637,7 @@ test('state API validates request body shape and JSON', async () => {
 });
 
 test('state API enforces raw body and value JSON byte limits', async () => {
+  await registerStatePage('limits');
   await withServer({ enabled: false, password: null }, async ({ origin }) => {
     const exactValue = 'a'.repeat(VALUE_JSON_LIMIT_BYTES - 2);
     assert.equal(Buffer.byteLength(JSON.stringify(exactValue), 'utf8'), VALUE_JSON_LIMIT_BYTES);

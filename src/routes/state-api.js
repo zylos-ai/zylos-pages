@@ -5,6 +5,7 @@ import {
   initStateStore,
   setStateValue,
 } from '../state/state-store.js';
+import { getLogicalPage } from '../pages/page-store.js';
 import { logger } from '../utils/logger.js';
 
 export const VALUE_JSON_LIMIT_BYTES = 64 * 1024;
@@ -108,6 +109,17 @@ function rejectInvalidParams(req, res) {
   return false;
 }
 
+// The URL carries the page's current human-readable name; persistence uses the
+// stable identity. Rejecting names that are not registered pages prevents a
+// caller from creating an unowned namespace by convention alone.
+function requirePageId(artifact) {
+  const page = getLogicalPage(artifact);
+  if (!page) {
+    throw Object.assign(new Error('Artifact not found'), { statusCode: 404 });
+  }
+  return page.pageId;
+}
+
 /**
  * Register artifact state API routes.
  * Must be called AFTER auth middleware.
@@ -122,10 +134,10 @@ export function setupStateApi(app) {
     if (rejectInvalidParams(req, res)) return;
 
     try {
-      return res.json({ ok: true, state: getArtifactState(req.params.artifact) });
+      return res.json({ ok: true, state: getArtifactState(requirePageId(req.params.artifact)) });
     } catch (err) {
       logger.error('state list failed', { artifact: req.params.artifact, err: err.message });
-      return res.status(500).json({ error: 'Internal Server Error' });
+      return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Internal Server Error' });
     }
   });
 
@@ -133,14 +145,14 @@ export function setupStateApi(app) {
     if (rejectInvalidParams(req, res)) return;
 
     try {
-      const result = getStateValue(req.params.artifact, req.params.key);
+      const result = getStateValue(requirePageId(req.params.artifact), req.params.key);
       if (!result.found) {
         return res.status(404).json({ error: 'State key not found' });
       }
       return res.json({ ok: true, key: req.params.key, value: result.value });
     } catch (err) {
       logger.error('state get failed', { artifact: req.params.artifact, key: req.params.key, err: err.message });
-      return res.status(500).json({ error: 'Internal Server Error' });
+      return res.status(err.statusCode || 500).json({ error: err.statusCode ? err.message : 'Internal Server Error' });
     }
   });
 
@@ -171,6 +183,7 @@ export function setupStateApi(app) {
     if (rejectInvalidParams(req, res)) return;
 
     try {
+      const pageId = requirePageId(req.params.artifact);
       const body = await parseJsonBody(req);
       if (body === null || typeof body !== 'object' || Array.isArray(body)) {
         return res.status(400).json({ error: 'Body must be a JSON object' });
@@ -179,7 +192,7 @@ export function setupStateApi(app) {
         return res.status(400).json({ error: 'Missing value' });
       }
       validateValueSize(body.value);
-      setStateValue(req.params.artifact, req.params.key, body.value);
+      setStateValue(pageId, req.params.key, body.value);
       return res.json({ ok: true, key: req.params.key, value: body.value });
     } catch (err) {
       const status = err.statusCode || 500;
@@ -193,11 +206,13 @@ export function setupStateApi(app) {
     if (rejectInvalidParams(req, res)) return;
 
     try {
-      deleteStateValue(req.params.artifact, req.params.key);
+      deleteStateValue(requirePageId(req.params.artifact), req.params.key);
       res.json({ ok: true });
     } catch (err) {
       logger.error('state delete failed', { artifact: req.params.artifact, key: req.params.key, err: err.message });
-      res.status(500).json({ error: 'Internal Server Error' });
+      res.status(err.statusCode || 500).json({
+        error: err.statusCode ? err.message : 'Internal Server Error',
+      });
     }
   });
 }
