@@ -44,6 +44,12 @@
   internal failures, and idempotent deletes record the token id (never the
   cookie or token secret), canonical page id, artifact, key, source address,
   result and status.
+- **Owner sessions now survive safe links opened from another site** (#115).
+  The owner session cookie uses `SameSite=Lax` instead of `Strict`, so a
+  top-level GET navigation from a workspace, chat client, or email carries an
+  already-valid login instead of redirecting back to the login page. Unsafe
+  cross-site requests remain excluded by the browser policy, and mutation
+  routes keep their independent Origin/Referer CSRF checks.
 
 ## [0.7.9] - 2026-07-26
 
