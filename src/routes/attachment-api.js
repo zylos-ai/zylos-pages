@@ -510,6 +510,10 @@ export function setupAttachmentApi(app, config, options = {}) {
     } catch (err) {
       const status = err.statusCode || 500;
       logger.warn('attachment upload failed', { artifact: req.params.artifact, key: req.params.key, status, err: err.message });
+      // A refusal the caller can act on says when to come back. The store
+      // raises this for write contention, which is transient and leaves
+      // nothing written, so "retry" is honest advice rather than a shrug.
+      if (err.retryAfterSeconds) res.setHeader('Retry-After', String(err.retryAfterSeconds));
       auditMutation(req, res, 'upload', {
         result: 'failed',
         status,
@@ -542,6 +546,11 @@ export function setupAttachmentApi(app, config, options = {}) {
       // before any row or file is touched.
       const pageId = requirePageId(req.params.artifact);
       const record = getAttachment(pageId, req.params.attachmentId);
+      // The window a second deleter can land in, exposed the same way the
+      // upload path exposes its own. "Someone else got here first" is a real
+      // outcome with its own audit reason, and a test that cannot open this
+      // window can only assert the reason exists in the source.
+      await hooks?.beforeDeleteMetadata?.({ pageId, attachmentId: req.params.attachmentId, record });
       if (!record) {
         auditMutation(req, res, 'delete', {
           result: 'failed',

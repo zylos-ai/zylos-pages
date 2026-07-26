@@ -47,7 +47,14 @@ per-artifact ceiling of its own.
   (default 50) caps attachments on one item key, and
   `attachments.maxArtifactBytes` (default 100 MiB) caps total stored bytes per
   page — the count alone cannot bound storage, since it can be honoured with 50
-  files of the maximum size. Both refuse with 409 before the upload is read.
+  files of the maximum size. Both refuse with 409, decided in the same
+  transaction that writes the row. Only the count ceiling can be applied before
+  the upload is read, and only when the item is already full; the byte ceiling
+  counts the incoming size, which is not known until the multipart body has
+  been parsed. A pre-read check for the already-full case remains as a
+  courtesy — it saves reading an upload that cannot land — but it is not the
+  boundary, and describing it as one would promise something the byte ceiling
+  cannot deliver.
 - **Per-token, per-operation rate limiting** (`attachments.shareWriteRateLimit`,
   default 12/minute per token and 30/minute per source address). The app-wide
   limiter keys on IP, which is the wrong unit here: one link handed to twenty
@@ -86,6 +93,60 @@ per-artifact ceiling of its own.
   on sessions that are already open, because the share row is re-read on every
   request rather than snapshotted into the cookie.
 
+### Fixed after review (PR #114, second round)
+
+The first round's fixes were reviewed again on a frozen head and four findings
+came back. All four are fixed here rather than deferred.
+
+- **The `page_id` migration could not be restarted, and one interruption made
+  the data permanently unreachable.** It committed the re-keyed table, then
+  moved the directories, then dropped the uri mapping whether or not the moves
+  had worked — and on the next start returned early because the table was
+  already `page_id`-keyed. A crash in that gap left the metadata pointing at a
+  directory that did not exist, the bytes under the old name, and nothing left
+  that knew the two belonged together: a 404 no restart could clear. The
+  migration now runs in stages that each survive being interrupted and repeated.
+  Directories move **before** any metadata is re-keyed, so the leftover state of
+  an interrupted run is "bytes moved, rows not yet re-keyed", which the next
+  start can finish — the reverse order is what stranded them. The re-key itself
+  is a single transaction. The uri mapping is retired only after a verification
+  pass finds no bytes still sitting under an old name that a row now expects
+  under the new one; anything else keeps the mapping and logs an error naming
+  what was left, and the next start retries with the mapping intact. A move that
+  fails no longer takes the rest of the migration down with it, and no longer
+  makes itself permanent. Bytes already missing before the migration began are
+  recorded but do not block completion — no later run can produce a file that
+  does not exist, and blocking on one would mean never finishing.
+  A start that finds the state the *previous* implementation could leave behind
+  repairs it, so an instance already broken by it recovers by being restarted.
+- **A routine cross-connection collision was answered with 500.** The quota
+  transaction used a deferred `BEGIN`, taking no lock while it read the totals,
+  so it could not promote its snapshot once another connection had the write
+  lock. That refusal never consults the busy handler — `busy_timeout` does not
+  apply and it fails at once — and it arrived as an untyped throw, which the
+  upload route could only render as `internal_error`. The ceiling was never
+  unsafe (the collision refuses rather than admits) but "internal error" tells a
+  caller nothing about a condition that would have cleared on its own. The write
+  lock is now taken at `BEGIN`, which turns the collision into ordinary
+  contention that the busy handler does cover: the second writer waits and then
+  decides against totals that include the first. If the wait is exhausted, the
+  refusal is a **503 with `Retry-After`** rather than a 500 — not 429, which on
+  this route already means the share link's own write allowance is spent, and a
+  client that learns to back off should not have to guess which of the two it
+  hit. Nothing is written on that path and the stored file is removed, so
+  retrying is safe advice rather than a shrug; uploads carry no idempotency key,
+  which is exactly why that had to be true before advertising a retry.
+- **The audit exits added in the first round had no regression tests.** CSRF,
+  invalid delete parameters and both delete 404s were implementation-only:
+  provable by reading the source and by nothing else, while the release note
+  claimed every terminal outcome was covered. Each now has an assertion through
+  the route, read from the log an operator would actually see, including the
+  raced delete — reachable only because the delete path now exposes the same
+  kind of test hook the upload path already had.
+- **The release note promised a boundary the byte ceiling cannot have.** It said
+  both ceilings refuse before the upload is read; an incoming-byte overshoot can
+  only be decided after the multipart body is parsed. Corrected above.
+
 ### Fixed after review (PR #114, `REQUEST_CHANGES`)
 - **The storage ceilings were not ceilings.** They compared `current >= max`
   before the upload was read, so anything that started under the line finished
@@ -100,9 +161,12 @@ per-artifact ceiling of its own.
   page id — so a rename carried the grant to the new name while the stored
   bytes stayed behind under the old one: absent from the total (a fresh ceiling
   on every rename) and unreachable by listing or deletion. Metadata rows,
-  storage totals and on-disk directories now all use the page id, with a
-  migration that re-keys existing rows, moves their directories, and logs any
-  row whose uri no longer resolves rather than dropping it silently.
+  storage totals and on-disk directories now all use the page id. The migration
+  that re-keys existing rows and moves their directories is described under the
+  second review round below. A row whose uri no longer resolves to a page is
+  **dropped**, not carried: the page it belonged to is gone, so the metadata was
+  already unreachable. What is logged is the number dropped — the loss is
+  visible, not prevented.
 - **The audit contract now matches the code.** CSRF rejections, invalid delete
   parameters, and both 404 delete outcomes bypassed `auditMutation`, so
   repeated delete probes from a valid token left no record. Every terminal
@@ -138,7 +202,35 @@ per-artifact ceiling of its own.
   write anything" in either direction.
 - The audit trail is asserted from the log output an operator would actually
   read, for an allowed write, a rate-limited one and a refused one, including
-  that no cookie value appears anywhere in it.
+  that no cookie value appears anywhere in it. Each of the four exits added for
+  the audit gap — CSRF on both routes, invalid delete parameters, and the two
+  distinct delete 404s — is asserted separately, and removing any one of them
+  fails its own assertion and no other.
+- **The migration is tested against the states an interruption leaves, not
+  against a happy path.** The fixtures construct the exact database and
+  filesystem state each crash point produces — including the one the previous
+  implementation could leave behind — and start the store against it. Restoring
+  that implementation's early return fails every assertion in that file;
+  removing only the row-restore fails the row assertions and leaves the file
+  assertions green, so metadata and bytes are shown to be recovered by separate
+  mechanisms rather than by one that happens to cover both.
+- **A move that cannot succeed is tested, and so is the ordering that makes it
+  survivable.** One directory is made to refuse to move: the others still
+  migrate, the store still starts, the mapping is kept, the failure is logged as
+  an error, and the next start completes what was left open. The ordering claim
+  is asserted from inside the rename itself — the live table must still be
+  uri-keyed at the moment bytes are moved — which is the only point where that
+  claim is falsifiable. Performing the moves after the re-key instead fails that
+  assertion and only that one; retiring the mapping unconditionally instead
+  fails the retry and only the retry.
+- **The cross-connection contract is pinned against a second process**, not two
+  handles sharing this one — a synchronous transaction cannot demonstrate
+  waiting for a lock that only a timer in the same process would release. A
+  child holds the write lock for a fixed interval; the upload must wait it out
+  and then decide against totals that include it. Reverting to the deferred
+  begin fails that assertion with the measurement that shows why: the insert
+  returns in about a millisecond against a 600ms lock under a 5000ms
+  `busy_timeout`, because that refusal never reaches the busy handler.
 
 ## [0.7.8] - 2026-07-26
 

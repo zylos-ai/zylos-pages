@@ -15,7 +15,8 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
-const { getAttachment } = await import('../src/attachments/attachment-store.js');
+const { deleteAttachmentMetadata, getAttachment } =
+  await import('../src/attachments/attachment-store.js');
 const { getLogicalPage, registerLogicalPage, unregisterLogicalPage, updateLogicalPage } =
   await import('../src/pages/page-store.js');
 
@@ -1081,6 +1082,153 @@ test('delete succeeds when stored file is missing and returns 404 when metadata 
       });
       assert.equal(res.status, 404);
     });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The exits added when the audit gap was closed: CSRF, invalid delete
+// parameters, and the two distinct delete 404s. The changelog claims every
+// terminal outcome of both mutation routes is audited, and until these landed
+// the only audit assertions covered success, rate limiting and a read-only
+// refusal — so three of the four new exits were implementation-only, provable
+// by reading the source and by nothing else.
+//
+// Each is asserted through the route, from the log an operator would read, and
+// each carries the token id: a valid link probing repeatedly is exactly the
+// pattern these lines exist to make greppable, and it is the one a
+// success-only trail would never show.
+//
+// Negative controls, run rather than assumed. Removing any one of the four
+// `auditMutation` calls fails its own test and leaves the other 27 green:
+// the CSRF pair, `invalid_params`, `not_found` and `already_deleted` were each
+// deleted in turn, each producing 27 pass / 1 fail.
+test('the CSRF refusal is audited on both mutation routes, with the token named', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const audits = await captureAuditLines(async () => {
+        // No Origin and no Referer: the request cannot be attributed to this
+        // site, which is the case the check exists for.
+        const uploaded = await fetch(`${origin}/api/attachments/renovation-checklist/csrf`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { Cookie: cookies },
+          body: formData(JPEG),
+        });
+        assert.equal(uploaded.status, 403);
+
+        const deleted = await fetch(`${origin}/api/attachments/renovation-checklist/${'a'.repeat(32)}`, {
+          method: 'DELETE',
+          redirect: 'manual',
+          headers: { Cookie: cookies },
+        });
+        assert.equal(deleted.status, 403);
+      });
+
+      const uploadLine = audits.find(line => line.action === 'upload' && line.reason === 'csrf');
+      assert.ok(uploadLine, 'a CSRF-refused upload must be audited');
+      assert.equal(uploadLine.result, 'denied');
+      assert.equal(uploadLine.status, 403);
+      assert.equal(uploadLine.tokenId, share.tokenId, 'the refused request is still attributable to its link');
+      assert.equal(uploadLine.artifact, 'renovation-checklist');
+
+      const deleteLine = audits.find(line => line.action === 'delete' && line.reason === 'csrf');
+      assert.ok(deleteLine, 'a CSRF-refused delete must be audited');
+      assert.equal(deleteLine.result, 'denied');
+      assert.equal(deleteLine.status, 403);
+      assert.equal(deleteLine.tokenId, share.tokenId);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('an invalid delete parameter is audited rather than dropped at the door', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const audits = await captureAuditLines(async () => {
+        const res = await deleteAttachment(origin, 'renovation-checklist', 'not-a-valid-id', cookies);
+        assert.equal(res.status, 400);
+      });
+
+      const line = audits.find(l => l.reason === 'invalid_params');
+      assert.ok(line, 'a malformed delete must be audited');
+      assert.equal(line.action, 'delete');
+      assert.equal(line.result, 'denied');
+      assert.equal(line.status, 400);
+      assert.equal(line.attachmentId, 'not-a-valid-id');
+      assert.equal(line.tokenId, share.tokenId);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The two 404s are deliberately different reasons. "There was never such an
+// attachment" and "someone else deleted it a moment ago" look identical to the
+// caller and are not the same fact to whoever is reading the log afterwards.
+test('both delete 404s are audited, and they are told apart', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+    let raced = null;
+
+    // The hook opens the window a competing deleter would land in: the row is
+    // read, then removed underneath this request before it commits its own
+    // delete. Without it the raced branch is unreachable from a test.
+    const hooks = {
+      beforeDeleteMetadata: ({ pageId, attachmentId }) => {
+        if (attachmentId !== raced) return;
+        assert.equal(deleteAttachmentMetadata(pageId, attachmentId), true);
+      },
+    };
+
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const cookies = await openShare(origin, share.tokenId);
+
+      const created = await upload(origin, 'renovation-checklist', 'races', cookies);
+      assert.equal(created.status, 201);
+      raced = (await created.json()).attachment.attachmentId;
+
+      const audits = await captureAuditLines(async () => {
+        // Never existed: well-formed, unknown to this page.
+        const missing = await deleteAttachment(origin, 'renovation-checklist', 'b'.repeat(32), cookies);
+        assert.equal(missing.status, 404);
+
+        // Existed a moment ago, removed between the read and the delete.
+        const lost = await deleteAttachment(origin, 'renovation-checklist', raced, cookies);
+        assert.equal(lost.status, 404);
+      });
+
+      const notFound = audits.find(line => line.reason === 'not_found');
+      assert.ok(notFound, 'a delete of something that never existed must be audited');
+      assert.equal(notFound.action, 'delete');
+      assert.equal(notFound.result, 'failed');
+      assert.equal(notFound.status, 404);
+      assert.equal(notFound.attachmentId, 'b'.repeat(32));
+      assert.equal(notFound.tokenId, share.tokenId);
+
+      const alreadyDeleted = audits.find(line => line.reason === 'already_deleted');
+      assert.ok(alreadyDeleted, 'losing the race must be audited as its own outcome');
+      assert.equal(alreadyDeleted.action, 'delete');
+      assert.equal(alreadyDeleted.result, 'failed');
+      assert.equal(alreadyDeleted.status, 404);
+      assert.equal(alreadyDeleted.attachmentId, raced);
+      assert.equal(alreadyDeleted.tokenId, share.tokenId);
+
+      assert.notEqual(
+        notFound.reason, alreadyDeleted.reason,
+        'the two 404s must stay distinguishable in the log'
+      );
+    }, { hooks });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
   }
