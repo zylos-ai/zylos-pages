@@ -4,9 +4,11 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { assertIsolatedPagesDataDir } from './helpers/assert-isolated-data-dir.js';
 
 const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-asset-data-'));
 process.env.PAGES_DATA_DIR = dataDir;
+assertIsolatedPagesDataDir(dataDir);
 
 const express = (await import('express')).default;
 const { initCache } = await import('../src/cache/pageCache.js');
@@ -678,7 +680,7 @@ test('markdown, html artifact, extension redirects, and state API still work wit
       assert.equal(res.status, 301);
       assert.equal(res.headers.get('location'), '/artifact');
 
-      res = await fetch(`${origin}/api/state/check`);
+      res = await fetch(`${origin}/api/state/artifact`);
       assert.equal(res.status, 200);
     });
   } finally {

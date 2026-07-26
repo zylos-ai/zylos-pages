@@ -2,7 +2,48 @@
 
 ## [Unreleased]
 
+### Added
+
+- **A pre-upgrade backup and executable rollback runbook for the one-way
+  `page_id` migration.** Operators must take a consistent SQLite backup and
+  preserve attachment storage before starting the new version, then run the
+  verifier. Rollback restores that backup and attachment tree before reverting
+  code; reverting code alone is explicitly unsupported because the old binary
+  cannot read the migrated schema.
+- **Read-only, database-authoritative post-migration acceptance command.**
+  `npm run verify-migration -- --json` checks the final `page_id` schema,
+  orphan and duplicate rows, state/attachment snapshot retirement, attachment
+  metadata against on-disk names and byte sizes, and untracked or legacy URI
+  directories. It exits nonzero with structured failures and includes an
+  impossible-page negative control. A state archive that is a strict superset
+  of the current orphan set is classified explicitly as the crash/re-registration
+  non-convergence case: the snapshot remains retry evidence and the command
+  never advises manually dropping it.
+
 ### Fixed
+
+- **Rowless empty legacy attachment directories now converge with the migration
+  verifier.** During the active migration window, a directory whose name is a
+  registered legacy URI is removed only when it is empty and is not a page-id
+  directory. Non-empty, unknown, temporary, and page-id directories remain
+  untouched; removal failures are logged and keep retry evidence for the next
+  start.
+- **Share-visitor governance for page state.** State writes made through a
+  share link now have a per-page key ceiling (`state.maxKeysPerPage`, default
+  50), a reachable aggregate UTF-8 JSON byte ceiling (`state.maxPageBytes`,
+  default 1 MiB), and independent token/IP rate buckets for set and delete
+  operations (`state.shareWriteRateLimit`, default 12/minute per token and
+  30/minute per source address). The quota decision and write share one
+  `BEGIN IMMEDIATE` transaction and replacement writes subtract the previous
+  value's bytes before counting the new value. Authenticated owner writes are
+  intentionally exempt, and the attachment capability remains unrelated.
+  Lock contention is a retryable 503 with `Retry-After`, distinct from the 429
+  that means the share grant exhausted its own rate allowance.
+- **A structured audit line for every state mutation outcome.** Successes,
+  CSRF and validation refusals, unknown pages, rate limits, quota refusals,
+  internal failures, and idempotent deletes record the token id (never the
+  cookie or token secret), canonical page id, artifact, key, source address,
+  result and status.
 - **Owner sessions now survive safe links opened from another site** (#115).
   The owner session cookie uses `SameSite=Lax` instead of `Strict`, so a
   top-level GET navigation from a workspace, chat client, or email carries an

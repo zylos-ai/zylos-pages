@@ -102,6 +102,50 @@ function mergeDirectory(from, to) {
   return leftBehind;
 }
 
+function safeDirectoryForUri(root, uri) {
+  const resolvedRoot = path.resolve(root);
+  const candidate = path.resolve(root, uri);
+  const relative = path.relative(resolvedRoot, candidate);
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return null;
+  return candidate;
+}
+
+// A legacy directory can exist even when the legacy attachment table has no
+// rows. The row-driven mapping below cannot see that shape, while the
+// post-migration verifier deliberately can. Retire only directories whose
+// names are registered page uris and which are empty at the instant rmdir
+// runs. Unknown names, page_id directories, symlinks and anything containing
+// bytes remain evidence for the verifier rather than becoming guessed-at data.
+function removeEmptyLegacyUriDirectories(db) {
+  const root = attachmentRoot();
+  const pages = db.prepare('SELECT uri, page_id AS pageId FROM logical_pages ORDER BY uri').all();
+  const pageIds = new Set(pages.map(page => page.pageId));
+  const outcome = { removed: 0, preservedNonEmpty: 0, unresolved: [] };
+
+  for (const { uri, pageId } of pages) {
+    if (uri === pageId || pageIds.has(uri)) continue;
+    const directory = safeDirectoryForUri(root, uri);
+    if (!directory) continue;
+    try {
+      const stat = fs.lstatSync(directory);
+      if (!stat.isDirectory()) continue;
+      if (fs.readdirSync(directory).length !== 0) {
+        outcome.preservedNonEmpty += 1;
+        continue;
+      }
+      fs.rmdirSync(directory);
+      outcome.removed += 1;
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      outcome.unresolved.push({ artifact: uri, pageId, err: err.message });
+      logger.error('empty legacy attachment directory could not be removed', {
+        artifact: uri, pageId, err: err.message,
+      });
+    }
+  }
+  return outcome;
+}
+
 function relocateAttachmentDirectories(mapping) {
   const root = attachmentRoot();
   const outcome = { moved: 0, alreadyAtPageId: 0, noBytesStored: 0, duplicatesLeftInPlace: 0, unresolved: [] };
@@ -192,7 +236,9 @@ function migrateToPageIdKeys(db) {
   // The mapping lives in whichever table still carries the uri.
   const mapping = uriToPageIdMapping(db, liveTableIsUriKeyed ? 'artifact_attachments' : SNAPSHOT_TABLE);
 
-  // Step 1 — bytes first, so an interruption cannot strand metadata.
+  // Step 1 — remove rowless empty legacy directories, then move bytes. Both
+  // operations happen before the re-key so an interruption remains resumable.
+  const emptyDirectories = removeEmptyLegacyUriDirectories(db);
   const relocation = relocateAttachmentDirectories(mapping);
 
   // Step 2 — one transaction, or none of it.
@@ -222,6 +268,8 @@ function migrateToPageIdKeys(db) {
   const stranded = strandedBytes(db, mapping);
   const summary = {
     movedDirectories: relocation.moved,
+    removedEmptyLegacyDirectories: emptyDirectories.removed,
+    preservedNonEmptyLegacyDirectories: emptyDirectories.preservedNonEmpty,
     alreadyAtPageId: relocation.alreadyAtPageId,
     pagesWithNoStoredBytes: relocation.noBytesStored,
     duplicatesLeftInPlace: relocation.duplicatesLeftInPlace,
@@ -230,7 +278,8 @@ function migrateToPageIdKeys(db) {
   };
 
   // Step 4 — retire the mapping only once nothing needs it.
-  if (relocation.unresolved.length === 0 && stranded.length === 0) {
+  if (emptyDirectories.unresolved.length === 0
+      && relocation.unresolved.length === 0 && stranded.length === 0) {
     db.exec(`DROP TABLE IF EXISTS ${SNAPSHOT_TABLE}`);
     logger.info('attachment store migrated to page_id keys', summary);
     return;
@@ -238,9 +287,9 @@ function migrateToPageIdKeys(db) {
 
   logger.error('attachment store migration incomplete, uri mapping kept for the next start', {
     ...summary,
-    unresolvedDirectories: relocation.unresolved.length,
+    unresolvedDirectories: emptyDirectories.unresolved.length + relocation.unresolved.length,
     strandedFiles: stranded.length,
-    firstUnresolved: relocation.unresolved[0] ?? null,
+    firstUnresolved: emptyDirectories.unresolved[0] ?? relocation.unresolved[0] ?? null,
   });
 }
 

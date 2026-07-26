@@ -107,7 +107,7 @@ async function main() {
     setupShareApi(app, sharingConfig, config);
   }
   setupRawApi(app, config);
-  setupStateApi(app);
+  setupStateApi(app, config);
   setupAttachmentApi(app, config);
   setupPageApi(app, config);
 
