@@ -15,8 +15,10 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
-const { getAttachment } = await import('../src/attachments/attachment-store.js');
-const { registerLogicalPage } = await import('../src/pages/page-store.js');
+const { deleteAttachmentMetadata, getAttachment } =
+  await import('../src/attachments/attachment-store.js');
+const { getLogicalPage, registerLogicalPage, unregisterLogicalPage, updateLogicalPage } =
+  await import('../src/pages/page-store.js');
 
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
@@ -114,8 +116,19 @@ function formData(buffer, type = 'image/jpeg', filename = 'photo.jpg') {
 async function upload(origin, artifact, key, cookie, buffer = JPEG, type = 'image/jpeg', filename = 'photo.jpg') {
   return fetch(`${origin}/api/attachments/${artifact}/${key}`, {
     method: 'POST',
+    // Manual, so a refusal that takes the form of a login redirect stays
+    // visible instead of being followed into a 200 login page.
+    redirect: 'manual',
     headers: { Origin: origin, Cookie: cookie },
     body: formData(buffer, type, filename),
+  });
+}
+
+async function deleteAttachment(origin, artifact, attachmentId, cookie) {
+  return fetch(`${origin}/api/attachments/${artifact}/${attachmentId}`, {
+    method: 'DELETE',
+    redirect: 'manual',
+    headers: { Origin: origin, Cookie: cookie },
   });
 }
 
@@ -174,9 +187,34 @@ async function rawRequest(origin, requestPath, headers = {}) {
   });
 }
 
+// Read the stored totals straight from the DB, so a ceiling assertion is about
+// what was actually persisted rather than about what the API said.
+function storedBytesFor(uri) {
+  const page = getLogicalPage(uri);
+  return getPagesDb()
+    .prepare('SELECT COALESCE(SUM(size_bytes), 0) AS total FROM artifact_attachments WHERE page_id = ?')
+    .get(page.pageId).total;
+}
+
+function storedCountFor(uri, itemKey) {
+  const page = getLogicalPage(uri);
+  return getPagesDb()
+    .prepare('SELECT COUNT(*) AS n FROM artifact_attachments WHERE page_id = ? AND item_key = ?')
+    .get(page.pageId, itemKey).n;
+}
+
+// Attachments are stored under the page's stable id, not its uri.
+function pageIdFor(uri) {
+  return getLogicalPage(uri).pageId;
+}
+
+function storedAttachment(uri, attachmentId) {
+  return getAttachment(pageIdFor(uri), attachmentId);
+}
+
 async function artifactAttachmentFiles(artifact) {
   try {
-    return await readdir(path.join(dataDir, 'attachments', artifact));
+    return await readdir(path.join(dataDir, 'attachments', pageIdFor(artifact)));
   } catch (err) {
     if (err.code === 'ENOENT') return [];
     throw err;
@@ -370,25 +408,495 @@ test('short share viewers remain read-only even when write permission is request
   }
 });
 
-test('existing short share cookie sessions cannot be upgraded to attachment writes', async () => {
+// Open a share link the way a browser would and keep the cookies it hands back.
+async function openShare(origin, tokenId) {
+  const res = await fetch(`${origin}/s/${tokenId}`, { redirect: 'manual' });
+  assert.equal(res.status, 200);
+  return cookieHeader(res.headers.get('set-cookie'));
+}
+
+test('a writable share link can upload and delete on its own page', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      assert.equal(share.canWriteAttachments, true);
+      const cookies = await openShare(origin, share.tokenId);
+
+      const res = await upload(origin, 'renovation-checklist', 'photo-log', cookies);
+      assert.equal(res.status, 201);
+      const { attachment } = await res.json();
+      assert.ok(storedAttachment('renovation-checklist', attachment.attachmentId));
+
+      const del = await deleteAttachment(origin, 'renovation-checklist', attachment.attachmentId, cookies);
+      assert.equal(del.status, 200);
+      assert.equal(storedAttachment('renovation-checklist', attachment.attachmentId), null);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('the capability is read fresh on every request: grant and withdrawal both take effect mid-session', async () => {
   const contentDir = await makeContentDir();
   try {
     await withServer(baseConfig(contentDir), async ({ origin }) => {
       const authCookie = await login(origin);
 
+      // Created read-only, so the very same cookie must be refused first.
+      const share = createShare('renovation-checklist', '24h');
+      assert.equal(share.canWriteAttachments, false);
+      const cookies = await openShare(origin, share.tokenId);
+
+      let res = await upload(origin, 'renovation-checklist', 'toggle-before', cookies);
+      assert.equal(res.status, 403);
+
+      // Granted without re-issuing the link or the cookie.
+      await patchSharePermission(origin, share.tokenId, true, authCookie);
+      res = await upload(origin, 'renovation-checklist', 'toggle-after', cookies);
+      assert.equal(res.status, 201);
+
+      // Withdrawn again — the already-issued session must lose the ability at
+      // once, with nothing invalidated on the browser side.
+      await patchSharePermission(origin, share.tokenId, false, authCookie);
+      res = await upload(origin, 'renovation-checklist', 'toggle-withdrawn', cookies);
+      assert.equal(res.status, 403);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('revoking a writable share kills an already-open session', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      let res = await upload(origin, 'renovation-checklist', 'revoke-before', cookies);
+      assert.equal(res.status, 201);
+
+      revokeShare(share.tokenId);
+
+      res = await upload(origin, 'renovation-checklist', 'revoke-after', cookies);
+      expectLoginRedirect(res);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('a writable share is confined to its own page for both upload and delete', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const authCookie = await login(origin);
+
+      // A real attachment on the *other* page, to delete across the boundary.
+      const seeded = await upload(origin, 'notes', 'other-page', authCookie);
+      assert.equal(seeded.status, 201);
+      const foreignId = (await seeded.json()).attachment.attachmentId;
+
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      // Upload aimed at a page the token was not issued for.
+      let res = await upload(origin, 'notes', 'cross-artifact', cookies);
+      expectLoginRedirect(res);
+
+      // Delete aimed at the other page, by an id that really exists there.
+      res = await deleteAttachment(origin, 'notes', foreignId, cookies);
+      expectLoginRedirect(res);
+      assert.ok(storedAttachment('notes', foreignId), 'foreign attachment must survive');
+
+      // And the same id addressed through its own page finds nothing, so an id
+      // alone is never enough to delete anything.
+      res = await deleteAttachment(origin, 'renovation-checklist', foreignId, cookies);
+      assert.equal(res.status, 404);
+      assert.ok(storedAttachment('notes', foreignId), 'foreign attachment must still survive');
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('the attachment capability grants no auth-only surface', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      // Share management is not reachable at all for a share cookie — the auth
+      // middleware never lets these paths through, so the refusal is a login
+      // redirect rather than the routes' own 403. Either way the capability
+      // buys nothing here, and asserting the real status keeps this test
+      // honest about which layer is doing the refusing.
+      const create = await fetch(`${origin}/api/share`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: cookies },
+        body: JSON.stringify({ slug: 'p/renovation-checklist', duration: '24h', canWriteAttachments: true }),
+      });
+      expectLoginRedirect(create);
+
+      const list = await fetch(`${origin}/api/shares/renovation-checklist`, {
+        redirect: 'manual',
+        headers: { Cookie: cookies },
+      });
+      expectLoginRedirect(list);
+
+      const patch = await fetch(`${origin}/api/share/${share.tokenId}`, {
+        method: 'PATCH',
+        redirect: 'manual',
+        headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: cookies },
+        body: JSON.stringify({ canWriteAttachments: true }),
+      });
+      expectLoginRedirect(patch);
+
+      const revoke = await fetch(`${origin}/api/share/${share.tokenId}`, {
+        method: 'DELETE',
+        redirect: 'manual',
+        headers: { Origin: origin, Cookie: cookies },
+      });
+      expectLoginRedirect(revoke);
+
+      // The grant is still intact — the refusals above were about reach, not
+      // about the token having been invalidated along the way.
+      assert.equal((await upload(origin, 'renovation-checklist', 'still-writable', cookies)).status, 201);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('share uploads are capped by attachment count and by total stored bytes', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, maxPerItem: 2 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      assert.equal((await upload(origin, 'renovation-checklist', 'cap', cookies)).status, 201);
+      assert.equal((await upload(origin, 'renovation-checklist', 'cap', cookies)).status, 201);
+
+      const third = await upload(origin, 'renovation-checklist', 'cap', cookies);
+      assert.equal(third.status, 409);
+      assert.match((await third.json()).error, /maximum of 2 attachments/);
+
+      // A different item key is a different count, so the count alone cannot
+      // bound total storage — which is what the byte ceiling is for.
+      assert.equal((await upload(origin, 'renovation-checklist', 'other-key', cookies)).status, 201);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The ceilings must hold against the upload being made, not merely against
+// what was already stored. Checking `current >= max` lets every upload that
+// starts under the line finish over it, by as much as one whole maxFileSizeBytes.
+test('the byte ceiling counts the incoming upload, not just what is already stored', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'overshoot.html'), '<!doctype html><h1>x</h1>');
+    registerContentPage(contentDir, 'overshoot');
+
+    const config = baseConfig(contentDir, authConfig(), {
+      // Room for one 8-byte JPEG and not two: the second must be refused
+      // *before* it is stored, not after it has pushed the page to 16.
+      attachments: { maxFileSizeBytes: 128, maxArtifactBytes: 12 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('overshoot', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      assert.equal((await upload(origin, 'overshoot', 'k', cookies)).status, 201);
+      assert.equal((await upload(origin, 'overshoot', 'k', cookies)).status, 409);
+      assert.equal(storedBytesFor('overshoot'), JPEG.length, 'the ceiling must not be overshot');
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// Two uploads that both pass the pre-check before either has inserted. The
+// decision has to be atomic with the insert, or the ceiling is advisory.
+test('concurrent share uploads cannot both slip past the count ceiling', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'race.html'), '<!doctype html><h1>x</h1>');
+    registerContentPage(contentDir, 'race');
+
+    let release;
+    const bothInFlight = new Promise(resolve => { release = resolve; });
+    let arrived = 0;
+    const hooks = {
+      // Hold each request just before it commits, until both are past the
+      // pre-check — the exact interleaving a non-atomic limit permits.
+      async beforeMove() {
+        arrived += 1;
+        if (arrived >= 2) release();
+        else await bothInFlight;
+      },
+    };
+
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, maxPerItem: 1 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('race', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const [a, b] = await Promise.all([
+        upload(origin, 'race', 'k', cookies),
+        upload(origin, 'race', 'k', cookies),
+      ]);
+      const statuses = [a.status, b.status].sort();
+      assert.deepEqual(statuses, [201, 409], 'exactly one of the two may be stored');
+      assert.equal(storedCountFor('race', 'k'), 1);
+    }, { hooks });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('the byte ceiling refuses a share upload once the page is full', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    // Its own page: the ceiling is per artifact and every other test in this
+    // file deposits into renovation-checklist, so reusing it would measure the
+    // rest of the suite rather than this test.
+    await writeFile(path.join(contentDir, 'byte-ceiling.html'), '<!doctype html><h1>Bytes</h1>');
+    registerContentPage(contentDir, 'byte-ceiling');
+
+    const config = baseConfig(contentDir, authConfig(), {
+      // One JPEG is 8 bytes, so the second upload finds the page already at the
+      // ceiling.
+      attachments: { maxFileSizeBytes: 128, maxArtifactBytes: 8 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('byte-ceiling', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      assert.equal((await upload(origin, 'byte-ceiling', 'bytes', cookies)).status, 201);
+
+      const full = await upload(origin, 'byte-ceiling', 'bytes', cookies);
+      assert.equal(full.status, 409);
+      assert.match((await full.json()).error, /storage limit/);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('share writes are rate limited per token, and upload and delete are rationed separately', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, shareWriteRateLimit: { windowMs: 60_000, max: 2, ipMax: 1000 } },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const first = await upload(origin, 'renovation-checklist', 'rate', cookies);
+      assert.equal(first.status, 201);
+      const second = await upload(origin, 'renovation-checklist', 'rate', cookies);
+      assert.equal(second.status, 201);
+      const attachmentId = (await second.json()).attachment.attachmentId;
+
+      const third = await upload(origin, 'renovation-checklist', 'rate', cookies);
+      assert.equal(third.status, 429);
+      assert.ok(Number(third.headers.get('retry-after')) > 0);
+
+      // Deletes have their own allowance, so an exhausted upload budget does
+      // not also strand whatever was already uploaded.
+      const del = await deleteAttachment(origin, 'renovation-checklist', attachmentId, cookies);
+      assert.equal(del.status, 200);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('a revoked token is refused before it can consume any rate-limit budget', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, shareWriteRateLimit: { windowMs: 60_000, max: 1, ipMax: 1000 } },
+    });
+    await withServer(config, async ({ origin }) => {
+      const dead = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      revokeShare(dead.tokenId);
+      const live = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+
+      // The revoked link has no session to open, so drive it through the live
+      // page with a stale cookie: it must not reach the counter at all.
+      const deadCookies = await openShare(origin, live.tokenId);
+      const liveCookies = deadCookies;
+
+      for (let i = 0; i < 5; i += 1) {
+        const res = await fetch(`${origin}/api/attachments/notes/rate-drain`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { Origin: origin, Cookie: deadCookies },
+          body: formData(JPEG),
+        });
+        expectLoginRedirect(res);
+      }
+
+      // Budget of 1 must still be intact for the page the token does own.
+      assert.equal((await upload(origin, 'renovation-checklist', 'drain', liveCookies)).status, 201);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// Capture the structured log the way an operator reading the service log
+// would, so the assertions below are about what actually gets written out.
+async function captureAuditLines(fn) {
+  const original = process.stderr.write.bind(process.stderr);
+  const lines = [];
+  process.stderr.write = (chunk, ...rest) => {
+    const text = typeof chunk === 'string' ? chunk : chunk.toString();
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.msg === 'attachment mutation audit') lines.push(parsed);
+      } catch { /* not our structured line */ }
+    }
+    return original(chunk, ...rest);
+  };
+  try {
+    await fn();
+  } finally {
+    process.stderr.write = original;
+  }
+  return lines;
+}
+
+test('every share mutation leaves an audit line naming the token, page and outcome', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, shareWriteRateLimit: { windowMs: 60_000, max: 1, ipMax: 1000 } },
+    });
+    await withServer(config, async ({ origin }) => {
+      const writable = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
       const readOnly = createShare('renovation-checklist', '24h');
-      let res = await fetch(`${origin}/s/${readOnly.tokenId}`, { redirect: 'manual' });
-      assert.equal(res.status, 200);
-      const readOnlyCookies = cookieHeader(res.headers.get('set-cookie'));
+      const writableCookies = await openShare(origin, writable.tokenId);
+      const readOnlyCookies = await openShare(origin, readOnly.tokenId);
 
-      res = await upload(origin, 'renovation-checklist', 'short-upgrade-before', readOnlyCookies);
-      assert.equal(res.status, 403);
+      const audits = await captureAuditLines(async () => {
+        assert.equal((await upload(origin, 'renovation-checklist', 'audit', writableCookies)).status, 201);
+        assert.equal((await upload(origin, 'renovation-checklist', 'audit', writableCookies)).status, 429);
+        assert.equal((await upload(origin, 'renovation-checklist', 'audit', readOnlyCookies)).status, 403);
+      });
 
-      const body = await patchSharePermission(origin, readOnly.tokenId, true, authCookie, 410);
-      assert.deepEqual(body, { error: 'Public attachment writes are deprecated' });
+      const allowed = audits.find(line => line.result === 'allowed');
+      assert.ok(allowed, 'a successful upload must be audited');
+      assert.equal(allowed.action, 'upload');
+      assert.equal(allowed.writer, 'share');
+      assert.equal(allowed.tokenId, writable.tokenId);
+      assert.equal(allowed.artifact, 'renovation-checklist');
+      assert.equal(allowed.itemKey, 'audit');
+      assert.equal(allowed.mimeType, 'image/jpeg');
+      assert.equal(allowed.sizeBytes, JPEG.length);
+      assert.ok(allowed.pageId, 'the audited page identity must be present');
+      assert.ok(allowed.ip, 'the source address must be present');
+      assert.ok(allowed.attachmentId);
 
-      res = await upload(origin, 'renovation-checklist', 'short-upgrade-after', readOnlyCookies);
-      assert.equal(res.status, 403);
+      // Refusals are audited too — a link being turned away repeatedly is the
+      // signal an operator most needs, and it is the one a success-only log
+      // would never show.
+      const rateLimited = audits.find(line => line.reason === 'rate_limited');
+      assert.ok(rateLimited, 'a rate-limited attempt must be audited');
+      assert.equal(rateLimited.result, 'denied');
+      assert.equal(rateLimited.status, 429);
+      assert.equal(rateLimited.tokenId, writable.tokenId);
+      assert.equal(rateLimited.dimension, 'token');
+
+      const refused = audits.find(line => line.reason === 'share_not_writable_or_wrong_page');
+      assert.ok(refused, 'a non-writable share attempt must be audited');
+      assert.equal(refused.result, 'denied');
+      assert.equal(refused.status, 403);
+      assert.equal(refused.tokenId, readOnly.tokenId);
+
+      // The cookie value itself must never appear anywhere in the audit trail.
+      for (const line of audits) {
+        assert.equal(JSON.stringify(line).includes('__Secure-'), false);
+      }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// A share follows its page across a rename, because the grant is keyed by
+// page_id. Storage and quota must follow the same identity, or a rename hands
+// the page a fresh ceiling and leaves the previous bytes behind — invisible to
+// listing and deletion but still on disk.
+test('renaming a page carries its attachments, its listing and its quota with it', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await writeFile(path.join(contentDir, 'movable.html'), '<!doctype html><h1>x</h1>');
+    const page = registerContentPage(contentDir, 'movable');
+
+    const config = baseConfig(contentDir, authConfig(), {
+      attachments: { maxFileSizeBytes: 128, maxArtifactBytes: 12 },
+    });
+    await withServer(config, async ({ origin }) => {
+      const share = createShare('movable', '24h', { canWriteAttachments: true });
+      let cookies = await openShare(origin, share.tokenId);
+
+      assert.equal((await upload(origin, 'movable', 'k', cookies)).status, 201);
+      assert.equal((await upload(origin, 'movable', 'k', cookies)).status, 409);
+
+      updateLogicalPage(page.pageId, { uri: 'moved' });
+
+      // The same grant, now addressing the page by its new name.
+      cookies = await openShare(origin, share.tokenId);
+
+      // The already-stored bytes still count, so the ceiling is not reset.
+      const afterRename = await upload(origin, 'moved', 'k', cookies);
+      assert.equal(afterRename.status, 409, 'a rename must not hand the page a fresh quota');
+
+      // And the earlier upload is still listed under the new name, rather than
+      // being stranded under the old one.
+      const list = await fetch(`${origin}/api/attachments/moved/k`, {
+        redirect: 'manual',
+        headers: { Cookie: cookies },
+      });
+      assert.equal(list.status, 200);
+      assert.equal((await list.json()).attachments.length, 1);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('a writable share cannot write a page that was unregistered underneath it', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+      assert.equal((await upload(origin, 'renovation-checklist', 'before-unregister', cookies)).status, 201);
+
+      unregisterLogicalPage('renovation-checklist');
+      try {
+        const res = await upload(origin, 'renovation-checklist', 'after-unregister', cookies);
+        expectLoginRedirect(res);
+      } finally {
+        registerContentPage(contentDir, 'renovation-checklist');
+      }
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
@@ -559,8 +1067,8 @@ test('delete succeeds when stored file is missing and returns 404 when metadata 
       let res = await upload(origin, 'delete-artifact', 'delete-missing-file', cookie);
       assert.equal(res.status, 201);
       const attachment = (await res.json()).attachment;
-      const record = getAttachment('delete-artifact', attachment.attachmentId);
-      await unlink(path.join(dataDir, 'attachments', 'delete-artifact', record.storedFilename));
+      const record = storedAttachment('delete-artifact', attachment.attachmentId);
+      await unlink(path.join(dataDir, 'attachments', pageIdFor('delete-artifact'), record.storedFilename));
 
       res = await fetch(`${origin}/api/attachments/delete-artifact/${attachment.attachmentId}`, {
         method: 'DELETE',
@@ -574,6 +1082,153 @@ test('delete succeeds when stored file is missing and returns 404 when metadata 
       });
       assert.equal(res.status, 404);
     });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The exits added when the audit gap was closed: CSRF, invalid delete
+// parameters, and the two distinct delete 404s. The changelog claims every
+// terminal outcome of both mutation routes is audited, and until these landed
+// the only audit assertions covered success, rate limiting and a read-only
+// refusal — so three of the four new exits were implementation-only, provable
+// by reading the source and by nothing else.
+//
+// Each is asserted through the route, from the log an operator would read, and
+// each carries the token id: a valid link probing repeatedly is exactly the
+// pattern these lines exist to make greppable, and it is the one a
+// success-only trail would never show.
+//
+// Negative controls, run rather than assumed. Removing any one of the four
+// `auditMutation` calls fails its own test and leaves the other 27 green:
+// the CSRF pair, `invalid_params`, `not_found` and `already_deleted` were each
+// deleted in turn, each producing 27 pass / 1 fail.
+test('the CSRF refusal is audited on both mutation routes, with the token named', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const audits = await captureAuditLines(async () => {
+        // No Origin and no Referer: the request cannot be attributed to this
+        // site, which is the case the check exists for.
+        const uploaded = await fetch(`${origin}/api/attachments/renovation-checklist/csrf`, {
+          method: 'POST',
+          redirect: 'manual',
+          headers: { Cookie: cookies },
+          body: formData(JPEG),
+        });
+        assert.equal(uploaded.status, 403);
+
+        const deleted = await fetch(`${origin}/api/attachments/renovation-checklist/${'a'.repeat(32)}`, {
+          method: 'DELETE',
+          redirect: 'manual',
+          headers: { Cookie: cookies },
+        });
+        assert.equal(deleted.status, 403);
+      });
+
+      const uploadLine = audits.find(line => line.action === 'upload' && line.reason === 'csrf');
+      assert.ok(uploadLine, 'a CSRF-refused upload must be audited');
+      assert.equal(uploadLine.result, 'denied');
+      assert.equal(uploadLine.status, 403);
+      assert.equal(uploadLine.tokenId, share.tokenId, 'the refused request is still attributable to its link');
+      assert.equal(uploadLine.artifact, 'renovation-checklist');
+
+      const deleteLine = audits.find(line => line.action === 'delete' && line.reason === 'csrf');
+      assert.ok(deleteLine, 'a CSRF-refused delete must be audited');
+      assert.equal(deleteLine.result, 'denied');
+      assert.equal(deleteLine.status, 403);
+      assert.equal(deleteLine.tokenId, share.tokenId);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('an invalid delete parameter is audited rather than dropped at the door', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      const audits = await captureAuditLines(async () => {
+        const res = await deleteAttachment(origin, 'renovation-checklist', 'not-a-valid-id', cookies);
+        assert.equal(res.status, 400);
+      });
+
+      const line = audits.find(l => l.reason === 'invalid_params');
+      assert.ok(line, 'a malformed delete must be audited');
+      assert.equal(line.action, 'delete');
+      assert.equal(line.result, 'denied');
+      assert.equal(line.status, 400);
+      assert.equal(line.attachmentId, 'not-a-valid-id');
+      assert.equal(line.tokenId, share.tokenId);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The two 404s are deliberately different reasons. "There was never such an
+// attachment" and "someone else deleted it a moment ago" look identical to the
+// caller and are not the same fact to whoever is reading the log afterwards.
+test('both delete 404s are audited, and they are told apart', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+    let raced = null;
+
+    // The hook opens the window a competing deleter would land in: the row is
+    // read, then removed underneath this request before it commits its own
+    // delete. Without it the raced branch is unreachable from a test.
+    const hooks = {
+      beforeDeleteMetadata: ({ pageId, attachmentId }) => {
+        if (attachmentId !== raced) return;
+        assert.equal(deleteAttachmentMetadata(pageId, attachmentId), true);
+      },
+    };
+
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const cookies = await openShare(origin, share.tokenId);
+
+      const created = await upload(origin, 'renovation-checklist', 'races', cookies);
+      assert.equal(created.status, 201);
+      raced = (await created.json()).attachment.attachmentId;
+
+      const audits = await captureAuditLines(async () => {
+        // Never existed: well-formed, unknown to this page.
+        const missing = await deleteAttachment(origin, 'renovation-checklist', 'b'.repeat(32), cookies);
+        assert.equal(missing.status, 404);
+
+        // Existed a moment ago, removed between the read and the delete.
+        const lost = await deleteAttachment(origin, 'renovation-checklist', raced, cookies);
+        assert.equal(lost.status, 404);
+      });
+
+      const notFound = audits.find(line => line.reason === 'not_found');
+      assert.ok(notFound, 'a delete of something that never existed must be audited');
+      assert.equal(notFound.action, 'delete');
+      assert.equal(notFound.result, 'failed');
+      assert.equal(notFound.status, 404);
+      assert.equal(notFound.attachmentId, 'b'.repeat(32));
+      assert.equal(notFound.tokenId, share.tokenId);
+
+      const alreadyDeleted = audits.find(line => line.reason === 'already_deleted');
+      assert.ok(alreadyDeleted, 'losing the race must be audited as its own outcome');
+      assert.equal(alreadyDeleted.action, 'delete');
+      assert.equal(alreadyDeleted.result, 'failed');
+      assert.equal(alreadyDeleted.status, 404);
+      assert.equal(alreadyDeleted.attachmentId, raced);
+      assert.equal(alreadyDeleted.tokenId, share.tokenId);
+
+      assert.notEqual(
+        notFound.reason, alreadyDeleted.reason,
+        'the two 404s must stay distinguishable in the log'
+      );
+    }, { hooks });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
   }

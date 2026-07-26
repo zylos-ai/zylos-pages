@@ -26,7 +26,8 @@ function printUsage() {
 Usage:
   node pages.js register --source <path> --uri <uri> [--title <title>] [--component <name>] [--json]
   node pages.js list [--q <query>] [--json]
-  node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--json]
+  node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--writable] [--json]
+                                                       # --writable also lets link holders upload/delete this page's photos
   node pages.js shares <uri> [--json]
   node pages.js shares --all [--json]                  # every live share on this instance
   node pages.js share-info <token-or-url> [--json]     # which document is this link, and is it still live?
@@ -39,6 +40,7 @@ Usage:
 Examples:
   node pages.js register --source /abs/report.md --uri reports/q3 --title "Q3 Report"
   node pages.js share reports/q3 --duration 7d
+  node pages.js share renovation-checklist --duration 7d --writable
   node pages.js shares --all
   node pages.js share-info https://example.com/s/7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js unshare --token 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
@@ -47,7 +49,7 @@ Examples:
 
 // Flags that stand alone. Everything else consumes the next argv entry, so a
 // value-less flag not listed here fails with "missing value for --x".
-const BOOLEAN_FLAGS = new Set(['json', 'all']);
+const BOOLEAN_FLAGS = new Set(['json', 'all', 'writable']);
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -288,7 +290,7 @@ function commandShare(args) {
     throw new CliError('sharing_disabled', 'sharing is disabled in config (sharing.enabled=false)');
   }
   const slug = shareSlugForUri(uri);
-  const result = createShare(slug, duration);
+  const result = createShare(slug, duration, { canWriteAttachments: args.writable === true });
   output({
     ok: true,
     command: 'share',

@@ -29,6 +29,22 @@ export function assertValidItemKey(key) {
   }
 }
 
+// Page ids are UUIDs (crypto.randomUUID in the page store). They are checked
+// explicitly rather than through the artifact-id rule, which a UUID happens to
+// satisfy today — a coincidence of shape, not a guarantee, and the wrong thing
+// for a value that becomes a directory name.
+const PAGE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function validatePageId(pageId) {
+  return typeof pageId === 'string' && PAGE_ID_RE.test(pageId);
+}
+
+export function assertValidPageId(pageId) {
+  if (!validatePageId(pageId)) {
+    throw Object.assign(new Error('Invalid page ID'), { statusCode: 400 });
+  }
+}
+
 export function assertValidAttachmentId(attachmentId) {
   if (!validateAttachmentId(attachmentId)) {
     throw Object.assign(new Error('Invalid attachment ID'), { statusCode: 400 });

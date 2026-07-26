@@ -275,17 +275,18 @@ function cookieMaxAge(tokenExpiresAt, maxAgeSeconds) {
   return Math.max(0, Math.min(maxAgeSeconds, remaining));
 }
 
-export function createShare(slug, duration) {
+export function createShare(slug, duration, options = {}) {
   initShareStore();
   const uri = pageUriFromSlug(slug);
   const page = getLogicalPage(uri);
   if (!page) {
     throw Object.assign(new Error('Page not found'), { statusCode: 404 });
   }
-  // Share tokens are read-only. Kept as a named constant because it is written
-  // to the row and returned to callers, but there is deliberately no way to
-  // turn it on from the outside.
-  const canWriteAttachments = false;
+  // Attachment writes are a per-token capability and are off unless the caller
+  // asks for them explicitly. Only `true` grants it — a missing or truthy-ish
+  // value is not an opt-in, because this flag is the sole thing standing
+  // between "holds the link" and "can write to the page".
+  const canWriteAttachments = options.canWriteAttachments === true;
 
   const durationMs = DURATION_MAP[duration];
   if (durationMs === undefined) {
@@ -469,11 +470,14 @@ export function revokeAllForSlug(slug) {
   return result.changes;
 }
 
+// Toggling the capability on an existing token. The UPDATE statement carries
+// the liveness predicate, so a revoked, expired or tombstoned token cannot be
+// upgraded — the grant only ever lands on a share that could serve the page
+// anyway.
 export function updateShareAttachmentPermission(tokenId, canWriteAttachments) {
   if (!isTokenId(tokenId)) return null;
-  if (canWriteAttachments === true) return null;
   initShareStore();
-  const result = _updateShareAttachmentPermission.run(canWriteAttachments ? 1 : 0, tokenId, nowMs());
+  const result = _updateShareAttachmentPermission.run(canWriteAttachments === true ? 1 : 0, tokenId, nowMs());
   if (result.changes === 0) return null;
   const updated = activeShareRecord(tokenId);
   if (updated) {

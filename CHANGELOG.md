@@ -1,5 +1,237 @@
 # Changelog
 
+## [0.7.9] - 2026-07-26
+
+A share link can once again be given permission to upload and delete a page's
+photos. This restores the original point of issue #49 — a passwordless link a
+family member can use to help collect renovation photos — which PR #50 built,
+PR #71 switched off, and which has been dead code with a live UI ever since.
+
+**This reverses a previous security decision, so the reasoning is recorded in
+full rather than summarised.** An audit of #49, #50 and #71 (their
+descriptions, diffs and review comments) establishes only that #71
+*deliberately* deprecated and tested away the capability during the DB-backed
+page registry work. It records **no specific vulnerability, incident, or stated
+concern** as the motive. Everything below is therefore a **present-day
+re-evaluation**, not a reconstruction of what anyone decided in June — a
+distinction worth keeping, because a guess about the past dressed as history is
+the kind of thing the next reader would have no way to check.
+
+**What a share link is, stated accurately.** A share is not a globally
+read-only principal, and describing it that way would have been wrong before
+this release too. Since v0.3.0 a share has had **state CRUD on its matching
+page** — that is what lets a shared interactive page remember a ticked
+checkbox. What this release adds is a *separate, opt-in* capability covering
+**persistent file storage**, which is a different kind of risk: bytes on disk,
+content hosted under someone else's domain, a link that can be forwarded. The
+ceilings below exist for that risk specifically. The state surface is
+deliberately **not** folded into this capability — governing checkbox saves
+with a bit named "can write attachments" would be both semantically wrong and
+an unannounced compatibility break — and is instead logged as its own security
+backlog item, since it has no capability bit, no per-token audit and no
+per-artifact ceiling of its own.
+
+### Added
+- **`canWriteAttachments`, an explicit per-token capability.** Off unless asked
+  for, and only a real `true` grants it — `"true"`, `1` or a stray object are
+  refused with a 400 rather than coerced in either direction. Available when
+  creating a share (`POST /api/share`, the share dialog's existing "Allow photo
+  upload/delete" checkbox, or `pages share <uri> --writable`) and toggleable
+  afterwards on an existing link without changing its URL (`PATCH
+  /api/share/:tokenId`, restoring what issue #51 asked for). Granting is
+  refused on exactly the rows withdrawal is: a revoked, expired or tombstoned
+  token cannot be brought back to life by upgrading it.
+- **Ceilings that apply to share writers only.** A logged-in owner can already
+  write the disk by other means, so capping them protects nothing; these bound
+  what an unauthenticated link holder can deposit. `attachments.maxPerItem`
+  (default 50) caps attachments on one item key, and
+  `attachments.maxArtifactBytes` (default 100 MiB) caps total stored bytes per
+  page — the count alone cannot bound storage, since it can be honoured with 50
+  files of the maximum size. Both refuse with 409, decided in the same
+  transaction that writes the row. Only the count ceiling can be applied before
+  the upload is read, and only when the item is already full; the byte ceiling
+  counts the incoming size, which is not known until the multipart body has
+  been parsed. A pre-read check for the already-full case remains as a
+  courtesy — it saves reading an upload that cannot land — but it is not the
+  boundary, and describing it as one would promise something the byte ceiling
+  cannot deliver.
+- **Per-token, per-operation rate limiting** (`attachments.shareWriteRateLimit`,
+  default 12/minute per token and 30/minute per source address). The app-wide
+  limiter keys on IP, which is the wrong unit here: one link handed to twenty
+  people is twenty addresses against a single grant, so the primary bucket is
+  the token — the thing that was issued and the thing that can be revoked. IP
+  remains as a secondary dimension because a single source hammering one link
+  is invisible to a token bucket generous enough to be usable; neither subsumes
+  the other, so a request charges both. Uploads and deletes are rationed
+  separately, so a spent upload budget cannot strand the files it just created.
+  A refused token never reaches the counter at all, so it cannot drain a live
+  token's allowance.
+- **A token- and operation-level audit line for every attachment mutation,
+  allowed or refused**, carrying token id, page id, artifact, item key,
+  attachment id, MIME type, size, result, status and source address, and never
+  the cookie or token value. It cannot name a person — a share link is not an
+  identity — but "which grant, against what page, doing what, with what result,
+  from where, when" is now answerable, which is what makes a bad link revocable
+  rather than merely regrettable. Deletes additionally record whether the file
+  itself was removed, so the one outcome that is otherwise invisible to every
+  read path — metadata gone, file orphaned on disk — is greppable.
+
+### Changed
+- **The attachment mutation gate is one function, crossed by both the upload
+  and the delete route**, rather than a check per route, so a future mutation
+  route cannot be added without passing it. It admits a logged-in session, or a
+  share token that carries the capability **and** whose grant resolves to the
+  same canonical `page_id` as the artifact being written. The binding compares
+  page identity rather than the uri string: shares are keyed by `page_id`
+  precisely so a link survives a rename, so comparing names would compare two
+  labels for the thing instead of the thing. An unregistered or tombstoned page
+  has no id to match and is refused there.
+- A writable share viewer remains `authenticated=false`. The capability grants
+  attachment writes on one page and nothing else — share creation, listing,
+  revocation and every other auth-only surface stay out of reach.
+- Revocation, expiry and withdrawal of the capability take effect immediately
+  on sessions that are already open, because the share row is re-read on every
+  request rather than snapshotted into the cookie.
+
+### Fixed after review (PR #114, second round)
+
+The first round's fixes were reviewed again on a frozen head and four findings
+came back. All four are fixed here rather than deferred.
+
+- **The `page_id` migration could not be restarted, and one interruption made
+  the data permanently unreachable.** It committed the re-keyed table, then
+  moved the directories, then dropped the uri mapping whether or not the moves
+  had worked — and on the next start returned early because the table was
+  already `page_id`-keyed. A crash in that gap left the metadata pointing at a
+  directory that did not exist, the bytes under the old name, and nothing left
+  that knew the two belonged together: a 404 no restart could clear. The
+  migration now runs in stages that each survive being interrupted and repeated.
+  Directories move **before** any metadata is re-keyed, so the leftover state of
+  an interrupted run is "bytes moved, rows not yet re-keyed", which the next
+  start can finish — the reverse order is what stranded them. The re-key itself
+  is a single transaction. The uri mapping is retired only after a verification
+  pass finds no bytes still sitting under an old name that a row now expects
+  under the new one; anything else keeps the mapping and logs an error naming
+  what was left, and the next start retries with the mapping intact. A move that
+  fails no longer takes the rest of the migration down with it, and no longer
+  makes itself permanent. Bytes already missing before the migration began are
+  recorded but do not block completion — no later run can produce a file that
+  does not exist, and blocking on one would mean never finishing.
+  A start that finds the state the *previous* implementation could leave behind
+  repairs it, so an instance already broken by it recovers by being restarted.
+- **A routine cross-connection collision was answered with 500.** The quota
+  transaction used a deferred `BEGIN`, taking no lock while it read the totals,
+  so it could not promote its snapshot once another connection had the write
+  lock. That refusal never consults the busy handler — `busy_timeout` does not
+  apply and it fails at once — and it arrived as an untyped throw, which the
+  upload route could only render as `internal_error`. The ceiling was never
+  unsafe (the collision refuses rather than admits) but "internal error" tells a
+  caller nothing about a condition that would have cleared on its own. The write
+  lock is now taken at `BEGIN`, which turns the collision into ordinary
+  contention that the busy handler does cover: the second writer waits and then
+  decides against totals that include the first. If the wait is exhausted, the
+  refusal is a **503 with `Retry-After`** rather than a 500 — not 429, which on
+  this route already means the share link's own write allowance is spent, and a
+  client that learns to back off should not have to guess which of the two it
+  hit. Nothing is written on that path and the stored file is removed, so
+  retrying is safe advice rather than a shrug; uploads carry no idempotency key,
+  which is exactly why that had to be true before advertising a retry.
+- **The audit exits added in the first round had no regression tests.** CSRF,
+  invalid delete parameters and both delete 404s were implementation-only:
+  provable by reading the source and by nothing else, while the release note
+  claimed every terminal outcome was covered. Each now has an assertion through
+  the route, read from the log an operator would actually see, including the
+  raced delete — reachable only because the delete path now exposes the same
+  kind of test hook the upload path already had.
+- **The release note promised a boundary the byte ceiling cannot have.** It said
+  both ceilings refuse before the upload is read; an incoming-byte overshoot can
+  only be decided after the multipart body is parsed. Corrected above.
+
+### Fixed after review (PR #114, `REQUEST_CHANGES`)
+- **The storage ceilings were not ceilings.** They compared `current >= max`
+  before the upload was read, so anything that started under the line finished
+  over it by its own size — with a 12-byte cap, two 8-byte uploads both
+  succeeded and left 16 bytes stored. The comparison now counts the incoming
+  size, and the decision is made in the same step that writes the row, so two
+  uploads that both pass the check before either commits can no longer both be
+  admitted. A cheap pre-check remains, but only as a courtesy that avoids
+  reading an upload for an obviously-full page; it is not the authority.
+- **Attachments are keyed by `page_id`, not by the artifact string.** They were
+  keyed by the page's *current* uri while the share grant follows the stable
+  page id — so a rename carried the grant to the new name while the stored
+  bytes stayed behind under the old one: absent from the total (a fresh ceiling
+  on every rename) and unreachable by listing or deletion. Metadata rows,
+  storage totals and on-disk directories now all use the page id. The migration
+  that re-keys existing rows and moves their directories is described under the
+  second review round below. A row whose uri no longer resolves to a page is
+  **dropped**, not carried: the page it belonged to is gone, so the metadata was
+  already unreachable. What is logged is the number dropped — the loss is
+  visible, not prevented.
+- **The audit contract now matches the code.** CSRF rejections, invalid delete
+  parameters, and both 404 delete outcomes bypassed `auditMutation`, so
+  repeated delete probes from a valid token left no record. Every terminal
+  outcome of both mutation routes is audited, with "never existed" and "someone
+  else deleted it first" recorded as distinct reasons.
+
+### Tests
+- Overshoot and concurrency are pinned by tests that fail against the previous
+  implementation, as is the rename case: an upload after a rename must still be
+  refused by the ceiling, and the earlier attachment must still be listed under
+  the new name.
+- **The page binding is tested directly rather than through HTTP, because over
+  HTTP it cannot be tested at all.** The auth middleware refuses a mismatched
+  page before a request can reach the gate, so every route-level assertion
+  passes whether or not the gate re-checks the binding — which is precisely the
+  property the gate exists for, being the check still standing if that
+  middleware ever changes. This was found by falsification: deleting the
+  binding left the entire route suite green. The direct suite fails on that
+  same deletion.
+- The route suite covers the grant end to end and its refusals: upload and
+  delete on the owned page; a read-only link refused; grant and withdrawal
+  taking effect mid-session on an already-issued cookie; revocation killing an
+  open session; cross-page upload and cross-page delete refused with the
+  foreign attachment asserted to survive; an attachment id addressed through
+  the wrong page finding nothing, so an id alone can never delete anything; a
+  page unregistered underneath a live session; count and byte ceilings; rate
+  limiting including the separate upload and delete allowances and the proof
+  that a refused token drains no budget; and that share management stays
+  unreachable while the grant itself remains intact.
+- **A negative control pins the state surface as independent of this
+  capability**, asserting state CRUD works identically with the bit on and off,
+  so a later change cannot quietly widen "can write attachments" into "can
+  write anything" in either direction.
+- The audit trail is asserted from the log output an operator would actually
+  read, for an allowed write, a rate-limited one and a refused one, including
+  that no cookie value appears anywhere in it. Each of the four exits added for
+  the audit gap — CSRF on both routes, invalid delete parameters, and the two
+  distinct delete 404s — is asserted separately, and removing any one of them
+  fails its own assertion and no other.
+- **The migration is tested against the states an interruption leaves, not
+  against a happy path.** The fixtures construct the exact database and
+  filesystem state each crash point produces — including the one the previous
+  implementation could leave behind — and start the store against it. Restoring
+  that implementation's early return fails every assertion in that file;
+  removing only the row-restore fails the row assertions and leaves the file
+  assertions green, so metadata and bytes are shown to be recovered by separate
+  mechanisms rather than by one that happens to cover both.
+- **A move that cannot succeed is tested, and so is the ordering that makes it
+  survivable.** One directory is made to refuse to move: the others still
+  migrate, the store still starts, the mapping is kept, the failure is logged as
+  an error, and the next start completes what was left open. The ordering claim
+  is asserted from inside the rename itself — the live table must still be
+  uri-keyed at the moment bytes are moved — which is the only point where that
+  claim is falsifiable. Performing the moves after the re-key instead fails that
+  assertion and only that one; retiring the mapping unconditionally instead
+  fails the retry and only the retry.
+- **The cross-connection contract is pinned against a second process**, not two
+  handles sharing this one — a synchronous transaction cannot demonstrate
+  waiting for a lock that only a timer in the same process would release. A
+  child holds the write lock for a fixed interval; the upload must wait it out
+  and then decide against totals that include it. Reverting to the deferred
+  begin fails that assertion with the measurement that shows why: the insert
+  returns in about a millisecond against a 600ms lock under a 5000ms
+  `busy_timeout`, because that refusal never reaches the busy handler.
+
 ## [0.7.8] - 2026-07-26
 
 A shared link can now hand its Markdown source to a tool instead of its
