@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-07-26
+
+This is the first public release after v0.7.8. Source version 0.7.9 was never
+tagged or published; all changes recorded under its source-only milestone are
+included in v0.7.10 together with the corrective integration work below.
+
 ### Added
 
 - **A pre-upgrade backup and executable rollback runbook for the one-way
@@ -51,7 +57,10 @@
   cross-site requests remain excluded by the browser policy, and mutation
   routes keep their independent Origin/Referer CSRF checks.
 
-## [0.7.9] - 2026-07-26
+## [0.7.9] - 2026-07-26 (not published)
+
+This was a source-only milestone: no `v0.7.9` tag or GitHub Release was
+created. Its changes are first publicly released as part of v0.7.10.
 
 A share link can once again be given permission to upload and delete a page's
 photos. This restores the original point of issue #49 — a passwordless link a
