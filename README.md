@@ -66,6 +66,23 @@ toc: true
 ---
 ```
 
+### Verify a page-data migration
+
+After the one-time `page_id` migration has run, verify the database and
+attachment storage before retiring the migration window:
+
+```bash
+PAGES_DATA_DIR=~/zylos/components/pages npm run verify-migration -- --json
+```
+
+The command is read-only and exits `0` only when the database schema, page
+references, state keys, attachment metadata/files, and migration snapshots all
+converge. It exits `1` with machine-readable failures for orphan or duplicate
+rows, missing/mismatched/untracked files, legacy URI directories, or residual
+snapshot tables. If a state snapshot remains, preserve it as retry evidence;
+do not manually drop it. This is a post-migration acceptance check, not a
+perpetual naming-convention check or an HTML scan.
+
 ## Configuration
 
 Edit `~/zylos/components/pages/config.json`:

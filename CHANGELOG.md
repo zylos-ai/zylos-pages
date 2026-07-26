@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Read-only, database-authoritative post-migration acceptance command.**
+  `npm run verify-migration -- --json` checks the final `page_id` schema,
+  orphan and duplicate rows, state/attachment snapshot retirement, attachment
+  metadata against on-disk names and byte sizes, and untracked or legacy URI
+  directories. It exits nonzero with structured failures and includes an
+  impossible-page negative control. A state archive that is a strict superset
+  of the current orphan set is classified explicitly as the crash/re-registration
+  non-convergence case: the snapshot remains retry evidence and the command
+  never advises manually dropping it.
 - **Share-visitor governance for page state.** State writes made through a
   share link now have a per-page key ceiling (`state.maxKeysPerPage`, default
   50), a reachable aggregate UTF-8 JSON byte ceiling (`state.maxPageBytes`,
