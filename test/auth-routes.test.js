@@ -341,6 +341,59 @@ test('regular login sets 24-hour cookie', async () => {
   }
 });
 
+test('owner session cookie uses SameSite=Lax for cross-site top-level navigation', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const issued = findCookie(await loginCookies(origin), '__Secure-zylos_pages_session');
+    assert.ok(
+      policyAttributes(issued).has('SameSite=Lax'),
+      'owner session must be sent on a safe cross-site top-level navigation'
+    );
+    assert.ok(
+      !policyAttributes(issued).has('SameSite=Strict'),
+      'the old Strict policy would drop the owner session on that navigation'
+    );
+
+    const cleared = findCookie(await logout(origin), '__Secure-zylos_pages_session');
+    assert.ok(
+      policyAttributes(cleared).has('SameSite=Lax'),
+      'logout should clear the session under the same usage policy it was issued with'
+    );
+  } finally {
+    server.close();
+  }
+});
+
+test('SameSite=Lax does not replace logout Origin and Referer CSRF checks', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const session = findCookie(await loginCookies(origin), '__Secure-zylos_pages_session');
+    const cookie = `__Secure-zylos_pages_session=${cookieValue(session)}`;
+
+    for (const headers of [
+      { Origin: 'https://evil.example', Cookie: cookie },
+      { Referer: 'https://evil.example/attack', Cookie: cookie },
+      { Cookie: cookie },
+    ]) {
+      const response = await fetch(`${origin}/logout`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers,
+      });
+      assert.equal(response.status, 403);
+      assert.equal(response.headers.get('set-cookie'), null);
+    }
+
+    const stillAuthenticated = await fetch(`${origin}/`, {
+      redirect: 'manual',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(stillAuthenticated.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
 test('session persists in SQLite (survives validation after store reinit)', async () => {
   const { server, origin } = await makeServer();
   try {
