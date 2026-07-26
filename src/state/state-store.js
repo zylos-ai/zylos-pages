@@ -10,6 +10,9 @@ let _getAll;
 let _getOne;
 let _setOne;
 let _deleteOne;
+let _countKeys;
+let _pageBytes;
+let _setWithinQuota;
 
 const STATE_SCHEMA = `
   page_id TEXT NOT NULL,
@@ -181,11 +184,41 @@ export function initStateStore() {
     VALUES (?, ?, ?, ?)
   `);
   _deleteOne = db.prepare('DELETE FROM artifact_state WHERE page_id = ? AND key = ?');
+  _countKeys = db.prepare('SELECT COUNT(*) AS n FROM artifact_state WHERE page_id = ?');
+  _pageBytes = db.prepare(`
+    SELECT COALESCE(SUM(length(CAST(value AS BLOB))), 0) AS total
+    FROM artifact_state
+    WHERE page_id = ?
+  `);
+  _setWithinQuota = db.transaction((pageId, key, encoded, limits) => {
+    const existing = _getOne.get(pageId, key);
+    if (!existing && _countKeys.get(pageId).n >= limits.maxKeysPerPage) {
+      return { ok: false, reason: 'keys' };
+    }
+    const existingBytes = existing ? Buffer.byteLength(existing.value, 'utf8') : 0;
+    const incomingBytes = Buffer.byteLength(encoded, 'utf8');
+    if (_pageBytes.get(pageId).total - existingBytes + incomingBytes > limits.maxPageBytes) {
+      return { ok: false, reason: 'bytes' };
+    }
+    _setOne.run(pageId, key, encoded, new Date().toISOString());
+    return { ok: true, existing: Boolean(existing), incomingBytes };
+  });
   initialized = true;
 }
 
 function ensureInitialized() {
   if (!initialized) initStateStore();
+}
+
+const RETRY_AFTER_SECONDS = 1;
+
+function asRetryableContention(err) {
+  if (!String(err?.code || '').startsWith('SQLITE_BUSY')) return err;
+  return Object.assign(new Error('The state store is busy, please retry'), {
+    statusCode: 503,
+    retryAfterSeconds: RETRY_AFTER_SECONDS,
+    cause: err,
+  });
 }
 
 export function getArtifactState(pageId) {
@@ -206,10 +239,30 @@ export function getStateValue(pageId, key) {
 
 export function setStateValue(pageId, key, value) {
   ensureInitialized();
-  _setOne.run(pageId, key, JSON.stringify(value), new Date().toISOString());
+  try {
+    _setOne.run(pageId, key, JSON.stringify(value), new Date().toISOString());
+  } catch (err) {
+    throw asRetryableContention(err);
+  }
+}
+
+// The share ceiling and write are one BEGIN IMMEDIATE transaction. Concurrent
+// share writers therefore serialize before reading totals; owner writes use
+// setStateValue() and intentionally bypass these governance ceilings.
+export function setStateValueWithinQuota(pageId, key, value, limits) {
+  ensureInitialized();
+  try {
+    return _setWithinQuota.immediate(pageId, key, JSON.stringify(value), limits);
+  } catch (err) {
+    throw asRetryableContention(err);
+  }
 }
 
 export function deleteStateValue(pageId, key) {
   ensureInitialized();
-  _deleteOne.run(pageId, key);
+  try {
+    return _deleteOne.run(pageId, key).changes > 0;
+  } catch (err) {
+    throw asRetryableContention(err);
+  }
 }

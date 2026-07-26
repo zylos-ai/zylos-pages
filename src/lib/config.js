@@ -62,6 +62,18 @@ export const DEFAULT_CONFIG = {
       ipMax: 30,
     },
   },
+  state: {
+    // Share visitors are bounded independently from the authenticated owner.
+    // 1 MiB is deliberately reachable below 50 x 64 KiB values, unlike the
+    // attachment ceiling, so both limits protect a real state shape.
+    maxKeysPerPage: 50,
+    maxPageBytes: 1024 * 1024,
+    shareWriteRateLimit: {
+      windowMs: 60000,
+      max: 12,
+      ipMax: 30,
+    },
+  },
   externalFiles: {
     enabled: true,
     allowedSources: {

@@ -25,6 +25,7 @@ const {
   getStateValue,
   setStateValue,
 } = await import('../src/state/state-store.js');
+const { consumeShareWriteQuota, resetShareWriteQuota } = await import('../src/security/share-write-limit.js');
 
 const pagesDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-state-pages-'));
 
@@ -61,7 +62,7 @@ async function withApp(app, fn) {
   }
 }
 
-async function withServer(authConfig, fn) {
+async function withServer(authConfig, fn, overrides = {}) {
   const contentDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-state-content-'));
   await writeFile(path.join(contentDir, 'short-state.html'), '<!doctype html><h1>Short state</h1>');
   const app = express();
@@ -71,6 +72,7 @@ async function withServer(authConfig, fn) {
     security: { allowRawHtml: false, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
+    ...overrides,
   };
   registerLogicalPage({
     uri: 'short-state',
@@ -80,7 +82,7 @@ async function withServer(authConfig, fn) {
   }, config);
   setupAuth(app, authConfig || { enabled: false, password: null });
   setupShareApi(app, { enabled: true }, config);
-  setupStateApi(app);
+  setupStateApi(app, config);
   app.get('/', (_req, res) => res.send('root'));
   try {
     await withApp(app, fn);
@@ -120,6 +122,34 @@ function cookieHeader(setCookie) {
     .split(/,\s*(?=__Secure-)/)
     .map(cookie => cookie.split(';', 1)[0])
     .join('; ');
+}
+
+async function openShare(origin, tokenId) {
+  const response = await fetch(`${origin}/s/${tokenId}`, { redirect: 'manual' });
+  assert.equal(response.status, 200);
+  return cookieHeader(response.headers.get('set-cookie'));
+}
+
+async function captureStateAuditLines(fn) {
+  const original = process.stderr.write.bind(process.stderr);
+  const lines = [];
+  process.stderr.write = (chunk, ...rest) => {
+    const text = typeof chunk === 'string' ? chunk : chunk.toString();
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.msg === 'state mutation audit') lines.push(parsed);
+      } catch { /* not a structured state audit line */ }
+    }
+    return original(chunk, ...rest);
+  };
+  try {
+    await fn();
+  } finally {
+    process.stderr.write = original;
+  }
+  return lines;
 }
 
 async function createExpiredShareToken(slug) {
@@ -665,5 +695,172 @@ test('state API enforces raw body and value JSON byte limits', async () => {
       body: JSON.stringify({ value: 'a'.repeat(RAW_BODY_LIMIT_BYTES + 1) }),
     });
     assert.equal(res.status, 413);
+  });
+});
+
+test('share state ceilings count new keys and replacement UTF-8 bytes atomically', async () => {
+  resetShareWriteQuota();
+  await registerStatePage('share-ceilings');
+  const share = createShare('share-ceilings', '24h');
+  const state = {
+    maxKeysPerPage: 2,
+    maxPageBytes: 10,
+    shareWriteRateLimit: { windowMs: 60_000, max: 100, ipMax: 100 },
+  };
+
+  await withServer(authConfig(), async ({ origin }) => {
+    const cookies = await openShare(origin, share.tokenId);
+    const put = (key, value) => fetch(`${origin}/api/state/share-ceilings/${key}`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin, { Cookie: cookies }),
+      body: JSON.stringify({ value }),
+    });
+
+    // JSON strings include their quotes: "éé" is 6 UTF-8 bytes and "x" is 3.
+    const audits = await captureStateAuditLines(async () => {
+      assert.equal((await put('a', 'éé')).status, 200);
+      assert.equal((await put('b', 'x')).status, 200);
+      assert.equal((await put('c', 0)).status, 409, 'a third key must exceed the key ceiling');
+
+      // Updating an existing key does not consume another key, but its old bytes
+      // must be subtracted before the new value is admitted: 9 - 6 + 8 = 11.
+      assert.equal((await put('a', 'ééé')).status, 409);
+    });
+    assert.ok(audits.some(line => line.reason === 'quota_keys' && line.status === 409));
+    assert.ok(audits.some(line => line.reason === 'quota_bytes' && line.status === 409));
+    const unchanged = await fetch(`${origin}/api/state/share-ceilings/a`, {
+      headers: { Cookie: cookies },
+    });
+    assert.deepEqual(await unchanged.json(), { ok: true, key: 'a', value: 'éé' });
+
+    assert.equal((await put('a', 'yy')).status, 200, 'a same-size replacement stays within both ceilings');
+  }, { state });
+});
+
+test('owner state writes bypass share ceilings and share rate limits', async () => {
+  resetShareWriteQuota();
+  await registerStatePage('owner-exempt');
+  const state = {
+    maxKeysPerPage: 0,
+    maxPageBytes: 0,
+    shareWriteRateLimit: { windowMs: 60_000, max: 0, ipMax: 0 },
+  };
+
+  await withServer(authConfig(), async ({ origin }) => {
+    const ownerCookie = await login(origin);
+    for (const key of ['one', 'two']) {
+      const res = await fetch(`${origin}/api/state/owner-exempt/${key}`, {
+        method: 'PUT',
+        headers: sameOriginHeaders(origin, { Cookie: ownerCookie }),
+        body: JSON.stringify({ value: 'owner data' }),
+      });
+      assert.equal(res.status, 200);
+    }
+  }, { state });
+});
+
+test('share state rate limits have token and IP dimensions and separate set/delete buckets', async () => {
+  resetShareWriteQuota();
+  await registerStatePage('state-rate');
+  const first = createShare('state-rate', '24h');
+  const second = createShare('state-rate', '24h');
+  const state = {
+    maxKeysPerPage: 50,
+    maxPageBytes: 1024 * 1024,
+    shareWriteRateLimit: { windowMs: 60_000, max: 1, ipMax: 100 },
+  };
+  consumeShareWriteQuota(first.tokenId, 'upload', { windowMs: 60_000, max: 0, ipMax: 100 }, '127.0.0.1');
+
+  await withServer(authConfig(), async ({ origin }) => {
+    const cookies = await openShare(origin, first.tokenId);
+    const put = key => fetch(`${origin}/api/state/state-rate/${key}`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin, { Cookie: cookies }),
+      body: JSON.stringify({ value: true }),
+    });
+    assert.equal((await put('one')).status, 200);
+    const tokenLimited = await put('two');
+    assert.equal(tokenLimited.status, 429);
+
+    // Delete has its own bucket; exhausting state:set must not drain it.
+    assert.equal((await fetch(`${origin}/api/state/state-rate/one`, {
+      method: 'DELETE', headers: { Origin: origin, Cookie: cookies },
+    })).status, 200);
+
+  }, { state });
+
+  resetShareWriteQuota();
+  const ipState = { ...state, shareWriteRateLimit: { windowMs: 60_000, max: 100, ipMax: 1 } };
+  await withServer(authConfig(), async ({ origin }) => {
+    const firstCookies = await openShare(origin, first.tokenId);
+    const secondCookies = await openShare(origin, second.tokenId);
+    const put = (key, cookies) => fetch(`${origin}/api/state/state-rate/${key}`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin, { Cookie: cookies }),
+      body: JSON.stringify({ value: true }),
+    });
+    assert.equal((await put('ip-one', firstCookies)).status, 200);
+    assert.equal((await put('ip-two', secondCookies)).status, 429, 'a second token from the same IP hits the IP ceiling');
+  }, { state: ipState });
+});
+
+test('state mutation audit covers success, rate limit, CSRF, invalid input, unknown page and idempotent delete', async () => {
+  resetShareWriteQuota();
+  await registerStatePage('state-audit');
+  const share = createShare('state-audit', '24h');
+  const state = {
+    maxKeysPerPage: 50,
+    maxPageBytes: 1024 * 1024,
+    shareWriteRateLimit: { windowMs: 60_000, max: 1, ipMax: 100 },
+  };
+
+  await withServer(authConfig(), async ({ origin }) => {
+    const cookies = await openShare(origin, share.tokenId);
+    const audits = await captureStateAuditLines(async () => {
+      const put = (key, headers = sameOriginHeaders(origin, { Cookie: cookies })) =>
+        fetch(`${origin}/api/state/state-audit/${key}`, {
+          method: 'PUT', headers, body: JSON.stringify({ value: true }),
+        });
+      assert.equal((await put('ok')).status, 200);
+      assert.equal((await put('limited')).status, 429);
+      assert.equal((await put('csrf', { Cookie: cookies, 'Content-Type': 'application/json' })).status, 403);
+      resetShareWriteQuota();
+      assert.equal((await fetch(`${origin}/api/state/state-audit/invalid-json`, {
+        method: 'PUT',
+        headers: sameOriginHeaders(origin, { Cookie: cookies }),
+        body: '{',
+      })).status, 400);
+      assert.equal((await fetch(`${origin}/api/state/state-audit/bad$key`, {
+        method: 'DELETE', headers: { Origin: origin, Cookie: cookies },
+      })).status, 400);
+      // Invalid requests are deliberately charged, so clear the in-memory
+      // seam before exercising the distinct idempotent-success outcome.
+      resetShareWriteQuota();
+      assert.equal((await fetch(`${origin}/api/state/state-audit/missing`, {
+        method: 'DELETE', headers: { Origin: origin, Cookie: cookies },
+      })).status, 200);
+    });
+
+    const allowed = audits.find(line => line.action === 'set' && line.result === 'allowed');
+    assert.equal(allowed.tokenId, share.tokenId);
+    assert.equal(allowed.artifact, 'state-audit');
+    assert.equal(allowed.key, 'ok');
+    assert.ok(allowed.pageId);
+    assert.ok(allowed.ip);
+    assert.ok(audits.some(line => line.reason === 'rate_limited' && line.dimension === 'token'));
+    assert.ok(audits.some(line => line.reason === 'csrf'));
+    assert.ok(audits.some(line => line.reason === 'invalid_json'));
+    assert.ok(audits.some(line => line.reason === 'invalid_params'));
+    assert.ok(audits.some(line => line.reason === 'already_absent' && line.status === 200));
+    assert.equal(audits.some(line => JSON.stringify(line).includes('__Secure-')), false);
+  }, { state });
+
+  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+    const audits = await captureStateAuditLines(async () => {
+      assert.equal((await fetch(`${origin}/api/state/not-registered/key`, {
+        method: 'DELETE', headers: { Origin: origin },
+      })).status, 404);
+    });
+    assert.ok(audits.some(line => line.reason === 'unknown_page' && line.status === 404));
   });
 });

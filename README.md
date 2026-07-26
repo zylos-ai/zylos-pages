@@ -77,9 +77,17 @@ Edit `~/zylos/components/pages/config.json`:
   "contentDir": "~/zylos/http/public/pages",
   "theme": { "colorScheme": "auto", "codeTheme": "github-dark" },
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },
-  "security": { "allowRawHtml": false, "maxFileSizeBytes": 1048576 }
+  "security": { "allowRawHtml": false, "maxFileSizeBytes": 1048576 },
+  "state": {
+    "maxKeysPerPage": 50,
+    "maxPageBytes": 1048576,
+    "shareWriteRateLimit": { "windowMs": 60000, "max": 12, "ipMax": 30 }
+  }
 }
 ```
+
+The `state` ceilings and write-rate limits apply only to share-link visitors;
+authenticated owner writes are intentionally exempt.
 
 ## Built by Coco
 

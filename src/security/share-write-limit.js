@@ -1,4 +1,6 @@
-// Rate limiting for attachment writes made by share-link holders.
+// Rate limiting for writes made by share-link holders. Attachment and state
+// routes use distinct operation namespaces, so exhausting one surface cannot
+// drain another surface's allowance.
 //
 // Two dimensions, because they cover different abuse:
 //
@@ -60,10 +62,9 @@ function hit(key, max, windowMs, now) {
 /**
  * Record one attempt against the token and IP quotas for one operation.
  *
- * Upload and delete get separate buckets on both dimensions. Sharing one would
- * let a burst of deletes exhaust the allowance for uploads — the operation the
- * link was handed over for in the first place — and the two have different
- * costs, so one number could only ever be right for one of them.
+ * Each mutation kind gets separate buckets on both dimensions. Sharing one
+ * would let a burst of deletes exhaust the allowance for uploads or state
+ * sets, and the operations have different costs.
  *
  * Both dimensions are always charged, even when the first one already failed,
  * so a caller cannot dodge the IP counter by exhausting the token counter.

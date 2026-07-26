@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **Share-visitor governance for page state.** State writes made through a
+  share link now have a per-page key ceiling (`state.maxKeysPerPage`, default
+  50), a reachable aggregate UTF-8 JSON byte ceiling (`state.maxPageBytes`,
+  default 1 MiB), and independent token/IP rate buckets for set and delete
+  operations (`state.shareWriteRateLimit`, default 12/minute per token and
+  30/minute per source address). The quota decision and write share one
+  `BEGIN IMMEDIATE` transaction and replacement writes subtract the previous
+  value's bytes before counting the new value. Authenticated owner writes are
+  intentionally exempt, and the attachment capability remains unrelated.
+  Lock contention is a retryable 503 with `Retry-After`, distinct from the 429
+  that means the share grant exhausted its own rate allowance.
+- **A structured audit line for every state mutation outcome.** Successes,
+  CSRF and validation refusals, unknown pages, rate limits, quota refusals,
+  internal failures, and idempotent deletes record the token id (never the
+  cookie or token secret), canonical page id, artifact, key, source address,
+  result and status.
+
 ## [0.7.9] - 2026-07-26
 
 A share link can once again be given permission to upload and delete a page's
