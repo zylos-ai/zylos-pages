@@ -18,6 +18,7 @@ const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { DEFAULT_CSP, HTML_ARTIFACT_CSP, securityHeaders } = await import('../src/security/headers.js');
+const { notFoundTemplate, errorTemplate } = await import('../src/templates/errorTemplate.js');
 const { resolvePageDescriptor, resolveSafePath } = await import('../src/security/pathGuard.js');
 const { createShare } = await import('../src/sharing/share-manager.js');
 const { normalizeSlug } = await import('../src/utils/slug.js');
@@ -429,4 +430,33 @@ test('cache invalidation clears nested slugs and browserBase variants', async ()
   assert.equal(getCachedPage('/pages:docs/nested'), undefined);
   assert.equal(getCachedPage('/:docs/nested'), undefined);
   assert.ok(getCachedPage('/pages:docs/other'));
+});
+
+test('errorTemplate and notFoundTemplate include robots noindex meta', () => {
+  const error500 = errorTemplate('test error', '');
+  assert.match(error500, /<meta name="robots" content="noindex, nofollow">/);
+
+  const error404 = notFoundTemplate('missing-page', '');
+  assert.match(error404, /<meta name="robots" content="noindex, nofollow">/);
+});
+
+test('500 error response carries X-Robots-Tag header', async () => {
+  const app = express();
+  app.use(securityHeaders());
+  app.get('/crash', (_req, _res, next) => next(new Error('boom')));
+  app.use((err, _req, res, _next) => {
+    res.status(500).send(errorTemplate(err.message, ''));
+  });
+
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/crash`);
+    assert.equal(res.status, 500);
+    assert.equal(res.headers.get('x-robots-tag'), 'noindex, nofollow');
+    assert.match(await res.text(), /<meta name="robots" content="noindex, nofollow">/);
+  } finally {
+    server.close();
+  }
 });
