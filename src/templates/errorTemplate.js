@@ -8,6 +8,7 @@ export function notFoundTemplate(slug, baseUrl) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
   <title>Page Not Found</title>
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
 </head>
@@ -34,6 +35,7 @@ export function errorTemplate(message, baseUrl) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
   <title>Error</title>
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css">
 </head>

@@ -22,6 +22,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
   <meta property="og:title" content="${escapeHtml(title)}">
@@ -139,6 +140,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
   <title>${escapeHtml(title)}</title>
   <link rel="stylesheet" href="${baseUrl}/_assets/style.css?v=${ASSET_VERSION}">
   <link rel="stylesheet" href="${baseUrl}/_assets/print.css?v=${ASSET_VERSION}" media="print">
