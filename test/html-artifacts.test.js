@@ -153,17 +153,24 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
       const markdown = await fetch(`${origin}/foo`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
-      assert.match(await markdown.text(), /Foo Markdown/);
+      assert.equal(markdown.headers.get('x-robots-tag'), 'noindex, nofollow');
+      const markdownText = await markdown.text();
+      assert.match(markdownText, /Foo Markdown/);
+      assert.match(markdownText, /<meta name="robots" content="noindex, nofollow">/);
 
       const unregistered = await fetch(`${origin}/bare`);
       assert.equal(unregistered.status, 404);
+      assert.equal(unregistered.headers.get('x-robots-tag'), 'noindex, nofollow');
+      assert.match(await unregistered.text(), /<meta name="robots" content="noindex, nofollow">/);
 
       // Default HTML artifact response: wrapper template with iframe
       const html = await fetch(`${origin}/artifact`);
       assert.equal(html.status, 200);
       assert.equal(html.headers.get('content-security-policy'), DEFAULT_CSP);
+      assert.equal(html.headers.get('x-robots-tag'), 'noindex, nofollow');
       const wrapperEtag = html.headers.get('etag');
       const wrapperBody = await html.text();
+      assert.match(wrapperBody, /<meta name="robots" content="noindex, nofollow">/);
       assert.match(wrapperBody, /html-artifact-frame/);
       assert.match(wrapperBody, /artifact\?raw=1/);
       assert.match(wrapperBody, /Artifact/);
