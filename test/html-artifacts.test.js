@@ -175,12 +175,22 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
       assert.match(wrapperBody, /artifact\?raw=1/);
       assert.match(wrapperBody, /Artifact/);
 
-      // 304 for wrapper
+      // HEAD request carries X-Robots-Tag
+      const head = await fetch(`${origin}/foo`, { method: 'HEAD' });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+      const headArtifact = await fetch(`${origin}/artifact`, { method: 'HEAD' });
+      assert.equal(headArtifact.status, 200);
+      assert.equal(headArtifact.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+      // 304 for wrapper — header persists on conditional responses
       const notModified = await fetch(`${origin}/artifact`, {
         redirect: 'manual',
         headers: { 'If-None-Match': wrapperEtag },
       });
       assert.equal(notModified.status, 304);
+      assert.equal(notModified.headers.get('x-robots-tag'), 'noindex, nofollow');
 
       // Raw mode: serves raw HTML with artifact CSP
       const raw = await fetch(`${origin}/artifact?raw=1`);
@@ -198,6 +208,7 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
       });
       assert.equal(rawNotModified.status, 304);
       assert.equal(rawNotModified.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+      assert.equal(rawNotModified.headers.get('x-robots-tag'), 'noindex, nofollow');
 
       // Both: html priority → wrapper
       const both = await fetch(`${origin}/both`);
@@ -228,6 +239,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
     }, async ({ origin }) => {
       const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
       assert.equal(redirect.status, 302);
+      assert.equal(redirect.headers.get('x-robots-tag'), 'noindex, nofollow');
       assert.match(redirect.headers.get('location'), /^\/login\?/);
 
       const uppercaseRedirect = await fetch(`${origin}/shared.HTML?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
@@ -237,6 +249,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
       const shared = await fetch(`${origin}/s/${htmlShare.tokenId}`);
       assert.equal(shared.status, 200);
       assert.equal(shared.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+      assert.equal(shared.headers.get('x-robots-tag'), 'noindex, nofollow');
       const sharedBody = await shared.text();
       assert.match(sharedBody, /Shared HTML/);
       assert.doesNotMatch(sharedBody, /page-header/);
@@ -246,6 +259,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
       const markdown = await fetch(`${origin}/s/${markdownShare.tokenId}`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
+      assert.equal(markdown.headers.get('x-robots-tag'), 'noindex, nofollow');
       const markdownBody = await markdown.text();
       assert.match(markdownBody, /Shared Markdown/);
       assert.match(markdownBody, /page-header/);
