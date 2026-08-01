@@ -598,14 +598,24 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
   // Auth middleware — protect all other routes
   app.use((req, res, next) => {
     const browserBase = browserBaseFromRequest(req);
-    if (authDisabled) return next();
-
     const shortShareEnabled = sharingConfig?.enabled !== false;
-    if (req.path.startsWith('/_assets')
-        || (shortShareEnabled && /^\/s\/[a-f0-9]{32}(\.md)?$/.test(req.path))
-        || req.path === loginPath || req.path === logoutPath) {
+    const shortSharePath = shortShareEnabled && /^\/s\/[a-f0-9]{32}(?:\.md|\/unlock)?$/.test(req.path);
+    if (req.path.startsWith('/_assets') || req.path === loginPath || req.path === logoutPath) {
       return next();
     }
+
+    // Short-share routes are public entry points, but a real owner session has
+    // precedence over every share proof. Resolve it before allowing the public
+    // route through so /s/<token> cannot demote an owner to a share viewer.
+    if (shortSharePath) {
+      if (!authDisabled && !authMisconfigured && validateSession(getSessionCookie(req))) {
+        res.locals.authenticated = true;
+        res.setHeader('Cache-Control', 'no-store');
+      }
+      return next();
+    }
+
+    if (authDisabled) return next();
 
     if ((req.method === 'GET' || req.method === 'HEAD')
         && req.path.startsWith('/assets/')

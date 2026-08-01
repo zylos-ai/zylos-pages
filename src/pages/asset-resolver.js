@@ -196,6 +196,7 @@ async function signAssetReference(value, context) {
       realPath: resolved.filePath,
       expiresAt: exp,
       tokenId: context.share.tokenId,
+      credentialVersion: context.share.credentialVersion ?? 0,
     });
     return signedLogicalAssetPath(context.baseUrl, context.pageUri, assetPath, { exp, sig });
   } catch {

@@ -8,6 +8,8 @@
 import fs from 'fs';
 import path from 'path';
 
+import { ensureSharePasswordKeyring } from './ensure-share-password-keyring.js';
+
 const HOME = process.env.HOME;
 const configPath = path.join(HOME, 'zylos/components/pages/config.json');
 
@@ -57,5 +59,13 @@ if (fs.existsSync(configPath)) {
     console.log('[post-upgrade] No migrations needed');
   }
 }
+
+// Migration: initialize share password keyring so protected shares work
+// out of the box after upgrading (runs after config migrations above so it
+// sees the final config state).
+ensureSharePasswordKeyring({
+  log: (message) => console.log(`[post-upgrade] ${message}`),
+  warn: (message) => console.warn(`[post-upgrade] ${message}`),
+});
 
 console.log('[post-upgrade] Complete!');

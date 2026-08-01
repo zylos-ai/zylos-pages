@@ -11,6 +11,7 @@
     "external-files": "node src/cli/external-files.js",
     "pages": "node src/cli/pages.js",
     "verify-migration": "node src/cli/verify-migration.js",
+    "benchmark:share-password-kdf": "node scripts/benchmark-share-password-kdf.js",
     "test": "node --test"
   },
   "homepage": "https://github.com/zylos-ai/zylos-pages#readme",

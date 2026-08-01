@@ -58,8 +58,7 @@ node $PAGES_DIR/src/cli/pages.js register --source /absolute/report.md --uri rep
 # List registered logical pages.
 node $PAGES_DIR/src/cli/pages.js list
 
-# Inspect share links. `shares --all` covers the whole instance and is the
-# way to answer "what passwordless links exist on this box right now?".
+# Inspect live share links. Protection metadata is included, never plaintext.
 node $PAGES_DIR/src/cli/pages.js shares reports/q3
 node $PAGES_DIR/src/cli/pages.js shares --all
 
@@ -67,8 +66,18 @@ node $PAGES_DIR/src/cli/pages.js shares --all
 # Resolves expired and revoked links too, and takes the full URL or the token.
 node $PAGES_DIR/src/cli/pages.js share-info https://domain/s/<token-id>
 
-# Mint a passwordless link. NOT a default step — see Sharing below.
+# Mint an unprotected link. NOT a default step — see Sharing below.
 node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d
+
+# Mint a protected link with a generated password. This explicit command
+# returns the secret on stdout; deliver it only through the intended private DM.
+node $PAGES_DIR/src/cli/pages.js share reports/q3 --duration 7d --password
+
+# A provided password is read from stdin, never argv or a URL.
+printf '%s\n' "$SHARE_SECRET" | node $PAGES_DIR/src/cli/pages.js share reports/q3 --password-stdin
+
+# Explicit repeat retrieval. Ordinary shares/share-info never return plaintext.
+node $PAGES_DIR/src/cli/pages.js share-password get https://domain/s/<token-id>
 
 # Revoke. Prefer --token: the uri form revokes EVERY token on that page,
 # which will also kill links you did not mean to touch.
@@ -87,23 +96,27 @@ Long-form parameter details and safety notes: `references/pages-cli.md`.
 
 ## Sharing
 
-Registering a page protects it with the pages password. `share` does not:
-it mints `/s/<token>`, which is served through a share-access session that
-skips authentication entirely. Anyone holding the URL can read the page —
-no login, no account, no audit trail of who opened it.
+Registering a page protects it with the Pages owner password. `share` mints
+`/s/<token>` and is unprotected unless `--password` or `--password-stdin` is
+selected. The URL remains a bearer secret even when a second password is used.
 
 So:
 
 - **Registering is the default. Sharing is not.** Finish the job by
   reporting the internal URL or the file path.
 - **Mint a link only on an explicit request** from whoever owns the
-  document, and tell them it is public and passwordless when you hand it
+  document. State whether it is protected or unprotected when you hand it
   over. "Visible inside the company" is a different thing from "readable by
   anyone on the internet who has the URL" — do not treat the first as
   license for the second.
-- **Prefer a duration over `permanent`.** Nothing in the config gates
-  permanent links — an expiry is the only thing that limits how long a
-  passwordless URL keeps working, so pick the shortest one that does the job.
+- **Prefer a duration over `permanent`.** Pick the shortest lifetime that does
+  the job, whether or not a password is present.
+- **Deliver passwords only in the intended private conversation.** Never put
+  them in a project group, Issue/Task comment, PR, KB page, command argument,
+  URL, or routine log. For Agent reads, send `X-Zylos-Share-Password` only on
+  `GET`/`HEAD /s/<token>` or `/s/<token>.md`; it does not authorize writes.
+- A protected link does not hide a parallel live unprotected link to the same
+  page. Both owner consoles warn about this condition without blocking work.
 
 Revoking:
 
@@ -161,10 +174,9 @@ The page is now registered and reachable behind the pages password. That is
 the end of the normal flow — report the internal URL and stop there.
 
 **Do not create a share link as a routine step.** `share` mints a
-`/s/<token>` URL that bypasses login entirely: anyone with the link reads the
-page, no password, no account. Create one only when the person who owns the
-document asks for a link they can hand to someone, and when you do, say
-plainly that it is public and passwordless. See the "Sharing" section above.
+`/s/<token>` URL that bypasses owner login. Create one only when the person who
+owns the document asks for a link they can hand to someone, choose protected
+or unprotected deliberately, and state that choice. See "Sharing" above.
 
 Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
 

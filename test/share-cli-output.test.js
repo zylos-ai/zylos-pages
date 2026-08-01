@@ -200,9 +200,8 @@ test('`share-info` default output accepts the full share URL', () => {
 });
 
 // Negative control: `shares <uri>` is per-page, so a uri column there would be
-// noise. If this ever starts printing the uri, the humanizer stopped
-// distinguishing the two forms and the test above proves less than it looks.
-test('per-page `shares <uri>` output stays token + expiry', () => {
+// noise. Protection is still shown because it is a property of each token.
+test('per-page `shares <uri>` output stays token + expiry + protection without repeating the uri', () => {
   const fixture = makeFixture();
   const uri = registerPage(fixture, 'output/per-page');
   const shared = runCliJson(fixture, ['share', uri, '--duration', '30d']);
@@ -210,5 +209,6 @@ test('per-page `shares <uri>` output stays token + expiry', () => {
   const text = runCliText(fixture, ['shares', uri]);
 
   assert.ok(text.startsWith(shared.tokenId), `expected token first, got: ${text}`);
+  assert.match(text, /\bunprotected\b/, `expected protection metadata, got: ${text}`);
   assert.ok(!text.includes(uri), `per-page listing should not repeat the uri, got: ${text}`);
 });

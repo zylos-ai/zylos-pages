@@ -7,19 +7,29 @@
 
 import {
   createShare,
+  createPasswordProtectedShare,
   createShareAccessCookie,
+  disableSharePassword,
+  generateSharePassword,
   getActiveShare,
+  revealActiveSharePassword,
   revokeShare,
   revokeAllForSlug,
   listSharesForSlug,
+  setSharePassword,
   updateShareAttachmentPermission,
 } from '../sharing/share-manager.js';
 import { readFile } from 'node:fs/promises';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath, cookiePathFromBase } from '../lib/browser-base.js';
-import { renderSharePage } from './pages.js';
+import { renderOwnerPage, renderSharePage } from './pages.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
+import { createShareAuthorization } from '../security/share-authorization.js';
+import {
+  loadSharePasswordKeyring,
+  resolveSharePasswordKeyFile,
+} from '../sharing/share-password-keyring.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
@@ -59,13 +69,20 @@ function csrfCheck(req, res) {
 function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
+    let bytes = 0;
+    let rejected = false;
     req.on('data', chunk => {
-      body += chunk.toString();
-      if (body.length > 4096) {
+      if (rejected) return;
+      bytes += chunk.length;
+      if (bytes > 4096) {
+        rejected = true;
         reject(Object.assign(new Error('Body too large'), { statusCode: 413 }));
+        return;
       }
+      body += chunk.toString();
     });
     req.on('end', () => {
+      if (rejected) return;
       try {
         resolve(body ? JSON.parse(body) : {});
       } catch {
@@ -85,9 +102,14 @@ function absoluteUrl(req, path) {
 function formatShareResponse(req, share) {
   const browserBase = browserBaseFromRequest(req);
   const shortUrl = absoluteUrl(req, browserPath(browserBase, `s/${share.tokenId}`));
+  const { password: _password, ...safeShare } = share;
   return {
-    ...share,
+    ...safeShare,
     shortUrl,
+    protection: {
+      type: share.passwordProtected ? 'password' : 'none',
+      retrievable: share.passwordProtected === true,
+    },
   };
 }
 
@@ -111,6 +133,106 @@ function registeredShareSlug(rawSlug) {
   return `p/${pageUri}`;
 }
 
+function protectionAvailable(config) {
+  return config.auth?.enabled === true &&
+    typeof config.auth?.password === 'string' && config.auth.password.length > 0;
+}
+
+function loadConfiguredKeyring(config) {
+  return loadSharePasswordKeyring(resolveSharePasswordKeyFile(config));
+}
+
+function passwordOperation(body) {
+  const source = body?.protection && typeof body.protection === 'object' ? body.protection : body;
+  const mode = source?.mode || 'generated';
+  if (!['generated', 'provided'].includes(mode)) {
+    throw Object.assign(new Error('Invalid password mode'), { code: 'invalid_password', statusCode: 400 });
+  }
+  if (mode === 'generated') return {};
+  const bytes = typeof source.password === 'string' ? Buffer.byteLength(source.password, 'utf8') : 0;
+  if (bytes < 8 || bytes > 1024) {
+    throw Object.assign(new Error('Password must be between 8 and 1024 bytes'), {
+      code: 'invalid_password', statusCode: 400,
+    });
+  }
+  return { password: source.password };
+}
+
+function sendApiError(res, status, code, message = code) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  return res.status(status).json({ error: message, code });
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[char]));
+}
+
+function shareChallengeHtml(tokenId, browserBase, code) {
+  const message = code === 'invalid_password'
+    ? '<p role="alert">Incorrect password.</p>'
+    : code === 'rate_limited'
+      ? '<p role="alert">Too many attempts. Try again later.</p>'
+      : '';
+  const action = browserPath(browserBase, `s/${tokenId}/unlock`);
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Unlock shared page</title></head><body><main><h1>Unlock shared page</h1>${message}<form method="post" action="${escapeHtml(action)}"><label>Password <input type="password" name="password" autocomplete="current-password" required autofocus></label><button type="submit">Unlock</button></form></main></body></html>`;
+}
+
+function sendReadFailure(req, res, failure, representation, tokenId) {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Zylos-Share-Error', failure.code);
+  if (failure.status === 401) res.setHeader('WWW-Authenticate', 'ZylosShare realm="pages-share"');
+  if (failure.retryAfterSeconds) res.setHeader('Retry-After', String(failure.retryAfterSeconds));
+  if (representation === 'markdown') {
+    res.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
+    return res.status(failure.status).json({
+      type: 'about:blank',
+      title: failure.code === 'rate_limited' ? 'Share password rate limit exceeded' : 'Share password required',
+      status: failure.status,
+      code: failure.code,
+    });
+  }
+  return res.status(failure.status).send(shareChallengeHtml(
+    tokenId,
+    browserBaseFromRequest(req),
+    failure.code,
+  ));
+}
+
+function parseUnlockBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let bytes = 0;
+    let rejected = false;
+    req.on('data', chunk => {
+      if (rejected) return;
+      bytes += chunk.length;
+      if (bytes > 4096) {
+        rejected = true;
+        reject(Object.assign(new Error('Body too large'), { statusCode: 413 }));
+        return;
+      }
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      if (rejected) return;
+      try {
+        if (req.headers['content-type']?.includes('application/json')) {
+          resolve(body ? JSON.parse(body) : {});
+        } else {
+          resolve(Object.fromEntries(new URLSearchParams(body)));
+        }
+      } catch {
+        reject(Object.assign(new Error('Invalid request body'), { statusCode: 400 }));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
 /**
  * Register share API routes on the Express app.
  * Must be called AFTER auth middleware so that only authenticated users reach these.
@@ -118,6 +240,10 @@ function registeredShareSlug(rawSlug) {
  * @param {object} sharingConfig - { enabled }
  */
 export function setupShareApi(app, sharingConfig, config = {}) {
+  const authorization = createShareAuthorization({
+    rateLimit: sharingConfig.passwordRateLimit,
+  });
+
   // GET /s/:tokenId.md — raw markdown of the shared page. Audience and reach
   // match the share token itself (one page, read-only, expiry and revocation
   // honoured). The representation does not: this returns the source file
@@ -128,9 +254,16 @@ export function setupShareApi(app, sharingConfig, config = {}) {
   app.get('/s/:tokenId.md', async (req, res) => {
     const share = getActiveShare(req.params.tokenId);
     if (!share) {
-      return res.status(404).send('Share not found');
+      return sendApiError(res, 404, 'share_not_found', 'Share not found');
     }
-    const pageUri = share.slug.startsWith('p/') ? share.slug.slice(2) : share.slug;
+    const decision = await authorization.authorizeRead(req, share, {
+      ownerAuthenticated: res.locals.authenticated === true,
+    });
+    if (!decision.authorized) {
+      return sendReadFailure(req, res, decision, 'markdown', share.tokenId);
+    }
+    const authorizedShare = decision.share;
+    const pageUri = authorizedShare.slug.startsWith('p/') ? authorizedShare.slug.slice(2) : authorizedShare.slug;
     const page = getLogicalPage(pageUri);
     if (!page || page.sourceExt !== '.md') {
       return res.status(404).send('Not a markdown page');
@@ -138,6 +271,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     try {
       const markdown = await readFile(page.sourcePath, 'utf8');
       res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
       res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
       return res.status(200).send(markdown);
     } catch (err) {
@@ -150,22 +284,80 @@ export function setupShareApi(app, sharingConfig, config = {}) {
   app.get('/s/:tokenId', async (req, res, next) => {
     const share = getActiveShare(req.params.tokenId);
     if (!share) {
-      return res.status(404).send('Share not found');
+      return sendApiError(res, 404, 'share_not_found', 'Share not found');
     }
 
     const browserBase = browserBaseFromRequest(req);
-    const accessCookie = createShareAccessCookie(share.pageId, share.tokenId, share.expiresAt, cookiePathFromBase(browserBase));
-    appendSetCookie(res, accessCookie.header);
+    const decision = await authorization.authorizeRead(req, share, {
+      ownerAuthenticated: res.locals.authenticated === true,
+    });
+    if (!decision.authorized) {
+      return sendReadFailure(req, res, decision, 'html', share.tokenId);
+    }
     res.setHeader('Cache-Control', 'no-store');
     try {
+      if (decision.proof === 'owner') {
+        return await renderOwnerPage(req, res, {
+          slug: share.slug,
+          config,
+          browserBase,
+        });
+      }
+      if (decision.proof === 'unprotected') {
+        const accessCookie = createShareAccessCookie(
+          share.pageId,
+          share.tokenId,
+          share.expiresAt,
+          cookiePathFromBase(browserBase),
+          share.credentialVersion,
+        );
+        if (!accessCookie) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+        appendSetCookie(res, accessCookie.header);
+      }
       await renderSharePage(req, res, {
-        slug: share.slug,
+        slug: decision.share.slug,
         config,
         browserBase,
-        share,
+        share: decision.share,
       });
     } catch (err) {
       next(err);
+    }
+  });
+
+  app.post('/s/:tokenId/unlock', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    if (!csrfCheck(req, res)) return;
+    const share = getActiveShare(req.params.tokenId);
+    if (!share) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+    if (!share.passwordProtected) {
+      return sendApiError(res, 409, 'not_protected', 'Share is not password protected');
+    }
+
+    try {
+      const body = await parseUnlockBody(req);
+      const decision = await authorization.verifyProof(req, share.tokenId, body.password);
+      if (!decision.authorized) {
+        return sendReadFailure(req, res, decision, 'html', share.tokenId);
+      }
+      const browserBase = browserBaseFromRequest(req);
+      const accessCookie = createShareAccessCookie(
+        decision.verified.pageId,
+        share.tokenId,
+        decision.verified.expiresAt,
+        cookiePathFromBase(browserBase),
+        decision.verified.credentialVersion,
+      );
+      if (!accessCookie) {
+        return sendReadFailure(req, res, { status: 401, code: 'invalid_password' }, 'html', share.tokenId);
+      }
+      appendSetCookie(res, accessCookie.header);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      return res.redirect(303, browserPath(browserBase, `s/${share.tokenId}`));
+    } catch (err) {
+      return sendApiError(res, err.statusCode || 400, err.code || 'invalid_request', err.message);
     }
   });
 
@@ -196,11 +388,35 @@ export function setupShareApi(app, sharingConfig, config = {}) {
       }
 
       const shareSlug = registeredShareSlug(slug);
-      const result = createShare(shareSlug, duration, {
-        canWriteAttachments: body.canWriteAttachments === true,
-      });
+      let result;
+      const requestedProtection = body.protection?.type || 'none';
+      if (!['none', 'password'].includes(requestedProtection)) {
+        return sendApiError(res, 400, 'invalid_protection', 'Invalid protection type');
+      }
+      if (requestedProtection === 'password') {
+        if (!protectionAvailable(config)) {
+          return sendApiError(res, 409, 'protection_unavailable', 'Password protection is unavailable');
+        }
+        if (res.locals.authenticated !== true) {
+          return sendApiError(res, 403, 'owner_required', 'Owner authentication required');
+        }
+        const keyring = loadConfiguredKeyring(config);
+        result = await createPasswordProtectedShare(shareSlug, duration, {
+          canWriteAttachments: body.canWriteAttachments === true,
+          ...passwordOperation(body),
+        }, keyring);
+      } else {
+        result = createShare(shareSlug, duration, {
+          canWriteAttachments: body.canWriteAttachments === true,
+        });
+      }
 
       const share = formatShareResponse(req, result);
+
+      if (requestedProtection === 'password') {
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+      }
 
       res.json({
         ok: true,
@@ -209,12 +425,106 @@ export function setupShareApi(app, sharingConfig, config = {}) {
         canWriteAttachments: share.canWriteAttachments,
         url: share.shortUrl,
         shortUrl: share.shortUrl,
+        protection: requestedProtection === 'password'
+          ? { type: 'password', password: result.password }
+          : { type: 'none' },
       });
     } catch (err) {
       const status = err.statusCode || 500;
       logger.warn('share create failed', { err: err.message });
       res.status(status).json({ error: err.message });
     }
+  });
+
+  async function changePassword(req, res, operation) {
+    if (!csrfCheck(req, res)) return;
+    if (!protectionAvailable(config)) {
+      return sendApiError(res, 409, 'protection_unavailable', 'Password protection is unavailable');
+    }
+    if (res.locals.authenticated !== true || res.locals.viewerType === 'share') {
+      return sendApiError(res, 403, 'owner_required', 'Owner authentication required');
+    }
+    const current = getActiveShare(req.params.tokenId);
+    if (!current) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+    if (operation === 'enable' && current.passwordProtected) {
+      return sendApiError(res, 409, 'already_protected', 'Share is already password protected');
+    }
+    if (operation === 'rotate' && !current.passwordProtected) {
+      return sendApiError(res, 409, 'not_protected', 'Share is not password protected');
+    }
+    try {
+      const body = await parseJsonBody(req);
+      const requested = passwordOperation(body);
+      const password = requested.password ?? generateSharePassword();
+      const keyring = loadConfiguredKeyring(config);
+      const updated = await setSharePassword(current.tokenId, password, keyring);
+      if (!updated) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      return res.json({
+        ok: true,
+        tokenId: updated.tokenId,
+        credentialVersion: updated.credentialVersion,
+        protection: { type: 'password', password },
+      });
+    } catch (err) {
+      return sendApiError(res, err.statusCode || 500, err.code || 'password_custody_unavailable', err.message);
+    }
+  }
+
+  app.post('/api/share/:tokenId/password/enable', (req, res) => changePassword(req, res, 'enable'));
+  app.post('/api/share/:tokenId/password/rotate', (req, res) => changePassword(req, res, 'rotate'));
+
+  app.post('/api/share/:tokenId/password/reveal', (req, res) => {
+    if (!csrfCheck(req, res)) return;
+    if (!protectionAvailable(config)) {
+      return sendApiError(res, 409, 'protection_unavailable', 'Password protection is unavailable');
+    }
+    if (res.locals.authenticated !== true || res.locals.viewerType === 'share') {
+      return sendApiError(res, 403, 'owner_required', 'Owner authentication required');
+    }
+    const share = getActiveShare(req.params.tokenId);
+    if (!share) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+    if (!share.passwordProtected) {
+      return sendApiError(res, 409, 'not_protected', 'Share is not password protected');
+    }
+    try {
+      const password = revealActiveSharePassword(share.tokenId, loadConfiguredKeyring(config));
+      if (password === null) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      return res.json({ ok: true, tokenId: share.tokenId, protection: { type: 'password', password } });
+    } catch (err) {
+      const code = err.code === 'password_custody_unavailable'
+        ? err.code
+        : 'password_decryption_failed';
+      return sendApiError(res, 503, code, err.message);
+    }
+  });
+
+  app.delete('/api/share/:tokenId/password', (req, res) => {
+    if (!csrfCheck(req, res)) return;
+    if (!protectionAvailable(config)) {
+      return sendApiError(res, 409, 'protection_unavailable', 'Password protection is unavailable');
+    }
+    if (res.locals.authenticated !== true || res.locals.viewerType === 'share') {
+      return sendApiError(res, 403, 'owner_required', 'Owner authentication required');
+    }
+    const share = getActiveShare(req.params.tokenId);
+    if (!share) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+    if (!share.passwordProtected) {
+      return sendApiError(res, 409, 'not_protected', 'Share is not password protected');
+    }
+    const updated = disableSharePassword(share.tokenId);
+    if (!updated) return sendApiError(res, 409, 'credential_conflict', 'Share changed concurrently');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    return res.json({
+      ok: true,
+      tokenId: updated.tokenId,
+      credentialVersion: updated.credentialVersion,
+      protection: { type: 'none' },
+    });
   });
 
   // PATCH /api/share/:tokenId — grant or withdraw attachment writes on one token

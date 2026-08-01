@@ -125,7 +125,19 @@ function CopyButton({ text, label = 'Copy' }) {
   );
 }
 
-function ActiveSharesList({ shares, loading }) {
+function PasswordSecret({ password, onReveal, onCopy, busy }) {
+  return (
+    <div className="share-password-secret">
+      <code>{password ? password : '••••••••••••••••••••••'}</code>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={onReveal} disabled={busy}>
+        {password ? 'Hide' : 'Reveal'}
+      </button>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={onCopy} disabled={busy}>Copy password</button>
+    </div>
+  );
+}
+
+function ActiveSharesList({ shares, loading, secrets, busyToken, onReveal, onCopyPassword, onRotate, onDisable, onEnable }) {
   return (
     <div className="share-list">
       <h4>Active shares</h4>
@@ -139,9 +151,28 @@ function ActiveSharesList({ shares, loading }) {
             <div className="share-item-info">
               <a href={share.shortUrl} target="_blank" rel="noreferrer">{share.shortUrl}</a>
               <span>{share.expiresAt ? `Expires ${new Date(Number(share.expiresAt)).toLocaleString()}` : 'Never expires'}</span>
+              <span className={`badge badge-${share.protection?.type === 'password' ? 'protected' : 'unprotected'}`}>
+                {share.protection?.type === 'password' ? 'Protected' : 'Unprotected'}
+              </span>
+              {share.protection?.type === 'password' ? (
+                <PasswordSecret
+                  password={secrets[share.tokenId]}
+                  onReveal={() => onReveal(share.tokenId)}
+                  onCopy={() => onCopyPassword(share.tokenId)}
+                  busy={busyToken === share.tokenId}
+                />
+              ) : null}
             </div>
             <div className="share-item-actions">
               <CopyButton text={share.shortUrl} label="Copy link" />
+              {share.protection?.type === 'password' ? (
+                <>
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => onRotate(share.tokenId)} disabled={busyToken === share.tokenId}>Rotate password</button>
+                  <button type="button" className="btn btn-sm btn-danger" onClick={() => onDisable(share.tokenId)} disabled={busyToken === share.tokenId}>Remove password</button>
+                </>
+              ) : (
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => onEnable(share.tokenId)} disabled={busyToken === share.tokenId}>Add password</button>
+              )}
             </div>
           </div>
         ))
@@ -156,6 +187,11 @@ function ShareDialog({ page, onClose, notify }) {
   const [result, setResult] = useState(null);
   const [activeShares, setActiveShares] = useState([]);
   const [loadingShares, setLoadingShares] = useState(true);
+  const [passwordProtected, setPasswordProtected] = useState(false);
+  const [passwordMode, setPasswordMode] = useState('generated');
+  const [providedPassword, setProvidedPassword] = useState('');
+  const [secrets, setSecrets] = useState({});
+  const [busyToken, setBusyToken] = useState(null);
 
   const loadActiveShares = useCallback(async () => {
     setLoadingShares(true);
@@ -176,9 +212,18 @@ function ShareDialog({ page, onClose, notify }) {
     try {
       const share = await api('/api/share', {
         method: 'POST',
-        body: JSON.stringify({ slug: `p/${page.uri}`, duration }),
+        body: JSON.stringify({
+          slug: `p/${page.uri}`,
+          duration,
+          protection: passwordProtected ? {
+            type: 'password',
+            mode: passwordMode,
+            ...(passwordMode === 'provided' ? { password: providedPassword } : {}),
+          } : { type: 'none' },
+        }),
       });
       setResult(share);
+      setProvidedPassword('');
       notify('success', 'Share link created.');
       await loadActiveShares();
     } catch (err) {
@@ -187,6 +232,56 @@ function ShareDialog({ page, onClose, notify }) {
       setBusy(false);
     }
   }
+
+  async function revealPassword(tokenId, { copy = false } = {}) {
+    if (secrets[tokenId] && !copy) {
+      setSecrets(current => ({ ...current, [tokenId]: undefined }));
+      return;
+    }
+    setBusyToken(tokenId);
+    try {
+      const data = await api(`/api/share/${encodeURIComponent(tokenId)}/password/reveal`, {
+        method: 'POST',
+        body: '{}',
+      });
+      const password = data.protection.password;
+      if (copy) {
+        await navigator.clipboard.writeText(password);
+        notify('success', 'Password copied. Share it only through a private channel.');
+      } else {
+        setSecrets(current => ({ ...current, [tokenId]: password }));
+      }
+    } catch (err) {
+      notify('error', err.message);
+    } finally {
+      setBusyToken(null);
+    }
+  }
+
+  async function changePassword(tokenId, operation) {
+    if (operation === 'rotate' && !window.confirm('Rotate this password? Existing unlock sessions and protected asset links will stop working.')) return;
+    if (operation === 'disable' && !window.confirm('Remove password protection? Anyone with this share link will be able to open it.')) return;
+    setBusyToken(tokenId);
+    try {
+      await api(`/api/share/${encodeURIComponent(tokenId)}/password${operation === 'disable' ? '' : `/${operation}`}`, {
+        method: operation === 'disable' ? 'DELETE' : 'POST',
+        body: operation === 'disable' ? undefined : JSON.stringify({ mode: 'generated' }),
+      });
+      setSecrets(current => {
+        const next = { ...current };
+        delete next[tokenId];
+        return next;
+      });
+      notify('success', operation === 'disable' ? 'Password protection removed.' : `${operation === 'rotate' ? 'Password rotated' : 'Password protection added'}. Use Reveal or Copy password to retrieve the new secret.`);
+      await loadActiveShares();
+    } catch (err) {
+      notify('error', err.message);
+    } finally {
+      setBusyToken(null);
+    }
+  }
+
+  const hasUnprotectedShare = activeShares.some(share => share.protection?.type !== 'password');
 
   return (
     <div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="share-dialog-title">
@@ -211,6 +306,14 @@ function ShareDialog({ page, onClose, notify }) {
                 {result.expiresAt ? `Expires ${new Date(Number(result.expiresAt)).toLocaleString()}` : 'Never expires'}
               </span>
             </div>
+            {result.protection?.type === 'password' ? (
+              <PasswordSecret
+                password={secrets[result.tokenId]}
+                onReveal={() => revealPassword(result.tokenId)}
+                onCopy={() => revealPassword(result.tokenId, { copy: true })}
+                busy={busyToken === result.tokenId}
+              />
+            ) : null}
           </div>
         ) : (
           <div className="share-control">
@@ -220,12 +323,38 @@ function ShareDialog({ page, onClose, notify }) {
                 {SHARE_DURATIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
               </select>
             </label>
+            <label className="share-password-option">
+              <input type="checkbox" checked={passwordProtected} onChange={event => setPasswordProtected(event.target.checked)} disabled={busy} />
+              Require a password
+            </label>
+            {passwordProtected ? (
+              <div className="share-password-create-options">
+                <label><input type="radio" name="admin-password-mode" value="generated" checked={passwordMode === 'generated'} onChange={() => setPasswordMode('generated')} /> Generate a strong password</label>
+                <label><input type="radio" name="admin-password-mode" value="provided" checked={passwordMode === 'provided'} onChange={() => setPasswordMode('provided')} /> Provide a password</label>
+                {passwordMode === 'provided' ? (
+                  <input type="password" value={providedPassword} onChange={event => setProvidedPassword(event.target.value)} minLength="8" autoComplete="new-password" placeholder="8–1024 bytes" />
+                ) : null}
+              </div>
+            ) : null}
             <button type="button" className="btn btn-sm btn-primary" onClick={createLink} disabled={busy}>
               {busy ? 'Creating…' : 'Create link'}
             </button>
           </div>
         )}
-        <ActiveSharesList shares={activeShares} loading={loadingShares} />
+        {hasUnprotectedShare ? (
+          <div className="share-security-warning" role="status">This page still has an active unprotected share. Password-protecting another link does not make the page private through that link.</div>
+        ) : null}
+        <ActiveSharesList
+          shares={activeShares}
+          loading={loadingShares}
+          secrets={secrets}
+          busyToken={busyToken}
+          onReveal={tokenId => revealPassword(tokenId)}
+          onCopyPassword={tokenId => revealPassword(tokenId, { copy: true })}
+          onRotate={tokenId => changePassword(tokenId, 'rotate')}
+          onDisable={tokenId => changePassword(tokenId, 'disable')}
+          onEnable={tokenId => changePassword(tokenId, 'enable')}
+        />
       </section>
     </div>
   );

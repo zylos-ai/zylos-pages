@@ -102,6 +102,12 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
             <label><input type="radio" name="share-duration" value="permanent"> Permanent</label>
           </div>
           <label class="share-editable-option"><input type="checkbox" class="share-editable-input"> Allow photo upload/delete</label>
+          <label class="share-password-option"><input type="checkbox" class="share-password-input"> Require a password</label>
+          <div class="share-password-create-options" hidden>
+            <label><input type="radio" name="share-password-mode" value="generated" checked> Generate a strong password</label>
+            <label><input type="radio" name="share-password-mode" value="provided"> Provide a password</label>
+            <input type="password" class="share-provided-password" minlength="8" maxlength="1024" autocomplete="new-password" placeholder="8–1024 bytes" hidden>
+          </div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
         <div class="share-result" hidden>
@@ -110,7 +116,16 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
             <input type="text" class="share-link-input" readonly>
             <button class="share-copy-btn">Copy</button>
           </div>
+          <div class="share-created-password" hidden>
+            <label>Password (secret):</label>
+            <div class="share-password-secret">
+              <code>••••••••••••••••••••••</code>
+              <button class="share-copy-btn share-created-password-reveal">Reveal</button>
+              <button class="share-copy-btn share-created-password-copy">Copy password</button>
+            </div>
+          </div>
         </div>
+        <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make the page private through that link.</div>
         <div class="share-list">
           <h4>Active shares</h4>
           <div class="share-list-items"></div>
@@ -197,6 +212,12 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
             <label><input type="radio" name="share-duration" value="permanent"> Permanent</label>
           </div>
           <label class="share-editable-option"><input type="checkbox" class="share-editable-input"> Allow photo upload/delete</label>
+          <label class="share-password-option"><input type="checkbox" class="share-password-input"> Require a password</label>
+          <div class="share-password-create-options" hidden>
+            <label><input type="radio" name="share-password-mode" value="generated" checked> Generate a strong password</label>
+            <label><input type="radio" name="share-password-mode" value="provided"> Provide a password</label>
+            <input type="password" class="share-provided-password" minlength="8" maxlength="1024" autocomplete="new-password" placeholder="8–1024 bytes" hidden>
+          </div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
         <div class="share-result" hidden>
@@ -205,7 +226,16 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
             <input type="text" class="share-link-input" readonly>
             <button class="share-copy-btn">Copy</button>
           </div>
+          <div class="share-created-password" hidden>
+            <label>Password (secret):</label>
+            <div class="share-password-secret">
+              <code>••••••••••••••••••••••</code>
+              <button class="share-copy-btn share-created-password-reveal">Reveal</button>
+              <button class="share-copy-btn share-created-password-copy">Copy password</button>
+            </div>
+          </div>
         </div>
+        <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make the page private through that link.</div>
         <div class="share-list">
           <h4>Active shares</h4>
           <div class="share-list-items"></div>
