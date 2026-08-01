@@ -12,6 +12,7 @@ import { verifySharePassword } from '../security/share-password-kdf.js';
 import {
   buildSharePasswordCredential,
   encryptSharePassword,
+  generateSharePassword,
   revealSharePassword as decryptStoredSharePassword,
 } from './share-password-crypto.js';
 
@@ -443,10 +444,6 @@ export function createShare(slug, duration, options = {}) {
 
   logger.info('share created', { pageId: page.pageId, uri: page.uri, tokenId, duration, expiresAt, canWriteAttachments });
   return { token: legacyTokenFor(record), tokenId, pageId: page.pageId, expiresAt, canWriteAttachments };
-}
-
-export function generateSharePassword() {
-  return crypto.randomBytes(16).toString('base64url');
 }
 
 function validateProvidedSharePassword(password) {

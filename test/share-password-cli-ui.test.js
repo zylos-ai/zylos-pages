@@ -53,7 +53,7 @@ test('CLI creates and repeatedly retrieves generated passwords without leaking t
 
   const shared = runJson(fx, ['share', 'secure/report', '--duration', '7d', '--password']);
   const secret = shared.protection.password;
-  assert.match(secret, /^[A-Za-z0-9_-]{22}$/);
+  assert.match(secret, /^[0-9]{8}$/);
 
   const listed = runJson(fx, ['shares', 'secure/report']);
   const described = runJson(fx, ['share-info', shared.shortUrl]);

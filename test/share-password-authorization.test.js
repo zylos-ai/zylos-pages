@@ -235,6 +235,149 @@ test('unlock requires same-origin CSRF, CAS-mints a scoped session, and header c
   }
 });
 
+test('unlock accepts the literal null Origin as a route-local exception with every other gate intact', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const ownerCookie = await login(origin);
+    const share = await createProtected(origin, ownerCookie);
+    const form = { 'Content-Type': 'application/x-www-form-urlencoded' };
+
+    // Opaque-origin webview shape (WeChat): literal "null" Origin, no Referer,
+    // correct password — must mint the same session as the same-origin path.
+    let response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'null' },
+      body: new URLSearchParams({ password: 'viewer-secret' }),
+    });
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get('location'), `/s/${share.tokenId}`);
+    const setCookie = response.headers.get('set-cookie');
+    assert.ok(cookieValue(setCookie, '__Secure-share_access'), 'null-origin unlock must mint the share session');
+    assert.match(setCookie, /HttpOnly/);
+    assert.match(setCookie, /Secure/);
+    assert.match(setCookie, /SameSite=Lax/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.doesNotMatch(await response.text(), /private body/, 'unlock response must not carry document content');
+
+    // Wrong password through the null-origin path still fails closed.
+    response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'null' },
+      body: new URLSearchParams({ password: 'wrong-secret' }),
+    });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('set-cookie'), null, 'failed unlock must not mint a session');
+
+    // The relaxation is literal-null only: real cross-site Origins stay rejected...
+    response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'https://evil.example' },
+      body: new URLSearchParams({ password: 'viewer-secret' }),
+    });
+    assert.equal(response.status, 403);
+
+    // ...null plus a cross-site Referer stays rejected...
+    response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'null', Referer: 'https://evil.example/page' },
+      body: new URLSearchParams({ password: 'viewer-secret' }),
+    });
+    assert.equal(response.status, 403);
+
+    // ...null plus a malformed Referer stays rejected...
+    response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'null', Referer: 'not a url' },
+      body: new URLSearchParams({ password: 'viewer-secret' }),
+    });
+    assert.equal(response.status, 403);
+
+    // ...and a missing Origin is NOT normalized to null: both-missing stays rejected
+    // (asserted with the correct password so the rejection is attributable to CSRF).
+    response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: form,
+      body: new URLSearchParams({ password: 'viewer-secret' }),
+    });
+    assert.equal(response.status, 403);
+
+    // Route-local means route-local: the same null Origin on mutation routes
+    // keeps the strict check even with owner authority attached.
+    response = await fetch(`${origin}/api/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'null', Cookie: ownerCookie },
+      body: JSON.stringify({ slug: 'p/protected', duration: '24h' }),
+    });
+    assert.equal(response.status, 403, 'null-origin exception must not leak to share creation');
+    response = await fetch(`${origin}/api/share/${share.tokenId}/password/rotate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: 'null', Cookie: ownerCookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(response.status, 403, 'null-origin exception must not leak to password mutation');
+  } finally {
+    server.close();
+  }
+});
+
+test('null-origin unlock shares the pre-KDF limiter and the mount-path cookie interference is bounded', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const ownerCookie = await login(origin);
+    const shareA = await createProtected(origin, ownerCookie);
+    const shareB = await createProtected(origin, ownerCookie, 'other-secret');
+    const form = { 'Content-Type': 'application/x-www-form-urlencoded' };
+
+    // tokenMax is 4: four null-origin attempts consume the budget, the fifth
+    // is rejected by the limiter before the KDF — the relaxation opens no
+    // brute-force bypass.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const rejected = await fetch(`${shareA.shortUrl}/unlock`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { ...form, Origin: 'null' },
+        body: new URLSearchParams({ password: 'wrong-secret' }),
+      });
+      assert.equal(rejected.status, 401);
+    }
+    let response = await fetch(`${shareA.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'null' },
+      body: new URLSearchParams({ password: 'viewer-secret' }),
+    });
+    assert.equal(response.status, 429, 'exhausted token budget must reject even the correct password');
+
+    // Discriminating control for the accepted low-impact interference: the
+    // share session cookie is mount-path scoped and shared by name, so a later
+    // unlock of B replaces A's browser session — A falls back to the password
+    // challenge instead of leaking anything.
+    response = await fetch(`${shareB.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { ...form, Origin: 'null' },
+      body: new URLSearchParams({ password: 'other-secret' }),
+    });
+    assert.equal(response.status, 303);
+    const cookieB = cookieValue(response.headers.get('set-cookie'), '__Secure-share_access');
+    assert.ok(cookieB);
+    assert.match(response.headers.get('set-cookie'), /Path=\//, 'cookie stays mount-path scoped (the documented interference surface)');
+
+    response = await fetch(shareA.shortUrl, { redirect: 'manual', headers: { Cookie: cookieB } });
+    assert.equal(response.status, 401, 'B\'s session must not authorize A — interference is re-prompt only');
+    assert.match(await response.text(), /Unlock shared page/);
+  } finally {
+    server.close();
+  }
+});
+
 test('dedicated limiter rejects before invoking the KDF', async () => {
   const share = createShare('protected', '24h');
   await setSharePassword(share.tokenId, 'limiter-secret', keyring);
@@ -331,8 +474,7 @@ test('owner lifecycle endpoints reveal only explicitly and invalidate old proof 
     assert.equal(response.status, 200);
     const enabled = await response.json();
     const firstPassword = enabled.protection.password;
-    assert.match(firstPassword, /^[A-Za-z0-9_-]{22}$/);
-    assert.equal(Buffer.from(firstPassword, 'base64url').length, 16);
+    assert.match(firstPassword, /^[0-9]{8}$/);
 
     response = await fetch(`${origin}/api/shares/p/protected`, { headers: { Cookie: ownerCookie } });
     const listed = await response.json();

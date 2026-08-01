@@ -4,6 +4,15 @@
 
 ### Added
 
+- **Optional password protection for share links.** A share can now be created
+  with a per-share password (provided or generated): browsers get an unlock
+  page that mints a scoped, HttpOnly session cookie; agents can send the
+  password via the `X-Zylos-Share-Password` header (GET/HEAD only). Passwords
+  are held as self-describing scrypt hashes plus AES-256-GCM recoverable
+  custody under a versioned external keyring; unlock attempts are bounded by a
+  dedicated pre-KDF rate limiter. Owners can reveal, enable, rotate, and
+  disable the password from both owner UIs and the CLI. Unprotected shares are
+  fully unaffected.
 - **Share password custody now initializes automatically.** The post-install
   and post-upgrade hooks detect a missing keyring configuration, set
   `sharing.passwordKeyFile` to a default outside the Pages data directory,
@@ -12,6 +21,25 @@
   a configured-but-missing keyring is not recreated (lost-keyring recovery
   still fails closed), and custody setup failures warn without breaking the
   install/upgrade.
+
+### Changed
+
+- **Generated share passwords are now 8 numeric digits** (previously
+  22-character base64url). Short numeric passwords are practical to relay in
+  chat, and brute force is bounded by the per-token pre-KDF rate limiter
+  rather than by password entropy. Provided passwords are unchanged
+  (8–1024 bytes).
+
+### Fixed
+
+- **Password unlock now works from opaque-origin webviews such as WeChat's
+  built-in browser.** These webviews submit the unlock form with the literal
+  `Origin: null`, which the same-origin CSRF check used to reject even with
+  the correct password. The unlock endpoint now accepts the literal
+  `Origin: null` as a route-local exception: a present Referer must still be
+  same-origin, a missing Origin is not treated as null (both-missing stays
+  rejected), real cross-site Origins stay rejected, and every other mutation
+  route keeps the strict same-origin check.
 
 ## [0.7.10] - 2026-07-26
 

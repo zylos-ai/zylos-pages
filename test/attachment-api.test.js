@@ -1147,6 +1147,36 @@ test('the CSRF refusal is audited on both mutation routes, with the token named'
   }
 });
 
+test('attachment mutations reject the literal Origin: null — the unlock exception is route-local', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h', { canWriteAttachments: true });
+      const cookies = await openShare(origin, share.tokenId);
+
+      // The literal `Origin: null` sent by opaque-origin contexts is not the
+      // same as a missing Origin and must stay rejected on both mutation
+      // routes, even for an otherwise-authorized writable share session.
+      const uploaded = await fetch(`${origin}/api/attachments/renovation-checklist/null-origin`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { Origin: 'null', Cookie: cookies },
+        body: formData(JPEG),
+      });
+      assert.equal(uploaded.status, 403);
+
+      const deleted = await fetch(`${origin}/api/attachments/renovation-checklist/${'a'.repeat(32)}`, {
+        method: 'DELETE',
+        redirect: 'manual',
+        headers: { Origin: 'null', Cookie: cookies },
+      });
+      assert.equal(deleted.status, 403);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('an invalid delete parameter is audited rather than dropped at the door', async () => {
   const contentDir = await makeContentDir();
   try {

@@ -306,6 +306,16 @@ test('state API CSRF checks mutating requests only', async () => {
     });
     assert.equal(res.status, 403);
 
+    // The literal `Origin: null` sent by opaque-origin contexts is not the
+    // same as a missing Origin and must stay rejected: the WeChat unlock
+    // exception is route-local to share unlock and must not reach this gate.
+    res = await fetch(`${origin}/api/state/csrf/key`, {
+      method: 'PUT',
+      headers: sameOriginHeaders(origin, { Origin: 'null' }),
+      body: JSON.stringify({ value: true }),
+    });
+    assert.equal(res.status, 403);
+
     res = await fetch(`${origin}/api/state/csrf/key2`, {
       method: 'PUT',
       headers: { Referer: `${origin}/page`, 'Content-Type': 'application/json' },

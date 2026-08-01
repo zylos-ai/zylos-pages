@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { hashSharePassword } from '../security/share-password-kdf.js';
 
 const FORMAT_VERSION = 1;
-const PASSWORD_BYTES = 16;
+const GENERATED_PASSWORD_DIGITS = 8;
 const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const HKDF_INFO = Buffer.from('zylos-pages/share-password/v1', 'utf8');
@@ -31,8 +31,10 @@ function deriveDataKey(masterKey, tokenId) {
   return Buffer.from(crypto.hkdfSync('sha256', key, Buffer.from(tokenId, 'hex'), HKDF_INFO, 32));
 }
 
+// 8 numeric digits: easy to type/relay in chat, and brute force is bounded by
+// the pre-KDF rate limiter rather than password entropy (see issue 8dde265b).
 export function generateSharePassword() {
-  return crypto.randomBytes(PASSWORD_BYTES).toString('base64url');
+  return String(crypto.randomInt(0, 10 ** GENERATED_PASSWORD_DIGITS)).padStart(GENERATED_PASSWORD_DIGITS, '0');
 }
 
 export function encryptSharePassword(password, identity, masterKey, { nonce = crypto.randomBytes(NONCE_BYTES) } = {}) {
