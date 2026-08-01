@@ -210,3 +210,22 @@ test('CLI manages the password lifecycle of an existing share without changing i
   assert.equal(missing.status, 1);
   assert.equal(JSON.parse(missing.stdout).code, 'share_not_found');
 });
+
+test('agent contract docs cover the full share-password command surface', () => {
+  // The CLI usage text is the source of truth for which share-password
+  // actions exist; the agent-facing contract docs must teach every one of
+  // them, or the capability exists in code while agents keep working
+  // against the old command surface (PR #132 review finding).
+  const usage = spawnSync(process.execPath, [cliPath, 'help'], { cwd: repoRoot, encoding: 'utf8' }).stdout;
+  const actions = [...new Set([...usage.matchAll(/share-password (get|enable|rotate|disable|keyring)\b/g)].map(m => m[1]))];
+  assert.deepEqual(actions.sort(), ['disable', 'enable', 'get', 'keyring', 'rotate'],
+    'usage text no longer lists the expected share-password actions — update this test AND the docs');
+
+  for (const doc of ['SKILL.md', 'references/pages-cli.md']) {
+    const text = fs.readFileSync(path.join(repoRoot, doc), 'utf8');
+    for (const action of actions) {
+      assert.match(text, new RegExp(`share-password ${action}\\b`),
+        `${doc} does not document \`share-password ${action}\``);
+    }
+  }
+});

@@ -79,6 +79,16 @@ printf '%s\n' "$SHARE_SECRET" | node $PAGES_DIR/src/cli/pages.js share reports/q
 # Explicit repeat retrieval. Ordinary shares/share-info never return plaintext.
 node $PAGES_DIR/src/cli/pages.js share-password get https://domain/s/<token-id>
 
+# Manage the password of an EXISTING share without changing its URL.
+# enable/rotate generate a 6-digit password (or take one on stdin) and print
+# the secret once; disable makes the link open without a password again.
+node $PAGES_DIR/src/cli/pages.js share-password enable https://domain/s/<token-id>
+printf '%s\n' "$SHARE_SECRET" | node $PAGES_DIR/src/cli/pages.js share-password rotate <token-id> --password-stdin
+node $PAGES_DIR/src/cli/pages.js share-password disable <token-id>
+
+# Custody keyring maintenance (init/rotate/retire) is rare operator work:
+# see references/pages-cli.md before running share-password keyring commands.
+
 # Revoke. Prefer --token: the uri form revokes EVERY token on that page,
 # which will also kill links you did not mean to touch.
 node $PAGES_DIR/src/cli/pages.js unshare --token <token-id>
