@@ -111,6 +111,7 @@ test('owner UI sources fetch secrets explicitly and never persist them in browse
   const shareScript = fs.readFileSync(path.join(repoRoot, 'assets/share.js'), 'utf8');
   const adminSource = fs.readFileSync(path.join(repoRoot, 'src/admin/Admin.jsx'), 'utf8');
   const template = fs.readFileSync(path.join(repoRoot, 'src/templates/pageTemplate.js'), 'utf8');
+  const style = fs.readFileSync(path.join(repoRoot, 'assets/style.css'), 'utf8');
   const combined = `${shareScript}\n${adminSource}\n${template}`;
 
   assert.match(shareScript, /passwordRequest\(tokenId, 'reveal'\)/);
@@ -119,4 +120,6 @@ test('owner UI sources fetch secrets explicitly and never persist them in browse
   assert.ok(!/localStorage|sessionStorage/.test(combined));
   assert.ok(!/[?&]password=|#password=/.test(combined));
   assert.ok(!template.includes('protection.password'));
+  assert.match(style, /\.share-list-items > \.share-item \{[^}]*flex-direction:\s*column;/s);
+  assert.match(style, /\.share-list-items > \.share-item \.share-item-actions \{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
 });

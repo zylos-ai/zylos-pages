@@ -1747,6 +1747,27 @@ svg { display: block; }
   flex-shrink: 0;
 }
 
+/* Password lifecycle controls no longer fit beside metadata in the 440px
+   owner modal. Keep each active share as two rows at every viewport so the
+   action group can wrap instead of being clipped off-canvas. */
+.share-list-items > .share-item {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.share-list-items > .share-item .share-item-info {
+  min-width: 0;
+  width: 100%;
+}
+
+.share-list-items > .share-item .share-item-actions {
+  justify-content: flex-start;
+  width: 100%;
+  min-width: 0;
+  flex-shrink: 1;
+  flex-wrap: wrap;
+}
+
 .share-item-permission {
   display: inline-flex;
   align-items: center;
