@@ -327,6 +327,9 @@
 .badge-neutral { background: var(--color-tag-bg); color: var(--color-tag-text); }
 .badge-private { background: var(--color-status-bg); color: var(--color-status-text); border: 1px solid var(--color-border); }
 .badge-shared { background: rgba(31, 136, 61, 0.12); color: var(--color-success); }
+.badge-protected { background: rgba(31, 136, 61, 0.12); color: var(--color-success); }
+.badge-unprotected { background: rgba(191, 135, 0, 0.14); color: #8a6100; }
+.btn-danger { color: var(--color-danger); border-color: rgba(207, 34, 46, 0.35); }
 
 /* Share control */
 .share-control { display: flex; align-items: flex-end; gap: 6px; flex-wrap: wrap; }
@@ -341,6 +344,59 @@
   flex-basis: 100%;
   width: 100%;
 }
+.share-password-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text);
+}
+.share-password-create-options {
+  display: grid;
+  gap: 6px;
+  flex-basis: 100%;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-hover);
+}
+.share-password-create-options[hidden] { display: none; }
+.share-password-create-options label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--color-text); }
+.share-password-create-options input[type="password"] {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  background: var(--color-bg);
+}
+.share-password-secret {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.share-password-secret code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.share-security-warning {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(191, 135, 0, 0.4);
+  border-radius: 8px;
+  background: rgba(191, 135, 0, 0.12);
+  color: var(--color-text);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+.share-security-warning[hidden] { display: none; }
+.share-protection-label { font-weight: 600; }
+.share-protection-label.is-protected { color: var(--color-success); }
+.share-protection-label.is-unprotected { color: #8a6100; }
 .share-item-info a {
   color: var(--color-link);
   font-family: var(--font-mono);
@@ -1574,6 +1630,14 @@ svg { display: block; }
   color: var(--color-text);
   cursor: pointer;
 }
+.share-create .share-password-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+}
 
 .share-generate-btn {
   width: 100%;
@@ -1737,6 +1801,7 @@ svg { display: block; }
   .share-item-actions {
     justify-content: space-between;
     width: 100%;
+    flex-wrap: wrap;
   }
   .share-item-permission {
     white-space: normal;

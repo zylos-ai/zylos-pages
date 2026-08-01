@@ -115,6 +115,11 @@ Edit `~/zylos/components/pages/config.json`:
   "theme": { "colorScheme": "auto", "codeTheme": "github-dark" },
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },
   "security": { "allowRawHtml": false, "maxFileSizeBytes": 1048576 },
+  "sharing": {
+    "enabled": true,
+    "passwordKeyFile": "/secure/pages/share-password-keys.json",
+    "passwordRateLimit": { "windowMs": 60000, "tokenMax": 8, "ipMax": 24 }
+  },
   "state": {
     "maxKeysPerPage": 50,
     "maxPageBytes": 1048576,
@@ -125,6 +130,40 @@ Edit `~/zylos/components/pages/config.json`:
 
 The `state` ceilings and write-rate limits apply only to share-link visitors;
 authenticated owner writes are intentionally exempt.
+
+### Optional share passwords
+
+Password custody is opt-in. Configure `sharing.passwordKeyFile` (or
+`PAGES_SHARE_PASSWORD_KEY_FILE`) outside the Pages data directory, then create
+the versioned 0600 keyring before enabling protected shares:
+
+```bash
+node src/cli/pages.js share-password keyring init
+```
+
+Do not copy key bytes into `config.json`. Back up `pages.db` and the keyring as
+a consistent pair: the database alone can still verify recipient passwords but
+cannot reveal them; the keyring alone contains no passwords. If the keyring is
+lost, existing recipients can still unlock from the stored verification hash,
+but create/rotate/reveal fail closed until operator recovery. To rotate, take a
+fresh pair backup, run `share-password keyring rotate`, verify reveal, and only
+then retire an unreferenced old key with `share-password keyring retire <id>`.
+The service never silently regenerates a missing or malformed keyring.
+
+Owner lifecycle APIs are CSRF-protected and use explicit operations:
+
+- `POST /api/share` with `protection: {"type":"password","mode":"generated"}`
+  or `mode:"provided"` plus a password in the JSON body.
+- `POST /api/share/:tokenId/password/enable`, `/reveal`, or `/rotate`.
+- `DELETE /api/share/:tokenId/password` to remove protection.
+
+Create/enable/rotate/reveal responses are `no-store`; list responses include
+only `protection.type` and retrievability metadata. Agents may read protected
+HTML or Markdown with `X-Zylos-Share-Password` on `GET`/`HEAD /s/<token>` or
+`/s/<token>.md`. The header never grants attachment or state writes. Never put
+passwords in URLs, argv, logs, shared documents, Issues, Task comments, PRs, or
+group chats; use stdin for provided CLI passwords and deliver secrets through
+the intended private channel only.
 
 ## Built by Coco
 
