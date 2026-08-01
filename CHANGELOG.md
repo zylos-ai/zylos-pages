@@ -24,6 +24,12 @@
 
 ### Changed
 
+- **The share unlock page now uses the same styled card layout as the owner
+  login page** — brand header, styled password field and submit button, an
+  inline error banner for wrong-password re-display, and a mobile-friendly
+  viewport — instead of bare unstyled HTML. The card styles are shared with
+  the login page via a common template module; the page needs no JavaScript
+  and the form semantics are unchanged.
 - **Generated share passwords are now 8 numeric digits** (previously
   22-character base64url). Short numeric passwords are practical to relay in
   chat, and brute force is bounded by the per-token pre-KDF rate limiter
@@ -40,6 +46,14 @@
   same-origin, a missing Origin is not treated as null (both-missing stays
   rejected), real cross-site Origins stay rejected, and every other mutation
   route keeps the strict same-origin check.
+- **The browser unlock page is now served with HTTP 200 instead of 401**, so
+  in-app webviews that replace non-2xx main documents with their own error
+  page (e.g. Lark's "load failed (401)") show the unlock form instead of
+  swallowing it. Agent and API semantics are unchanged: the
+  `X-Zylos-Share-Password` header path, the `/s/:tokenId.md` raw route, and
+  all JSON/problem+json responses keep their real status codes
+  (401/404/429), the auth state stays machine-readable via
+  `X-Zylos-Share-Error`, and no session is minted by the challenge.
 
 ## [0.7.10] - 2026-07-26
 

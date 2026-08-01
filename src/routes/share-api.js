@@ -24,12 +24,13 @@ import { browserBaseFromRequest, browserPath, cookiePathFromBase } from '../lib/
 import { renderOwnerPage, renderSharePage } from './pages.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
-import { createShareAuthorization } from '../security/share-authorization.js';
+import { createShareAuthorization, SHARE_PASSWORD_HEADER } from '../security/share-authorization.js';
 import {
   loadSharePasswordKeyring,
   resolveSharePasswordKeyFile,
 } from '../sharing/share-password-keyring.js';
 import { generateSharePassword } from '../sharing/share-password-crypto.js';
+import { AUTH_CARD_CSS } from '../templates/authCardStyles.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
@@ -188,23 +189,55 @@ function escapeHtml(value) {
   }[char]));
 }
 
+const UNLOCK_ASSET_VERSION = Date.now();
+
 function shareChallengeHtml(tokenId, browserBase, code) {
   const message = code === 'invalid_password'
-    ? '<p role="alert">Incorrect password.</p>'
+    ? '<p class="login-error" role="alert">Incorrect password.</p>'
     : code === 'rate_limited'
-      ? '<p role="alert">Too many attempts. Try again later.</p>'
+      ? '<p class="login-error" role="alert">Too many attempts. Try again later.</p>'
       : '';
   const action = browserPath(browserBase, `s/${tokenId}/unlock`);
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Unlock shared page</title></head><body><main><h1>Unlock shared page</h1>${message}<form method="post" action="${escapeHtml(action)}"><label>Password <input type="password" name="password" autocomplete="current-password" required autofocus></label><button type="submit">Unlock</button></form></main></body></html>`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Unlock shared page — Zylos Pages</title>
+  <link rel="stylesheet" href="${browserBase}/_assets/style.css?v=${UNLOCK_ASSET_VERSION}">
+  <script src="${browserBase}/_assets/theme.js?v=${UNLOCK_ASSET_VERSION}"></script>
+  <style>${AUTH_CARD_CSS}</style>
+</head>
+<body>
+  <main class="login-container">
+    <div class="login-card">
+      <div class="login-brand">
+        <img src="${browserBase}/_assets/logo.png" alt="">
+        <h1>Unlock shared page</h1>
+        <p class="login-sub">This page is password protected</p>
+      </div>
+      ${message}
+      <form method="post" action="${escapeHtml(action)}">
+        <div class="login-field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required autofocus>
+        </div>
+        <button type="submit">Unlock</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>`;
 }
 
 function sendReadFailure(req, res, failure, representation, tokenId) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Zylos-Share-Error', failure.code);
-  if (failure.status === 401) res.setHeader('WWW-Authenticate', 'ZylosShare realm="pages-share"');
   if (failure.retryAfterSeconds) res.setHeader('Retry-After', String(failure.retryAfterSeconds));
   if (representation === 'markdown') {
+    if (failure.status === 401) res.setHeader('WWW-Authenticate', 'ZylosShare realm="pages-share"');
     res.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
     return res.status(failure.status).json({
       type: 'about:blank',
@@ -213,7 +246,18 @@ function sendReadFailure(req, res, failure, representation, tokenId) {
       code: failure.code,
     });
   }
-  return res.status(failure.status).send(shareChallengeHtml(
+  // Browser representation: the unlock challenge is served as 200, not 401 —
+  // in-app webviews (e.g. Lark) replace any non-2xx main document with their
+  // own error page, so a 401 body would never reach the user. The auth state
+  // stays machine-readable via X-Zylos-Share-Error. Agent semantics are
+  // untouched: the markdown branch above and any request that presented the
+  // X-Zylos-Share-Password header proof keep the real 401, and non-auth
+  // failures (e.g. 429 rate limit) keep their status.
+  const agentHeaderProof = typeof req.headers[SHARE_PASSWORD_HEADER] === 'string' &&
+    req.headers[SHARE_PASSWORD_HEADER].length > 0;
+  const htmlStatus = failure.status === 401 && !agentHeaderProof ? 200 : failure.status;
+  if (htmlStatus === 401) res.setHeader('WWW-Authenticate', 'ZylosShare realm="pages-share"');
+  return res.status(htmlStatus).send(shareChallengeHtml(
     tokenId,
     browserBaseFromRequest(req),
     failure.code,

@@ -125,11 +125,15 @@ test('protected HTML and markdown share one proof boundary while owner keeps pre
     const share = await createProtected(origin, ownerCookie);
     assert.deepEqual(share.protection, { type: 'password', password: 'viewer-secret' });
 
+    // The browser challenge ships as 200 (webviews swallow non-2xx documents)
+    // while X-Zylos-Share-Error keeps the auth state machine-readable.
     let response = await fetch(share.shortUrl, { redirect: 'manual' });
-    assert.equal(response.status, 401);
+    assert.equal(response.status, 200);
     assert.equal(response.headers.get('x-zylos-share-error'), 'password_required');
     assert.equal(response.headers.get('set-cookie'), null, 'challenge must not mint a session');
-    assert.match(await response.text(), /Unlock shared page/);
+    const challengeHtml = await response.text();
+    assert.match(challengeHtml, /Unlock shared page/);
+    assert.doesNotMatch(challengeHtml, /private body/, 'challenge must not leak document content');
 
     response = await fetch(`${share.shortUrl}.md`, {
       headers: { 'X-Zylos-Share-Password': 'wrong-secret' },
@@ -261,15 +265,19 @@ test('unlock accepts the literal null Origin as a route-local exception with eve
     assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
     assert.doesNotMatch(await response.text(), /private body/, 'unlock response must not carry document content');
 
-    // Wrong password through the null-origin path still fails closed.
+    // Wrong password through the null-origin path still fails closed: the
+    // re-displayed challenge is 200 for webview compatibility but carries the
+    // error marker and never mints a session.
     response = await fetch(`${share.shortUrl}/unlock`, {
       method: 'POST',
       redirect: 'manual',
       headers: { ...form, Origin: 'null' },
       body: new URLSearchParams({ password: 'wrong-secret' }),
     });
-    assert.equal(response.status, 401);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-zylos-share-error'), 'invalid_password');
     assert.equal(response.headers.get('set-cookie'), null, 'failed unlock must not mint a session');
+    assert.match(await response.text(), /Incorrect password/);
 
     // The relaxation is literal-null only: real cross-site Origins stay rejected...
     response = await fetch(`${share.shortUrl}/unlock`, {
@@ -345,7 +353,9 @@ test('null-origin unlock shares the pre-KDF limiter and the mount-path cookie in
         headers: { ...form, Origin: 'null' },
         body: new URLSearchParams({ password: 'wrong-secret' }),
       });
-      assert.equal(rejected.status, 401);
+      assert.equal(rejected.status, 200, 'browser re-display is 200 but stays a challenge');
+      assert.equal(rejected.headers.get('x-zylos-share-error'), 'invalid_password');
+      assert.equal(rejected.headers.get('set-cookie'), null);
     }
     let response = await fetch(`${shareA.shortUrl}/unlock`, {
       method: 'POST',
@@ -371,8 +381,11 @@ test('null-origin unlock shares the pre-KDF limiter and the mount-path cookie in
     assert.match(response.headers.get('set-cookie'), /Path=\//, 'cookie stays mount-path scoped (the documented interference surface)');
 
     response = await fetch(shareA.shortUrl, { redirect: 'manual', headers: { Cookie: cookieB } });
-    assert.equal(response.status, 401, 'B\'s session must not authorize A — interference is re-prompt only');
-    assert.match(await response.text(), /Unlock shared page/);
+    assert.equal(response.status, 200, 'challenge re-prompt ships as 200 for webviews');
+    assert.equal(response.headers.get('x-zylos-share-error'), 'password_required', 'B\'s session must not authorize A — interference is re-prompt only');
+    const reprompt = await response.text();
+    assert.match(reprompt, /Unlock shared page/);
+    assert.doesNotMatch(reprompt, /private body/, 'foreign session must not leak A\'s content');
   } finally {
     server.close();
   }
@@ -524,6 +537,70 @@ test('owner lifecycle endpoints reveal only explicitly and invalidate old proof 
     response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('set-cookie'), /__Secure-share_access=/);
+  } finally {
+    server.close();
+  }
+});
+
+test('unlock challenge status boundary: browser HTML is 200 while agent proof paths keep 401', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const ownerCookie = await login(origin);
+    const share = await createProtected(origin, ownerCookie);
+
+    // (a) Credential-less browser navigation: 200 + styled unlock form.
+    let response = await fetch(share.shortUrl, { redirect: 'manual' });
+    assert.equal(response.status, 200, 'webviews swallow non-2xx documents — challenge must be 200');
+    assert.equal(response.headers.get('x-zylos-share-error'), 'password_required');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(response.headers.get('set-cookie'), null, 'challenge must not mint a session');
+    let html = await response.text();
+    assert.match(html, /<form method="post" action="\/s\/[A-Za-z0-9_-]+\/unlock"/);
+    assert.match(html, /name="password"[^>]*autocomplete="current-password"[^>]*required autofocus/);
+    assert.match(html, /class="login-card"/, 'challenge uses the shared card layout');
+    assert.match(html, /_assets\/style\.css/, 'challenge links the shared stylesheet');
+    assert.doesNotMatch(html, /role="alert"/, 'initial challenge shows no error message');
+    assert.doesNotMatch(html, /private body/, 'challenge must not leak document content');
+
+    // (b) Wrong-password browser POST: 200 re-display with error marker, no session.
+    response = await fetch(`${share.shortUrl}/unlock`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Origin: origin },
+      body: new URLSearchParams({ password: 'wrong-secret' }),
+    });
+    assert.equal(response.status, 200, 'wrong-password re-display must also be 200');
+    assert.equal(response.headers.get('x-zylos-share-error'), 'invalid_password');
+    assert.equal(response.headers.get('set-cookie'), null, 'failed unlock must not mint a session');
+    html = await response.text();
+    assert.match(html, /role="alert"/);
+    assert.match(html, /Incorrect password/);
+    assert.doesNotMatch(html, /private body/);
+
+    // (c) Agent proof paths keep 401. Wrong header on the HTML route:
+    response = await fetch(share.shortUrl, {
+      redirect: 'manual',
+      headers: { 'X-Zylos-Share-Password': 'wrong-secret' },
+    });
+    assert.equal(response.status, 401, 'header proof must keep 401 even on the HTML route');
+    assert.equal(response.headers.get('x-zylos-share-error'), 'invalid_password');
+    assert.equal(response.headers.get('www-authenticate'), 'ZylosShare realm="pages-share"');
+    assert.equal(response.headers.get('set-cookie'), null);
+
+    // Wrong header on the raw markdown route:
+    response = await fetch(`${share.shortUrl}.md`, {
+      headers: { 'X-Zylos-Share-Password': 'wrong-secret' },
+    });
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get('content-type'), /application\/problem\+json/);
+    assert.equal((await response.json()).code, 'invalid_password');
+
+    // Missing header on the raw markdown route:
+    response = await fetch(`${share.shortUrl}.md`);
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('www-authenticate'), 'ZylosShare realm="pages-share"');
+    assert.equal((await response.json()).code, 'password_required');
   } finally {
     server.close();
   }
