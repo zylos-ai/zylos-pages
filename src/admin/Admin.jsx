@@ -332,7 +332,7 @@ function ShareDialog({ page, onClose, notify }) {
                 <label><input type="radio" name="admin-password-mode" value="generated" checked={passwordMode === 'generated'} onChange={() => setPasswordMode('generated')} /> Generate a strong password</label>
                 <label><input type="radio" name="admin-password-mode" value="provided" checked={passwordMode === 'provided'} onChange={() => setPasswordMode('provided')} /> Provide a password</label>
                 {passwordMode === 'provided' ? (
-                  <input type="password" value={providedPassword} onChange={event => setProvidedPassword(event.target.value)} minLength="8" autoComplete="new-password" placeholder="8–1024 bytes" />
+                  <input type="password" value={providedPassword} onChange={event => setProvidedPassword(event.target.value)} minLength="4" autoComplete="new-password" placeholder="4–1024 bytes" />
                 ) : null}
               </div>
             ) : null}

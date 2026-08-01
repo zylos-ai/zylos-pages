@@ -136,3 +136,19 @@ test('owner UI sources fetch secrets explicitly and never persist them in browse
   assert.match(style, /\.share-list-items > \.share-item \{[^}]*flex-direction:\s*column;/s);
   assert.match(style, /\.share-list-items > \.share-item \.share-item-actions \{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
 });
+
+test('every owner-UI provided-password input advertises the 4-byte floor', () => {
+  const adminSource = fs.readFileSync(path.join(repoRoot, 'src/admin/Admin.jsx'), 'utf8');
+  const adminBundle = fs.readFileSync(path.join(repoRoot, 'assets/admin.js'), 'utf8');
+  const template = fs.readFileSync(path.join(repoRoot, 'src/templates/pageTemplate.js'), 'utf8');
+
+  for (const [name, source] of [['Admin.jsx', adminSource], ['pageTemplate.js', template]]) {
+    assert.ok(!/minlength="8"|minLength="8"|8–1024 bytes/i.test(source), `${name} must not advertise the old 8-byte floor`);
+  }
+  assert.match(adminSource, /minLength="4"/);
+  assert.match(template, /minlength="4"/);
+  // The shipped bundle is built from Admin.jsx; a stale build silently
+  // re-introduces the old floor, so it is pinned too (en dash minifies to –).
+  assert.ok(/minLength:"4"/.test(adminBundle) && !/8\\u20131024|8–1024/.test(adminBundle),
+    'assets/admin.js must be rebuilt after Admin.jsx password-floor changes');
+});
