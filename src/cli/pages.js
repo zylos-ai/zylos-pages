@@ -13,6 +13,7 @@ import {
   createPasswordProtectedShare,
   createShare,
   describeShare,
+  disableSharePassword,
   getActiveShare,
   getReferencedSharePasswordKeyIds,
   listAllShares,
@@ -21,7 +22,9 @@ import {
   revealActiveSharePassword,
   revokeAllForSlug,
   revokeShare,
+  setSharePassword,
 } from '../sharing/share-manager.js';
+import { generateSharePassword } from '../sharing/share-password-crypto.js';
 import {
   createSharePasswordKeyring,
   loadSharePasswordKeyring,
@@ -51,6 +54,10 @@ Usage:
   node pages.js shares --all [--json]                  # every live share on this instance
   node pages.js share-info <token-or-url> [--json]     # which document is this link, and is it still live?
   node pages.js share-password get <token-or-url> [--json]
+  node pages.js share-password enable <token-or-url> [--password-stdin] [--json]
+                                                       # generates a password unless one is piped via --password-stdin
+  node pages.js share-password rotate <token-or-url> [--password-stdin] [--json]
+  node pages.js share-password disable <token-or-url> [--json]
   node pages.js share-password keyring init|rotate [--json]
   node pages.js share-password keyring retire <key-id> [--json]
   node pages.js unshare <uri> [--json]                 # revokes ALL tokens on that uri
@@ -65,6 +72,9 @@ Examples:
   node pages.js share reports/q3 --duration 7d --password
   printf '%s\\n' "$SECRET" | node pages.js share reports/q3 --password-stdin
   node pages.js share-password get https://example.com/s/7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
+  node pages.js share-password enable 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
+  printf '%s\\n' "$SECRET" | node pages.js share-password rotate 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1 --password-stdin
+  node pages.js share-password disable 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js share renovation-checklist --duration 7d --writable
   node pages.js shares --all
   node pages.js share-info https://example.com/s/7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
@@ -161,6 +171,16 @@ function humanize(result) {
   }
   if (result.command === 'share-password') {
     if (result.action === 'get') return `Password (secret): ${result.password}`;
+    if (result.action === 'enable' || result.action === 'rotate') {
+      return [
+        `${result.action === 'enable' ? 'enabled password on' : 'rotated password for'} ${result.uri ?? result.tokenId}`,
+        `Password (secret): ${result.protection.password}`,
+        'Existing unlock sessions were invalidated; the share URL is unchanged.',
+      ].join('\n');
+    }
+    if (result.action === 'disable') {
+      return `disabled password on ${result.uri ?? result.tokenId}; the link now opens without a password`;
+    }
     if (result.action === 'keyring-init') return `initialized share password keyring (${result.activeKeyId})`;
     if (result.action === 'keyring-rotate') {
       return `rotated share password keyring (${result.activeKeyId}); re-encrypted ${result.reencrypted} share(s)`;
@@ -431,8 +451,60 @@ function commandShareInfo(args) {
   }, args.json);
 }
 
-function commandSharePassword(args) {
+async function commandSharePassword(args) {
   const action = args._[0];
+
+  if (action === 'enable' || action === 'rotate' || action === 'disable') {
+    const input = args._[1] || args.token || args.tokenId || args.url;
+    if (!input) throw new CliError('invalid_args', `share-password ${action} requires a share token or URL`);
+    const described = describeShare(input);
+    if (!described || described.status !== 'active') throw new CliError('share_not_found', 'active share not found');
+    if (action === 'enable' && described.passwordProtected) {
+      throw new CliError('already_protected', 'share is already password protected; use rotate to change the password');
+    }
+    if (action !== 'enable' && !described.passwordProtected) {
+      throw new CliError('not_protected', 'share is not password protected');
+    }
+    try {
+      if (action === 'disable') {
+        const updated = disableSharePassword(described.tokenId);
+        if (!updated) throw new CliError('credential_conflict', 'share changed concurrently; retry');
+        output({
+          ok: true, command: 'share-password', action, tokenId: updated.tokenId,
+          uri: described.uri ?? null, credentialVersion: updated.credentialVersion,
+          protection: { type: 'none' },
+        }, args.json);
+        return;
+      }
+      // enable / rotate mirror the owner API: a piped secret wins, otherwise a
+      // password is generated. --password (boolean) is the share-command flag
+      // for "generate", which is already the default here.
+      if (args.password && args['password-stdin']) {
+        throw new CliError('invalid_args', 'use either --password or --password-stdin, not both');
+      }
+      const provided = args['password-stdin'] === true ? readPasswordFromStdin() : undefined;
+      if (provided !== undefined) {
+        const bytes = Buffer.byteLength(provided, 'utf8');
+        if (bytes < 4 || bytes > 1024) {
+          throw new CliError('invalid_password', 'password must be between 4 and 1024 bytes');
+        }
+      }
+      const password = provided ?? generateSharePassword();
+      const keyring = loadSharePasswordKeyring(configuredSharePasswordKeyFile());
+      const updated = await setSharePassword(described.tokenId, password, keyring);
+      if (!updated) throw new CliError('share_not_found', 'active share not found');
+      output({
+        ok: true, command: 'share-password', action, tokenId: updated.tokenId,
+        uri: described.uri ?? null, credentialVersion: updated.credentialVersion,
+        protection: { type: 'password', password },
+      }, args.json);
+      return;
+    } catch (error) {
+      if (error instanceof CliError) throw error;
+      throw new CliError(error?.code || 'password_custody_unavailable', error.message);
+    }
+  }
+
   if (action === 'get') {
     const input = args._[1] || args.token || args.tokenId || args.url;
     if (!input) throw new CliError('invalid_args', 'share-password get requires a share token or URL');
@@ -457,7 +529,7 @@ function commandSharePassword(args) {
   }
 
   if (action !== 'keyring') {
-    throw new CliError('invalid_args', 'expected: share-password get <token-or-url> or share-password keyring <action>');
+    throw new CliError('invalid_args', 'expected: share-password get|enable|rotate|disable <token-or-url> or share-password keyring <action>');
   }
   const keyringAction = args._[1];
   const keyFile = configuredSharePasswordKeyFile();
