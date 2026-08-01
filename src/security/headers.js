@@ -24,6 +24,7 @@ export function securityHeaders() {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('X-XSS-Protection', '0'); // Disabled per modern best practice
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
     next();
   };
 }

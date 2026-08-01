@@ -18,6 +18,7 @@ const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { DEFAULT_CSP, HTML_ARTIFACT_CSP, securityHeaders } = await import('../src/security/headers.js');
+const { notFoundTemplate, errorTemplate } = await import('../src/templates/errorTemplate.js');
 const { resolvePageDescriptor, resolveSafePath } = await import('../src/security/pathGuard.js');
 const { createShare } = await import('../src/sharing/share-manager.js');
 const { normalizeSlug } = await import('../src/utils/slug.js');
@@ -153,27 +154,44 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
       const markdown = await fetch(`${origin}/foo`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
-      assert.match(await markdown.text(), /Foo Markdown/);
+      assert.equal(markdown.headers.get('x-robots-tag'), 'noindex, nofollow');
+      const markdownText = await markdown.text();
+      assert.match(markdownText, /Foo Markdown/);
+      assert.match(markdownText, /<meta name="robots" content="noindex, nofollow">/);
 
       const unregistered = await fetch(`${origin}/bare`);
       assert.equal(unregistered.status, 404);
+      assert.equal(unregistered.headers.get('x-robots-tag'), 'noindex, nofollow');
+      assert.match(await unregistered.text(), /<meta name="robots" content="noindex, nofollow">/);
 
       // Default HTML artifact response: wrapper template with iframe
       const html = await fetch(`${origin}/artifact`);
       assert.equal(html.status, 200);
       assert.equal(html.headers.get('content-security-policy'), DEFAULT_CSP);
+      assert.equal(html.headers.get('x-robots-tag'), 'noindex, nofollow');
       const wrapperEtag = html.headers.get('etag');
       const wrapperBody = await html.text();
+      assert.match(wrapperBody, /<meta name="robots" content="noindex, nofollow">/);
       assert.match(wrapperBody, /html-artifact-frame/);
       assert.match(wrapperBody, /artifact\?raw=1/);
       assert.match(wrapperBody, /Artifact/);
 
-      // 304 for wrapper
+      // HEAD request carries X-Robots-Tag
+      const head = await fetch(`${origin}/foo`, { method: 'HEAD' });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+      const headArtifact = await fetch(`${origin}/artifact`, { method: 'HEAD' });
+      assert.equal(headArtifact.status, 200);
+      assert.equal(headArtifact.headers.get('x-robots-tag'), 'noindex, nofollow');
+
+      // 304 for wrapper — header persists on conditional responses
       const notModified = await fetch(`${origin}/artifact`, {
         redirect: 'manual',
         headers: { 'If-None-Match': wrapperEtag },
       });
       assert.equal(notModified.status, 304);
+      assert.equal(notModified.headers.get('x-robots-tag'), 'noindex, nofollow');
 
       // Raw mode: serves raw HTML with artifact CSP
       const raw = await fetch(`${origin}/artifact?raw=1`);
@@ -191,6 +209,7 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
       });
       assert.equal(rawNotModified.status, 304);
       assert.equal(rawNotModified.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+      assert.equal(rawNotModified.headers.get('x-robots-tag'), 'noindex, nofollow');
 
       // Both: html priority → wrapper
       const both = await fetch(`${origin}/both`);
@@ -221,6 +240,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
     }, async ({ origin }) => {
       const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
       assert.equal(redirect.status, 302);
+      assert.equal(redirect.headers.get('x-robots-tag'), 'noindex, nofollow');
       assert.match(redirect.headers.get('location'), /^\/login\?/);
 
       const uppercaseRedirect = await fetch(`${origin}/shared.HTML?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
@@ -230,6 +250,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
       const shared = await fetch(`${origin}/s/${htmlShare.tokenId}`);
       assert.equal(shared.status, 200);
       assert.equal(shared.headers.get('content-security-policy'), HTML_ARTIFACT_CSP);
+      assert.equal(shared.headers.get('x-robots-tag'), 'noindex, nofollow');
       const sharedBody = await shared.text();
       assert.match(sharedBody, /Shared HTML/);
       assert.doesNotMatch(sharedBody, /page-header/);
@@ -239,6 +260,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
       const markdown = await fetch(`${origin}/s/${markdownShare.tokenId}`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
+      assert.equal(markdown.headers.get('x-robots-tag'), 'noindex, nofollow');
       const markdownBody = await markdown.text();
       assert.match(markdownBody, /Shared Markdown/);
       assert.match(markdownBody, /page-header/);
@@ -408,4 +430,33 @@ test('cache invalidation clears nested slugs and browserBase variants', async ()
   assert.equal(getCachedPage('/pages:docs/nested'), undefined);
   assert.equal(getCachedPage('/:docs/nested'), undefined);
   assert.ok(getCachedPage('/pages:docs/other'));
+});
+
+test('errorTemplate and notFoundTemplate include robots noindex meta', () => {
+  const error500 = errorTemplate('test error', '');
+  assert.match(error500, /<meta name="robots" content="noindex, nofollow">/);
+
+  const error404 = notFoundTemplate('missing-page', '');
+  assert.match(error404, /<meta name="robots" content="noindex, nofollow">/);
+});
+
+test('500 error response carries X-Robots-Tag header', async () => {
+  const app = express();
+  app.use(securityHeaders());
+  app.get('/crash', (_req, _res, next) => next(new Error('boom')));
+  app.use((err, _req, res, _next) => {
+    res.status(500).send(errorTemplate(err.message, ''));
+  });
+
+  const server = http.createServer(app);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/crash`);
+    assert.equal(res.status, 500);
+    assert.equal(res.headers.get('x-robots-tag'), 'noindex, nofollow');
+    assert.match(await res.text(), /<meta name="robots" content="noindex, nofollow">/);
+  } finally {
+    server.close();
+  }
 });
