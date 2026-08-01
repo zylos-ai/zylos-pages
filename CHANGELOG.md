@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **The CLI can now manage the password of an existing share**:
+  `share-password enable|rotate|disable <token-or-url>`. `enable` and
+  `rotate` generate a 6-digit password by default or accept a piped secret
+  via `--password-stdin` (same 4–1024-byte bounds as the API); `disable`
+  makes the link open without a password again. All three keep the share
+  URL unchanged, bump the credential version (existing unlock sessions are
+  invalidated), and mirror the owner API's semantics and error codes
+  (`already_protected`, `not_protected`, `share_not_found`). Previously
+  these operations existed only in the owner UIs and HTTP API, so an agent
+  had to re-mint a share (changing its URL) to add a password to an
+  already-circulated link.
+
 ## [0.8.1] - 2026-08-02
 
 ### Added

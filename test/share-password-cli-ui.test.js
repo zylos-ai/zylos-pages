@@ -152,3 +152,80 @@ test('every owner-UI provided-password input advertises the 4-byte floor', () =>
   assert.ok(/minLength:"4"/.test(adminBundle) && !/8\\u20131024|8–1024/.test(adminBundle),
     'assets/admin.js must be rebuilt after Admin.jsx password-floor changes');
 });
+
+test('CLI manages the password lifecycle of an existing share without changing its URL', () => {
+  const fx = fixture();
+  runJson(fx, ['share-password', 'keyring', 'init']);
+  register(fx);
+
+  // Start from an unprotected share — the case the commands exist for.
+  const shared = runJson(fx, ['share', 'secure/report', '--duration', '7d']);
+  assert.equal(shared.protection?.type ?? 'none', 'none');
+
+  // enable: generates a 6-digit password, bumps the credential version.
+  const enabled = runJson(fx, ['share-password', 'enable', shared.shortUrl]);
+  assert.equal(enabled.tokenId, shared.tokenId);
+  assert.match(enabled.protection.password, /^[0-9]{6}$/);
+  assert.equal(enabled.credentialVersion, 1);
+  assert.equal(runJson(fx, ['share-password', 'get', shared.tokenId]).password, enabled.protection.password);
+  assert.equal(runJson(fx, ['shares', 'secure/report']).shares[0].protection.type, 'password');
+
+  // enable twice is a conflict, not a silent rotate.
+  const reEnable = run(fx, ['share-password', 'enable', shared.tokenId, '--json']);
+  assert.equal(reEnable.status, 1);
+  assert.equal(JSON.parse(reEnable.stdout).code, 'already_protected');
+
+  // rotate accepts a piped secret and replaces the stored password.
+  const rotated = runJson(fx, ['share-password', 'rotate', shared.tokenId, '--password-stdin'], { input: 'family-2026\n' });
+  assert.equal(rotated.protection.password, 'family-2026');
+  assert.equal(rotated.credentialVersion, 2);
+  assert.equal(runJson(fx, ['share-password', 'get', shared.tokenId]).password, 'family-2026');
+
+  // Provided passwords keep the API's 4-byte floor.
+  const tooShort = run(fx, ['share-password', 'rotate', shared.tokenId, '--password-stdin', '--json'], { input: 'abc\n' });
+  assert.equal(tooShort.status, 1);
+  assert.equal(JSON.parse(tooShort.stdout).code, 'invalid_password');
+
+  // Human-readable output names the document and prints the secret once.
+  const humanRotate = run(fx, ['share-password', 'rotate', shared.tokenId]);
+  assert.equal(humanRotate.status, 0, humanRotate.stderr || humanRotate.stdout);
+  assert.match(humanRotate.stdout, /rotated password for/);
+  assert.match(humanRotate.stdout, /Password \(secret\): [0-9]{6}/);
+
+  // disable: the link opens without a password again; the token is unchanged.
+  const disabled = runJson(fx, ['share-password', 'disable', shared.tokenId]);
+  assert.equal(disabled.protection.type, 'none');
+  assert.equal(runJson(fx, ['shares', 'secure/report']).shares[0].protection.type, 'none');
+  const reDisable = run(fx, ['share-password', 'disable', shared.tokenId, '--json']);
+  assert.equal(reDisable.status, 1);
+  assert.equal(JSON.parse(reDisable.stdout).code, 'not_protected');
+
+  // rotate on an unprotected share points at enable instead.
+  const rotateUnprotected = run(fx, ['share-password', 'rotate', shared.tokenId, '--json']);
+  assert.equal(rotateUnprotected.status, 1);
+  assert.equal(JSON.parse(rotateUnprotected.stdout).code, 'not_protected');
+
+  // Unknown tokens fail closed.
+  const missing = run(fx, ['share-password', 'enable', '0'.repeat(32), '--json']);
+  assert.equal(missing.status, 1);
+  assert.equal(JSON.parse(missing.stdout).code, 'share_not_found');
+});
+
+test('agent contract docs cover the full share-password command surface', () => {
+  // The CLI usage text is the source of truth for which share-password
+  // actions exist; the agent-facing contract docs must teach every one of
+  // them, or the capability exists in code while agents keep working
+  // against the old command surface (PR #132 review finding).
+  const usage = spawnSync(process.execPath, [cliPath, 'help'], { cwd: repoRoot, encoding: 'utf8' }).stdout;
+  const actions = [...new Set([...usage.matchAll(/share-password (get|enable|rotate|disable|keyring)\b/g)].map(m => m[1]))];
+  assert.deepEqual(actions.sort(), ['disable', 'enable', 'get', 'keyring', 'rotate'],
+    'usage text no longer lists the expected share-password actions — update this test AND the docs');
+
+  for (const doc of ['SKILL.md', 'references/pages-cli.md']) {
+    const text = fs.readFileSync(path.join(repoRoot, doc), 'utf8');
+    for (const action of actions) {
+      assert.match(text, new RegExp(`share-password ${action}\\b`),
+        `${doc} does not document \`share-password ${action}\``);
+    }
+  }
+});

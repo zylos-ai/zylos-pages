@@ -37,6 +37,9 @@ node src/cli/pages.js shares reports/q3
 node src/cli/pages.js shares --all
 node src/cli/pages.js share-info <token-id-or-url>
 node src/cli/pages.js share-password get <token-id-or-url>
+node src/cli/pages.js share-password enable <token-id-or-url>
+printf '%s\n' "$SHARE_SECRET" | node src/cli/pages.js share-password rotate <token-id-or-url> --password-stdin
+node src/cli/pages.js share-password disable <token-id-or-url>
 node src/cli/pages.js unshare --token <token-id>
 node src/cli/pages.js unshare reports/q3
 ```
@@ -54,6 +57,11 @@ password to stdout, so treat terminal capture and `--json` output as sensitive.
 - `shares --all` lists every live share on the instance, with the uri and protection metadata each token exposes. It never returns plaintext.
 - `share-info <token-or-url>` goes the other way: it resolves a link back to its document. It accepts the full share URL or the bare token, and unlike `shares` it deliberately resolves **expired, revoked, and orphaned** links too, reporting `status` as `active`, `expired`, `revoked`, or `document_deleted`, plus a `documentDeleted` flag. The order is strongest-claim-first: revoked beats a later expiry (the deliberate act is not rewritten by the clock) and a deleted document beats expiry (it is a statement about the content, not the calendar). Unknown tokens and non-token input both fail with `share_not_found`.
 - `share-password get <token-or-url>` is the only repeat-retrieval command. It deliberately returns one active protected share's password and supports `--json`. Stable failures are `share_not_found`, `not_protected`, `password_custody_unavailable`, and `password_decryption_failed`; it never rotates or substitutes a secret.
+- **`share-password enable|rotate|disable <token-or-url>` manage the password of an existing share** — the way to protect an already-circulated link without re-minting it. All three operate on **active** shares only and leave the share URL untouched; the URL remains a bearer secret throughout.
+  - `enable` adds a password to an unprotected share; an already-protected share fails with `already_protected` (it never silently rotates). `rotate` replaces the password of a protected share; `disable` removes it so the link opens without a password again — both fail with `not_protected` when there is nothing to rotate or remove.
+  - `enable` and `rotate` generate a 6-digit numeric password by default, or read a provided 4–1024 byte (UTF-8) password from stdin via `--password-stdin` — never from argv. They print the secret to stdout **once** (`--json`: `protection.password`), so the same terminal-capture caution as `share --password` applies.
+  - Every successful change bumps the share's credential version, which **invalidates all existing browser unlock sessions** for that link; visitors re-enter the (new) password. `disable` clears sessions the same way.
+  - Stable failures: `share_not_found` (unknown, expired, or revoked token), `already_protected`, `not_protected`, `invalid_password` (provided secret outside the 4–1024 byte bounds), `credential_conflict` (share changed concurrently — retry), `password_custody_unavailable` (keyring missing/unreadable).
 - **`unshare --token <token-id>` revokes exactly one link. `unshare <uri>` revokes EVERY active token on that page** — run `shares <uri>` first and look at what else is live. An unknown token and an already-revoked token both fail with `share_not_found`; the CLI does not distinguish them.
 - Revocation sets a flag. The row and its token stay in the table, so revoking is reversible and is not a guarantee that the URL can never work again. Expiry no longer deletes rows either, which is what keeps `share-info` able to answer for lapsed links.
 - `unregister <uri>` keeps that page's share rows as tombstones, stamped with the uri the page had, and deletes only the browser sessions. The links stop working at once (every access path resolves through the page row, which is gone), but `share-info` still names the historical document and reports `status: document_deleted`. `shares --all` excludes tombstones — it answers what is exposed now, not what once was. The unregister result reports `tombstonedShares`, not `removedShares`.
