@@ -119,16 +119,58 @@ test('PAGES_SHARE_PASSWORD_KEY_FILE env counts as explicit configuration', () =>
   }
 });
 
-test('custody failure warns but never throws out of the hook', () => withoutKeyFileEnv(() => {
+test('a transient creation failure stays retryable: no config pointer is left behind', () => withoutKeyFileEnv(() => {
   const home = makeHome({ sharing: { enabled: true } });
   // Occupy the vault path with a file so the keyring directory cannot be made.
   fs.mkdirSync(path.join(home, 'zylos'), { recursive: true });
   fs.writeFileSync(path.join(home, 'zylos/vault'), 'not a directory');
 
   const warned = capture();
+  const first = ensureSharePasswordKeyring({ home, log: () => {}, warn: warned.sink });
+  assert.equal(first.status, 'error');
+  assert.match(warned.lines.join('\n'), /keyring setup failed/);
+  // The failed run must not leave a pointer that a later run would mistake
+  // for operator configuration (which would trip fail-closed forever).
+  assert.equal(readConfig(home).sharing.passwordKeyFile, undefined);
+
+  // Obstacle removed: the next run must self-heal, not report missing_configured.
+  fs.unlinkSync(path.join(home, 'zylos/vault'));
+  const second = ensureSharePasswordKeyring({ home, log: () => {}, warn: () => {} });
+  assert.equal(second.status, 'created');
+  assert.equal(fs.statSync(second.keyFile).mode & 0o777, 0o600);
+  assert.equal(readConfig(home).sharing.passwordKeyFile, second.keyFile);
+}));
+
+test('a valid default keyring left by a half-completed run is adopted', () => withoutKeyFileEnv(() => {
+  const home = makeHome({ sharing: { enabled: true } });
+  // Simulate "keyring created but config write failed": keyring present at the
+  // default path, config has no pointer.
+  const keyFile = defaultSharePasswordKeyFile(home);
+  fs.mkdirSync(path.dirname(keyFile), { recursive: true, mode: 0o700 });
+  const seeded = ensureSharePasswordKeyring({ home, log: () => {}, warn: () => {} });
+  assert.equal(seeded.status, 'created');
+  const config = readConfig(home);
+  delete config.sharing.passwordKeyFile;
+  fs.writeFileSync(path.join(home, 'zylos/components/pages/config.json'), JSON.stringify(config, null, 2));
+  const before = fs.readFileSync(keyFile);
+
+  const result = ensureSharePasswordKeyring({ home, log: () => {}, warn: () => {} });
+  assert.equal(result.status, 'adopted');
+  assert.equal(readConfig(home).sharing.passwordKeyFile, keyFile);
+  assert.deepEqual(fs.readFileSync(keyFile), before);
+}));
+
+test('an invalid file at the default path is not adopted and config stays unchanged', () => withoutKeyFileEnv(() => {
+  const home = makeHome({ sharing: { enabled: true } });
+  const keyFile = defaultSharePasswordKeyFile(home);
+  fs.mkdirSync(path.dirname(keyFile), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(keyFile, 'not a keyring', { mode: 0o600 });
+
+  const warned = capture();
   const result = ensureSharePasswordKeyring({ home, log: () => {}, warn: warned.sink });
   assert.equal(result.status, 'error');
   assert.match(warned.lines.join('\n'), /keyring setup failed/);
+  assert.equal(readConfig(home).sharing.passwordKeyFile, undefined);
 }));
 
 test('post-upgrade hook initializes the keyring end to end', () => {
