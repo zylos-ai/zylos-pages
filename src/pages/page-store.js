@@ -262,7 +262,23 @@ function unregisterLogicalPageRecord(page) {
     let tombstonedShares = 0;
     if (tableExists('shares')) {
       addColumnIfMissing(db, 'shares', 'origin_uri', 'TEXT');
-      tombstonedShares = db.prepare('UPDATE shares SET origin_uri = ? WHERE page_id = ?')
+      addColumnIfMissing(db, 'shares', 'password_hash', 'TEXT');
+      addColumnIfMissing(db, 'shares', 'password_ciphertext', 'BLOB');
+      addColumnIfMissing(db, 'shares', 'password_nonce', 'BLOB');
+      addColumnIfMissing(db, 'shares', 'password_key_id', 'TEXT');
+      addColumnIfMissing(db, 'shares', 'was_password_protected', 'INTEGER NOT NULL DEFAULT 0');
+      addColumnIfMissing(db, 'shares', 'password_set_at', 'INTEGER');
+      tombstonedShares = db.prepare(`
+        UPDATE shares SET
+          origin_uri = ?,
+          was_password_protected = CASE WHEN password_hash IS NOT NULL THEN 1 ELSE was_password_protected END,
+          password_hash = NULL,
+          password_ciphertext = NULL,
+          password_nonce = NULL,
+          password_key_id = NULL,
+          password_set_at = NULL
+        WHERE page_id = ?
+      `)
         .run(page.uri, page.pageId).changes;
     }
     const removedPages = db.prepare('DELETE FROM logical_pages WHERE page_id = ?').run(page.pageId).changes;

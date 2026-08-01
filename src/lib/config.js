@@ -49,6 +49,14 @@ export const DEFAULT_CONFIG = {
   },
   sharing: {
     enabled: true,
+    // Password custody is opt-in at deployment time. The keyring must live
+    // outside pages.db and is never generated implicitly by the service.
+    passwordKeyFile: null,
+    passwordRateLimit: {
+      windowMs: 60000,
+      tokenMax: 8,
+      ipMax: 24,
+    },
   },
   attachments: {
     maxFileSizeBytes: 5 * 1024 * 1024,

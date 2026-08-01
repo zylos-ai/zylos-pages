@@ -8,6 +8,12 @@ import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
 import { getLogicalPage, getLogicalPageById, initPageStore } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
+import { verifySharePassword } from '../security/share-password-kdf.js';
+import {
+  buildSharePasswordCredential,
+  encryptSharePassword,
+  revealSharePassword as decryptStoredSharePassword,
+} from './share-password-crypto.js';
 
 const SECRET_BYTES = 32;
 const TOKEN_ID_BYTES = 16;
@@ -55,6 +61,11 @@ let _touchShareSession;
 let _deleteShareSession;
 let _deleteExpiredShareSessions;
 let _updateShareAttachmentPermission;
+let _deleteShareSessionsForToken;
+let _replaceSharePassword;
+let _clearSharePassword;
+let _cleanupExpiredSharePasswords;
+let _updateSharePasswordCiphertext;
 
 function sha256(data) {
   return crypto.createHash('sha256').update(data).digest('hex');
@@ -116,7 +127,19 @@ function initShareStore() {
       can_write_attachments INTEGER NOT NULL DEFAULT 0,
       revoked INTEGER NOT NULL DEFAULT 0,
       revoked_at INTEGER,
-      origin_uri TEXT
+      origin_uri TEXT,
+      password_hash TEXT,
+      password_ciphertext BLOB,
+      password_nonce BLOB,
+      password_key_id TEXT,
+      was_password_protected INTEGER NOT NULL DEFAULT 0,
+      credential_version INTEGER NOT NULL DEFAULT 0,
+      password_set_at INTEGER,
+      CHECK (
+        (password_hash IS NULL AND password_ciphertext IS NULL AND password_nonce IS NULL AND password_key_id IS NULL)
+        OR
+        (password_hash IS NOT NULL AND password_ciphertext IS NOT NULL AND password_nonce IS NOT NULL AND password_key_id IS NOT NULL)
+      )
     );
     CREATE INDEX IF NOT EXISTS idx_shares_page_created ON shares(page_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS share_sessions (
@@ -126,6 +149,7 @@ function initShareStore() {
       created_at INTEGER NOT NULL,
       last_activity_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
+      credential_version INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY(token_id) REFERENCES shares(token_id)
     );
     CREATE INDEX IF NOT EXISTS idx_share_sessions_token_id ON share_sessions(token_id);
@@ -137,6 +161,27 @@ function initShareStore() {
   // unregistered, and the uri it had at that moment is stamped here (by
   // page-store) so the link is still answerable afterwards.
   addColumnIfMissing(db, 'shares', 'origin_uri', 'TEXT');
+  addColumnIfMissing(db, 'shares', 'password_hash', 'TEXT');
+  addColumnIfMissing(db, 'shares', 'password_ciphertext', 'BLOB');
+  addColumnIfMissing(db, 'shares', 'password_nonce', 'BLOB');
+  addColumnIfMissing(db, 'shares', 'password_key_id', 'TEXT');
+  addColumnIfMissing(db, 'shares', 'was_password_protected', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'shares', 'credential_version', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'shares', 'password_set_at', 'INTEGER');
+  addColumnIfMissing(db, 'share_sessions', 'credential_version', 'INTEGER NOT NULL DEFAULT 0');
+  const malformedCredentialRows = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM shares
+    WHERE
+      ((password_hash IS NOT NULL) + (password_ciphertext IS NOT NULL) +
+       (password_nonce IS NOT NULL) + (password_key_id IS NOT NULL)) NOT IN (0, 4)
+      OR credential_version < 0
+  `).get().count;
+  if (malformedCredentialRows > 0) {
+    throw Object.assign(new Error('Malformed share password credential tuple'), {
+      code: 'password_custody_unavailable',
+    });
+  }
 
   _getMeta = db.prepare('SELECT value FROM share_meta WHERE key = ?');
   _setMeta = db.prepare('INSERT OR REPLACE INTO share_meta (key, value) VALUES (?, ?)');
@@ -145,27 +190,60 @@ function initShareStore() {
     VALUES (@tokenId, @pageId, @expiresAt, @createdAt, @canWriteAttachments, @revoked, @revokedAt)
   `);
   _getShare = db.prepare('SELECT * FROM shares WHERE token_id = ?');
-  _revokeShare = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE token_id = ? AND revoked = 0');
-  _revokeAllForPage = db.prepare('UPDATE shares SET revoked = 1, revoked_at = ? WHERE page_id = ? AND revoked = 0');
+  _revokeShare = db.prepare(`
+    UPDATE shares SET
+      revoked = 1,
+      revoked_at = @now,
+      was_password_protected = CASE WHEN password_hash IS NOT NULL THEN 1 ELSE was_password_protected END,
+      password_hash = NULL,
+      password_ciphertext = NULL,
+      password_nonce = NULL,
+      password_key_id = NULL,
+      password_set_at = NULL
+    WHERE token_id = @tokenId AND revoked = 0
+  `);
+  _revokeAllForPage = db.prepare(`
+    UPDATE shares SET
+      revoked = 1,
+      revoked_at = @now,
+      was_password_protected = CASE WHEN password_hash IS NOT NULL THEN 1 ELSE was_password_protected END,
+      password_hash = NULL,
+      password_ciphertext = NULL,
+      password_nonce = NULL,
+      password_key_id = NULL,
+      password_set_at = NULL
+    WHERE page_id = @pageId AND revoked = 0
+  `);
   _listSharesForPage = db.prepare(`
-    SELECT token_id, expires_at, created_at, can_write_attachments
+    SELECT token_id, expires_at, created_at, can_write_attachments,
+           password_hash IS NOT NULL AS password_protected, password_key_id
     FROM shares
     WHERE page_id = ? AND revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
   `);
   _listAllShares = db.prepare(`
-    SELECT token_id, page_id, expires_at, created_at, can_write_attachments, origin_uri
+    SELECT token_id, page_id, expires_at, created_at, can_write_attachments, origin_uri,
+           password_hash IS NOT NULL AS password_protected, password_key_id
     FROM shares
     WHERE revoked = 0 AND (expires_at = 0 OR expires_at > ?)
     ORDER BY created_at DESC
   `);
   _insertShareSession = db.prepare(`
-    INSERT OR REPLACE INTO share_sessions (token_hash, token_id, page_id, created_at, last_activity_at, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO share_sessions
+      (token_hash, token_id, page_id, created_at, last_activity_at, expires_at, credential_version)
+    SELECT @tokenHash, @tokenId, @pageId, @createdAt, @createdAt, @expiresAt, @credentialVersion
+    FROM shares
+    WHERE token_id = @tokenId
+      AND page_id = @pageId
+      AND credential_version = @credentialVersion
+      AND revoked = 0
+      AND (shares.expires_at = 0 OR shares.expires_at > @now)
+      AND EXISTS (SELECT 1 FROM logical_pages WHERE logical_pages.page_id = shares.page_id)
   `);
   _getShareSession = db.prepare(`
     SELECT share_sessions.*, shares.expires_at AS share_expires_at, shares.revoked AS share_revoked
          , shares.can_write_attachments AS can_write_attachments
+         , shares.credential_version AS share_credential_version
     FROM share_sessions
     JOIN shares ON shares.token_id = share_sessions.token_id
     WHERE share_sessions.token_hash = ?
@@ -173,6 +251,57 @@ function initShareStore() {
   _touchShareSession = db.prepare('UPDATE share_sessions SET last_activity_at = ? WHERE token_hash = ?');
   _deleteShareSession = db.prepare('DELETE FROM share_sessions WHERE token_hash = ?');
   _deleteExpiredShareSessions = db.prepare('DELETE FROM share_sessions WHERE expires_at <= ?');
+  _deleteShareSessionsForToken = db.prepare('DELETE FROM share_sessions WHERE token_id = ?');
+  _replaceSharePassword = db.prepare(`
+    UPDATE shares SET
+      password_hash = @passwordHash,
+      password_ciphertext = @passwordCiphertext,
+      password_nonce = @passwordNonce,
+      password_key_id = @passwordKeyId,
+      was_password_protected = 1,
+      credential_version = @nextCredentialVersion,
+      password_set_at = @passwordSetAt
+    WHERE token_id = @tokenId
+      AND credential_version = @previousCredentialVersion
+      AND revoked = 0
+      AND (expires_at = 0 OR expires_at > @now)
+      AND EXISTS (SELECT 1 FROM logical_pages WHERE logical_pages.page_id = shares.page_id)
+  `);
+  _clearSharePassword = db.prepare(`
+    UPDATE shares SET
+      password_hash = NULL,
+      password_ciphertext = NULL,
+      password_nonce = NULL,
+      password_key_id = NULL,
+      was_password_protected = 1,
+      credential_version = credential_version + 1,
+      password_set_at = NULL
+    WHERE token_id = @tokenId
+      AND password_hash IS NOT NULL
+      AND revoked = 0
+      AND (expires_at = 0 OR expires_at > @now)
+      AND EXISTS (SELECT 1 FROM logical_pages WHERE logical_pages.page_id = shares.page_id)
+  `);
+  _cleanupExpiredSharePasswords = db.prepare(`
+    UPDATE shares SET
+      was_password_protected = CASE WHEN password_hash IS NOT NULL THEN 1 ELSE was_password_protected END,
+      password_hash = NULL,
+      password_ciphertext = NULL,
+      password_nonce = NULL,
+      password_key_id = NULL,
+      password_set_at = NULL
+    WHERE expires_at != 0 AND expires_at <= ? AND password_hash IS NOT NULL
+  `);
+  _updateSharePasswordCiphertext = db.prepare(`
+    UPDATE shares SET
+      password_ciphertext = @passwordCiphertext,
+      password_nonce = @passwordNonce,
+      password_key_id = @nextKeyId
+    WHERE token_id = @tokenId
+      AND credential_version = @credentialVersion
+      AND password_key_id = @previousKeyId
+      AND password_hash IS NOT NULL
+  `);
   // The live-page requirement is part of the WHERE clause, not a check around
   // it. Checking afterwards means the row is already written by the time the
   // caller learns it should not have been: a tombstone passes revoked/expiry
@@ -227,6 +356,8 @@ function activeShareRecord(tokenId) {
     expiresAt: record.expires_at,
     createdAt: record.created_at,
     canWriteAttachments: record.can_write_attachments === 1,
+    passwordProtected: record.password_hash !== null,
+    credentialVersion: record.credential_version,
   };
 }
 
@@ -322,13 +453,22 @@ export function getActiveShareToken(tokenId) {
   return { ...record, token: legacyTokenFor(record) };
 }
 
-export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt, cookiePath = '/') {
+export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt, cookiePath = '/', credentialVersion = 0) {
   initShareStore();
   const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SESSION_MAX_AGE_SECONDS);
   const token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
   const createdAt = nowMs();
   const expiresAt = createdAt + maxAge * 1000;
-  _insertShareSession.run(sha256(token), tokenId, pageId, createdAt, createdAt, expiresAt);
+  const inserted = _insertShareSession.run({
+    tokenHash: sha256(token),
+    tokenId,
+    pageId,
+    createdAt,
+    expiresAt,
+    credentialVersion,
+    now: createdAt,
+  });
+  if (inserted.changes === 0) return null;
   return {
     value: token,
     maxAge,
@@ -350,7 +490,8 @@ export function verifyShareAccessCookie(cookieValue, requestSlug) {
   const current = nowMs();
   if (isPastDeadline(session.expires_at, current) ||
       session.share_revoked ||
-      hasExpired(session.share_expires_at, current)) {
+      hasExpired(session.share_expires_at, current) ||
+      session.credential_version !== session.share_credential_version) {
     _deleteShareSession.run(hash);
     return { valid: false };
   }
@@ -452,7 +593,11 @@ export function revokeShare(tokenId) {
   initShareStore();
   const record = _getShare.get(tokenId);
   if (!record) return false;
-  const result = _revokeShare.run(nowMs(), tokenId);
+  const result = db.transaction(() => {
+    const changed = _revokeShare.run({ now: nowMs(), tokenId });
+    if (changed.changes > 0) _deleteShareSessionsForToken.run(tokenId);
+    return changed;
+  })();
   if (result.changes > 0) {
     logger.info('share revoked', { tokenId, pageId: record.page_id });
   }
@@ -463,7 +608,12 @@ export function revokeAllForSlug(slug) {
   initShareStore();
   const page = getLogicalPage(pageUriFromSlug(slug));
   if (!page) return 0;
-  const result = _revokeAllForPage.run(nowMs(), page.pageId);
+  const result = db.transaction(() => {
+    const tokenIds = db.prepare('SELECT token_id FROM shares WHERE page_id = ? AND revoked = 0').all(page.pageId);
+    const changed = _revokeAllForPage.run({ now: nowMs(), pageId: page.pageId });
+    for (const row of tokenIds) _deleteShareSessionsForToken.run(row.token_id);
+    return changed;
+  })();
   if (result.changes > 0) {
     logger.info('shares revoked for page', { pageId: page.pageId, uri: page.uri, count: result.changes });
   }
@@ -499,6 +649,7 @@ export function listSharesForSlug(slug) {
     expiresAt: record.expires_at,
     createdAt: record.created_at,
     canWriteAttachments: record.can_write_attachments === 1,
+    passwordProtected: record.password_protected === 1,
   }));
 }
 
@@ -523,6 +674,7 @@ export function listAllShares() {
       expiresAt: record.expires_at,
       createdAt: record.created_at,
       canWriteAttachments: record.can_write_attachments === 1,
+      passwordProtected: record.password_protected === 1,
     }));
 }
 
@@ -580,7 +732,160 @@ export function describeShare(input) {
     revokedAt: record.revoked_at,
     duration: durationLabel(record.created_at, record.expires_at),
     canWriteAttachments: record.can_write_attachments === 1,
+    passwordProtected: record.password_hash !== null,
+    wasPasswordProtected: record.was_password_protected === 1,
+    credentialVersion: record.credential_version,
+    passwordSetAt: record.password_set_at,
   };
+}
+
+function credentialFromRecord(record) {
+  if (!record?.password_hash || !record.password_ciphertext || !record.password_nonce || !record.password_key_id) return null;
+  return {
+    passwordHash: record.password_hash,
+    passwordCiphertext: Buffer.from(record.password_ciphertext),
+    passwordNonce: Buffer.from(record.password_nonce),
+    passwordKeyId: record.password_key_id,
+  };
+}
+
+export async function setSharePassword(tokenId, password, keyring, options = {}) {
+  if (!isTokenId(tokenId)) return null;
+  initShareStore();
+  const initial = _getShare.get(tokenId);
+  const page = initial ? getLogicalPageById(initial.page_id) : null;
+  if (!initial || !page || initial.revoked || hasExpired(initial.expires_at)) return null;
+  const previousCredentialVersion = initial.credential_version;
+  const nextCredentialVersion = previousCredentialVersion + 1;
+  const credential = await buildSharePasswordCredential(password, {
+    tokenId,
+    pageId: initial.page_id,
+    credentialVersion: nextCredentialVersion,
+  }, keyring, options);
+  const passwordSetAt = nowMs();
+  const changed = db.transaction(() => {
+    const result = _replaceSharePassword.run({
+      ...credential,
+      tokenId,
+      previousCredentialVersion,
+      nextCredentialVersion,
+      passwordSetAt,
+      now: passwordSetAt,
+    });
+    if (result.changes > 0) _deleteShareSessionsForToken.run(tokenId);
+    return result.changes;
+  })();
+  if (changed === 0) {
+    throw Object.assign(new Error('Share changed while password protection was being prepared'), {
+      code: 'credential_conflict',
+      statusCode: 409,
+    });
+  }
+  return activeShareRecord(tokenId);
+}
+
+export function disableSharePassword(tokenId) {
+  if (!isTokenId(tokenId)) return null;
+  initShareStore();
+  const changed = db.transaction(() => {
+    const result = _clearSharePassword.run({ tokenId, now: nowMs() });
+    if (result.changes > 0) _deleteShareSessionsForToken.run(tokenId);
+    return result.changes;
+  })();
+  return changed > 0 ? activeShareRecord(tokenId) : null;
+}
+
+export async function verifyActiveSharePassword(tokenId, password) {
+  if (!isTokenId(tokenId)) return { valid: false };
+  initShareStore();
+  const record = _getShare.get(tokenId);
+  const page = record ? getLogicalPageById(record.page_id) : null;
+  if (!record || !page || record.revoked || hasExpired(record.expires_at) || !record.password_hash) return { valid: false };
+  const credentialVersion = record.credential_version;
+  const valid = await verifySharePassword(password, record.password_hash);
+  return valid ? {
+    valid: true,
+    tokenId,
+    pageId: record.page_id,
+    credentialVersion,
+    expiresAt: record.expires_at,
+    canWriteAttachments: record.can_write_attachments === 1,
+  } : { valid: false };
+}
+
+export function revealActiveSharePassword(tokenId, keyring) {
+  if (!isTokenId(tokenId)) return null;
+  initShareStore();
+  const record = _getShare.get(tokenId);
+  const page = record ? getLogicalPageById(record.page_id) : null;
+  const credential = credentialFromRecord(record);
+  if (!record || !page || record.revoked || hasExpired(record.expires_at) || !credential) return null;
+  return decryptStoredSharePassword(credential, {
+    tokenId,
+    pageId: record.page_id,
+    credentialVersion: record.credential_version,
+  }, keyring);
+}
+
+export function getReferencedSharePasswordKeyIds() {
+  initShareStore();
+  return db.prepare(`
+    SELECT DISTINCT password_key_id AS key_id
+    FROM shares
+    WHERE password_hash IS NOT NULL AND password_key_id IS NOT NULL
+    ORDER BY password_key_id
+  `).all().map(row => row.key_id);
+}
+
+export function reencryptSharePasswordCredentials(keyring, { batchSize = 100 } = {}) {
+  if (!Number.isSafeInteger(batchSize) || batchSize <= 0 || batchSize > 1000) throw new TypeError('Invalid batch size');
+  initShareStore();
+  const nextKeyId = keyring?.activeKeyId;
+  const nextMasterKey = keyring?.keys?.get(nextKeyId);
+  if (!nextMasterKey) throw Object.assign(new Error('Active share password key is unavailable'), {
+    code: 'password_custody_unavailable',
+  });
+  let updated = 0;
+  while (true) {
+    const rows = db.prepare(`
+      SELECT * FROM shares
+      WHERE password_hash IS NOT NULL AND password_key_id != ?
+      ORDER BY token_id
+      LIMIT ?
+    `).all(nextKeyId, batchSize);
+    if (rows.length === 0) break;
+    const replacements = rows.map(record => {
+      const credential = credentialFromRecord(record);
+      const password = decryptStoredSharePassword(credential, {
+        tokenId: record.token_id,
+        pageId: record.page_id,
+        credentialVersion: record.credential_version,
+      }, keyring);
+      const encrypted = encryptSharePassword(password, {
+        tokenId: record.token_id,
+        pageId: record.page_id,
+        credentialVersion: record.credential_version,
+        keyId: nextKeyId,
+      }, nextMasterKey);
+      return { record, encrypted };
+    });
+    const changed = db.transaction(() => replacements.reduce((count, { record, encrypted }) => count +
+      _updateSharePasswordCiphertext.run({
+        tokenId: record.token_id,
+        credentialVersion: record.credential_version,
+        previousKeyId: record.password_key_id,
+        nextKeyId,
+        passwordCiphertext: encrypted.ciphertext,
+        passwordNonce: encrypted.nonce,
+      }).changes, 0))();
+    if (changed !== replacements.length) {
+      throw Object.assign(new Error('Share password credentials changed during key rotation'), {
+        code: 'credential_conflict',
+      });
+    }
+    updated += changed;
+  }
+  return updated;
 }
 
 // Sessions only. Share rows are never deleted — not on expiry, and not when
@@ -592,7 +897,12 @@ export function describeShare(input) {
 // could otherwise still open an unregistered page.
 export function cleanupShares() {
   initShareStore();
-  const sessions = _deleteExpiredShareSessions.run(nowMs()).changes;
+  const current = nowMs();
+  const passwords = _cleanupExpiredSharePasswords.run(current).changes;
+  const sessions = _deleteExpiredShareSessions.run(current).changes;
+  if (passwords > 0) {
+    logger.info('expired share password cleanup', { clearedPasswords: passwords });
+  }
   if (sessions > 0) {
     logger.info('share sessions cleanup', { removedSessions: sessions });
   }
