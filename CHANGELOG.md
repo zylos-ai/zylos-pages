@@ -21,6 +21,14 @@
   a configured-but-missing keyring is not recreated (lost-keyring recovery
   still fails closed), and custody setup failures warn without breaking the
   install/upgrade.
+- **Search engine isolation (noindex) is now enforced at the component
+  level.** Every Pages response carries `X-Robots-Tag: noindex, nofollow`
+  via the security-headers middleware, and all HTML templates (pages, HTML
+  artifacts, 404/error pages) inject
+  `<meta name="robots" content="noindex, nofollow">`. Shared pages can no
+  longer be indexed by search engines regardless of whether the document
+  author remembered to add a meta tag; regression tests lock the boundary
+  (including HEAD/304/302 and share routes).
 
 ### Changed
 
