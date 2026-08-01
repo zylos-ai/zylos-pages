@@ -394,9 +394,11 @@ function legacyTokenFor(record) {
   return encodeToken(record.pageId, record.expiresAt, record.tokenId, hmac);
 }
 
-function computeShareAssetHmac(uri, realPath, expiresAt, tokenId, secret) {
+function computeShareAssetHmac(uri, realPath, expiresAt, tokenId, credentialVersion, secret) {
+  const generation = Number(credentialVersion);
+  const generationSuffix = generation === 0 ? '' : `|${generation}`;
   return crypto.createHmac('sha256', Buffer.from(secret, 'hex'))
-    .update(`${normalizeSlug(uri)}|${realPath}|${expiresAt}|${tokenId}`)
+    .update(`${normalizeSlug(uri)}|${realPath}|${expiresAt}|${tokenId}${generationSuffix}`)
     .digest('hex');
 }
 
@@ -441,6 +443,84 @@ export function createShare(slug, duration, options = {}) {
 
   logger.info('share created', { pageId: page.pageId, uri: page.uri, tokenId, duration, expiresAt, canWriteAttachments });
   return { token: legacyTokenFor(record), tokenId, pageId: page.pageId, expiresAt, canWriteAttachments };
+}
+
+export function generateSharePassword() {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+function validateProvidedSharePassword(password) {
+  if (typeof password !== 'string') {
+    throw Object.assign(new Error('Password is required'), { code: 'invalid_password', statusCode: 400 });
+  }
+  const bytes = Buffer.byteLength(password, 'utf8');
+  if (bytes < 8 || bytes > 1024) {
+    throw Object.assign(new Error('Password must be between 8 and 1024 bytes'), {
+      code: 'invalid_password',
+      statusCode: 400,
+    });
+  }
+  return password;
+}
+
+export async function createPasswordProtectedShare(slug, duration, options = {}, keyring, cryptoOptions = {}) {
+  initShareStore();
+  const uri = pageUriFromSlug(slug);
+  const page = getLogicalPage(uri);
+  if (!page) {
+    throw Object.assign(new Error('Page not found'), { statusCode: 404 });
+  }
+  const durationMs = DURATION_MAP[duration];
+  if (durationMs === undefined) {
+    throw Object.assign(new Error('Invalid duration. Use: 24h, 7d, 30d, or permanent'), { statusCode: 400 });
+  }
+
+  const password = options.password === undefined
+    ? generateSharePassword()
+    : validateProvidedSharePassword(options.password);
+  const tokenId = crypto.randomBytes(TOKEN_ID_BYTES).toString('hex');
+  const createdAt = nowMs();
+  const expiresAt = durationMs === 0 ? 0 : createdAt + durationMs;
+  const canWriteAttachments = options.canWriteAttachments === true;
+  const credentialVersion = 1;
+  const credential = await buildSharePasswordCredential(password, {
+    tokenId,
+    pageId: page.pageId,
+    credentialVersion,
+  }, keyring, cryptoOptions);
+
+  db.transaction(() => {
+    const inserted = _insertShare.run({
+      tokenId,
+      pageId: page.pageId,
+      expiresAt,
+      createdAt,
+      canWriteAttachments: canWriteAttachments ? 1 : 0,
+      revoked: 0,
+      revokedAt: null,
+    });
+    if (inserted.changes !== 1) throw new Error('Could not create protected share');
+    const replaced = _replaceSharePassword.run({
+      ...credential,
+      tokenId,
+      previousCredentialVersion: 0,
+      nextCredentialVersion: credentialVersion,
+      passwordSetAt: createdAt,
+      now: createdAt,
+    });
+    if (replaced.changes !== 1) throw new Error('Could not protect share atomically');
+  })();
+
+  logger.info('protected share created', {
+    pageId: page.pageId,
+    uri: page.uri,
+    tokenId,
+    duration,
+    expiresAt,
+    canWriteAttachments,
+  });
+  const record = activeShareRecord(tokenId);
+  return { ...record, token: legacyTokenFor(record), password };
 }
 
 export function getActiveShare(tokenId) {
@@ -510,6 +590,38 @@ export function verifyShareAccessCookie(cookieValue, requestSlug) {
     pageId: session.page_id,
     tokenId: session.token_id,
     expiresAt: session.share_expires_at,
+    credentialVersion: session.share_credential_version,
+    viewerType: 'share',
+    canWriteAttachments: session.can_write_attachments === 1,
+  };
+}
+
+export function verifyShareAccessCookieForToken(cookieValue, tokenId) {
+  initShareStore();
+  if (!cookieValue || typeof cookieValue !== 'string' || !isTokenId(tokenId)) return { valid: false };
+  const hash = sha256(cookieValue);
+  const session = _getShareSession.get(hash);
+  if (!session || session.token_id !== tokenId) return { valid: false };
+
+  const current = nowMs();
+  if (isPastDeadline(session.expires_at, current) ||
+      session.share_revoked ||
+      hasExpired(session.share_expires_at, current) ||
+      session.credential_version !== session.share_credential_version) {
+    _deleteShareSession.run(hash);
+    return { valid: false };
+  }
+  const page = getLogicalPageById(session.page_id);
+  if (!page) return { valid: false };
+  _touchShareSession.run(current, hash);
+  return {
+    valid: true,
+    slug: `p/${page.uri}`,
+    uri: page.uri,
+    pageId: session.page_id,
+    tokenId: session.token_id,
+    expiresAt: session.share_expires_at,
+    credentialVersion: session.share_credential_version,
     viewerType: 'share',
     canWriteAttachments: session.can_write_attachments === 1,
   };
@@ -554,12 +666,14 @@ export function shareAssetExpiresAt(shareExpiresAt) {
   return Math.max(0, Math.min(cap, Number(shareExpiresAt)));
 }
 
-export function createShareAssetSignature({ uri, realPath, expiresAt, tokenId }) {
-  if (!isTokenId(tokenId) || !Number.isFinite(Number(expiresAt))) {
+export function createShareAssetSignature({ uri, realPath, expiresAt, tokenId, credentialVersion = 0 }) {
+  const generation = Number(credentialVersion);
+  if (!isTokenId(tokenId) || !Number.isFinite(Number(expiresAt)) ||
+      !Number.isSafeInteger(generation) || generation < 0) {
     throw new Error('Invalid share asset signature input');
   }
-  const hmac = computeShareAssetHmac(uri, realPath, Number(expiresAt), tokenId, getSecret());
-  return `${tokenId}.${hmac}`;
+  const hmac = computeShareAssetHmac(uri, realPath, Number(expiresAt), tokenId, generation, getSecret());
+  return generation === 0 ? `${tokenId}.${hmac}` : `${tokenId}.${generation}.${hmac}`;
 }
 
 export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, sig }) {
@@ -567,20 +681,29 @@ export function verifyShareAssetSignature({ uri, realPath, expiresAt, tokenId, s
   if (!Number.isFinite(exp) || !sig || typeof sig !== 'string') {
     return { valid: false };
   }
-  let actualSig = sig;
   let actualTokenId = tokenId;
-  const dotIndex = sig.indexOf('.');
-  if (dotIndex !== -1) {
-    actualTokenId = sig.slice(0, dotIndex);
-    actualSig = sig.slice(dotIndex + 1);
+  let credentialVersion = 0;
+  let actualSig = sig;
+  const parts = sig.split('.');
+  if (parts.length === 2) {
+    [actualTokenId, actualSig] = parts;
+  } else if (parts.length === 3) {
+    actualTokenId = parts[0];
+    credentialVersion = Number(parts[1]);
+    actualSig = parts[2];
+  } else if (parts.length !== 1) {
+    return { valid: false };
   }
   if (!isTokenId(actualTokenId)) return { valid: false };
+  if (!Number.isSafeInteger(credentialVersion) || credentialVersion < 0) return { valid: false };
   if (isPastDeadline(exp)) return { valid: false };
   const record = activeShareRecord(actualTokenId);
   if (!record || record.uri !== pageUriFromSlug(uri)) return { valid: false };
   if (record.expiresAt !== 0 && exp > record.expiresAt) return { valid: false };
+  if (record.credentialVersion !== credentialVersion) return { valid: false };
+  if (credentialVersion === 0 && record.passwordProtected) return { valid: false };
 
-  const expected = computeShareAssetHmac(uri, realPath, exp, actualTokenId, getSecret());
+  const expected = computeShareAssetHmac(uri, realPath, exp, actualTokenId, credentialVersion, getSecret());
   const actualBuffer = Buffer.from(actualSig, 'hex');
   const expectedBuffer = Buffer.from(expected, 'hex');
   if (actualBuffer.length !== expectedBuffer.length) return { valid: false };

@@ -2,6 +2,8 @@ function bucketKey(value) {
   return String(value || '').trim();
 }
 
+const PRUNE_THRESHOLD = 1000;
+
 export class SharePasswordRateLimiter {
   constructor({ windowMs = 60_000, tokenMax = 8, ipMax = 24, now = Date.now } = {}) {
     for (const [name, value] of Object.entries({ windowMs, tokenMax, ipMax })) {
@@ -31,6 +33,7 @@ export class SharePasswordRateLimiter {
     const ip = bucketKey(clientIp);
     if (!token || !ip) return { allowed: false, retryAfterMs: this.windowMs };
     const current = this.now();
+    if (this.tokenBuckets.size + this.ipBuckets.size > PRUNE_THRESHOLD) this.prune(current);
 
     // Check both budgets before incrementing either. A rejected token-wide
     // attempt must not also consume the caller's IP allowance (and vice versa).
@@ -50,8 +53,7 @@ export class SharePasswordRateLimiter {
     return { allowed: true, retryAfterMs: 0 };
   }
 
-  prune() {
-    const current = this.now();
+  prune(current = this.now()) {
     for (const map of [this.tokenBuckets, this.ipBuckets]) {
       for (const [key, bucket] of map) {
         if (current >= bucket.resetAt) map.delete(key);

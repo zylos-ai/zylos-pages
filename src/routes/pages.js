@@ -181,6 +181,15 @@ export async function renderSharePage(req, res, { slug, config, browserBase, sha
   return renderPageSlug({ req, res, config, browserBase, rawSlug: slug, shareContext: share });
 }
 
+export async function renderOwnerPage(req, res, { slug, config, browserBase }) {
+  res.locals.authenticated = true;
+  res.locals.viewerType = undefined;
+  res.locals.shareContext = undefined;
+  res.locals.shareCanWriteAttachments = undefined;
+  res.setHeader('Cache-Control', 'no-store');
+  return renderPageSlug({ req, res, config, browserBase, rawSlug: slug });
+}
+
 /**
  * Route handler for GET /:slug(*)
  */
