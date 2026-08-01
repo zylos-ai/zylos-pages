@@ -10,6 +10,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
+import { ensureSharePasswordKeyring } from './ensure-share-password-keyring.js';
+
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/pages');
 const CONTENT_DIR = path.join(HOME, 'zylos/http/public/pages');
@@ -156,7 +158,14 @@ if (!fs.existsSync(configPath)) {
   }
 }
 
-// 4. Create sample welcome page if content dir is empty
+// 4. Initialize share password keyring so protected shares work out of the box
+console.log('\nChecking share password keyring...');
+ensureSharePasswordKeyring({
+  log: (message) => console.log(`  ${message}`),
+  warn: (message) => console.warn(`  ${message}`),
+});
+
+// 5. Create sample welcome page if content dir is empty
 const existingFiles = fs.readdirSync(CONTENT_DIR).filter(f => f.endsWith('.md'));
 if (existingFiles.length === 0) {
   console.log('\nCreating sample page...');

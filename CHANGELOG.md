@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Share password custody now initializes automatically.** The post-install
+  and post-upgrade hooks detect a missing keyring configuration, set
+  `sharing.passwordKeyFile` to a default outside the Pages data directory,
+  and run the keyring init step, so password-protected shares work
+  immediately after install or upgrade. Existing keyrings are left untouched;
+  a configured-but-missing keyring is not recreated (lost-keyring recovery
+  still fails closed), and custody setup failures warn without breaking the
+  install/upgrade.
+
 ## [0.7.10] - 2026-07-26
 
 This is the first public release after v0.7.8. Source version 0.7.9 was never

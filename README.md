@@ -133,13 +133,21 @@ authenticated owner writes are intentionally exempt.
 
 ### Optional share passwords
 
-Password custody is opt-in. Configure `sharing.passwordKeyFile` (or
-`PAGES_SHARE_PASSWORD_KEY_FILE`) outside the Pages data directory, then create
-the versioned 0600 keyring before enabling protected shares:
+The install and upgrade hooks make custody work out of the box: when no
+keyring path is configured, they set `sharing.passwordKeyFile` to a default
+outside the Pages data directory
+(`~/zylos/vault/credentials/pages/share-password-keys.json`) and create the
+versioned 0600 keyring there. To place the keyring yourself, configure
+`sharing.passwordKeyFile` (or `PAGES_SHARE_PASSWORD_KEY_FILE`) before
+install/upgrade, or at any time run:
 
 ```bash
 node src/cli/pages.js share-password keyring init
 ```
+
+If a configured keyring file is missing, the hooks deliberately do not
+recreate it — that is the lost-keyring scenario described below and it fails
+closed until operator recovery.
 
 Do not copy key bytes into `config.json`. Back up `pages.db` and the keyring as
 a consistent pair: the database alone can still verify recipient passwords but
