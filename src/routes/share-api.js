@@ -24,7 +24,7 @@ import { browserBaseFromRequest, browserPath, cookiePathFromBase } from '../lib/
 import { renderOwnerPage, renderSharePage } from './pages.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { normalizeSlug } from '../utils/slug.js';
-import { createShareAuthorization, SHARE_PASSWORD_HEADER } from '../security/share-authorization.js';
+import { createShareAuthorization, SHARE_PASSWORD_HEADER, SHARE_PASSWORD_HEADER_NAME } from '../security/share-authorization.js';
 import {
   loadSharePasswordKeyring,
   resolveSharePasswordKeyFile,
@@ -225,11 +225,16 @@ function shareChallengeHtml(tokenId, browserBase, code) {
         </div>
         <button type="submit">Unlock</button>
       </form>
+      <p class="login-hint">Agents / API clients: request the page with the
+        <code>${SHARE_PASSWORD_HEADER_NAME}</code> header set to the password.</p>
     </div>
   </main>
 </body>
 </html>`;
 }
+
+const WWW_AUTHENTICATE_CHALLENGE =
+  `ZylosShare realm="pages-share", header="${SHARE_PASSWORD_HEADER_NAME}"`;
 
 function sendReadFailure(req, res, failure, representation, tokenId) {
   res.setHeader('Cache-Control', 'no-store');
@@ -237,14 +242,18 @@ function sendReadFailure(req, res, failure, representation, tokenId) {
   res.setHeader('X-Zylos-Share-Error', failure.code);
   if (failure.retryAfterSeconds) res.setHeader('Retry-After', String(failure.retryAfterSeconds));
   if (representation === 'markdown') {
-    if (failure.status === 401) res.setHeader('WWW-Authenticate', 'ZylosShare realm="pages-share"');
+    if (failure.status === 401) res.setHeader('WWW-Authenticate', WWW_AUTHENTICATE_CHALLENGE);
     res.setHeader('Content-Type', 'application/problem+json; charset=utf-8');
-    return res.status(failure.status).json({
+    const problem = {
       type: 'about:blank',
       title: failure.code === 'rate_limited' ? 'Share password rate limit exceeded' : 'Share password required',
       status: failure.status,
       code: failure.code,
-    });
+    };
+    // Self-describing 401: tell an unfamiliar agent HOW to present the
+    // password, not just that one is required.
+    if (failure.status === 401) problem.password_header = SHARE_PASSWORD_HEADER_NAME;
+    return res.status(failure.status).json(problem);
   }
   // Browser representation: the unlock challenge is served as 200, not 401 —
   // in-app webviews (e.g. Lark) replace any non-2xx main document with their
@@ -256,7 +265,7 @@ function sendReadFailure(req, res, failure, representation, tokenId) {
   const agentHeaderProof = typeof req.headers[SHARE_PASSWORD_HEADER] === 'string' &&
     req.headers[SHARE_PASSWORD_HEADER].length > 0;
   const htmlStatus = failure.status === 401 && !agentHeaderProof ? 200 : failure.status;
-  if (htmlStatus === 401) res.setHeader('WWW-Authenticate', 'ZylosShare realm="pages-share"');
+  if (htmlStatus === 401) res.setHeader('WWW-Authenticate', WWW_AUTHENTICATE_CHALLENGE);
   return res.status(htmlStatus).send(shareChallengeHtml(
     tokenId,
     browserBaseFromRequest(req),

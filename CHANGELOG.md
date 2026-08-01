@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **The share password wall is now self-describing for unfamiliar agents and
+  API clients.** The browser unlock page shows a hint under the password
+  field naming the `X-Zylos-Share-Password` request header; the agent-facing
+  401 responses name it machine-readably in both channels —
+  `WWW-Authenticate: ZylosShare realm="pages-share", header="X-Zylos-Share-Password"`
+  and a `password_header` field in the problem+json body — so a client that
+  has never seen the Pages component can unlock a protected share from the
+  response alone. The header name is not a secret: protection continues to
+  rest on the password hash and the pre-KDF rate limiter. Successful reads
+  advertise nothing.
+
 ## [0.8.0] - 2026-08-02
 
 ### Added

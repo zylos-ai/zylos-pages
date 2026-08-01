@@ -7,6 +7,10 @@ import {
 import { SharePasswordRateLimiter } from './share-password-rate-limit.js';
 
 export const SHARE_PASSWORD_HEADER = 'x-zylos-share-password';
+// Canonical spelling for user-facing surfaces (unlock page hint, 401
+// self-description). The name is not a secret — protection rests on the
+// password hash and the pre-KDF rate limiter.
+export const SHARE_PASSWORD_HEADER_NAME = 'X-Zylos-Share-Password';
 
 function parseCookie(header, name) {
   if (!header) return null;

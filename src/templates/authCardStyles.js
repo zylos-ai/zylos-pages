@@ -92,6 +92,20 @@ export const AUTH_CARD_CSS = `
       transition: background 0.12s ease;
     }
     .login-card button:hover { background: var(--color-link-hover); }
+    .login-hint {
+      margin: 18px 0 0;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+      text-align: center;
+      line-height: 1.5;
+    }
+    .login-hint code {
+      font-size: 11px;
+      padding: 1px 4px;
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      background: var(--color-bg-secondary, transparent);
+    }
     .login-error {
       background: rgba(207, 34, 46, 0.1);
       border: 1px solid rgba(207, 34, 46, 0.25);

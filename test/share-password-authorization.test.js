@@ -621,7 +621,7 @@ test('unlock challenge status boundary: browser HTML is 200 while agent proof pa
     });
     assert.equal(response.status, 401, 'header proof must keep 401 even on the HTML route');
     assert.equal(response.headers.get('x-zylos-share-error'), 'invalid_password');
-    assert.equal(response.headers.get('www-authenticate'), 'ZylosShare realm="pages-share"');
+    assert.equal(response.headers.get('www-authenticate'), 'ZylosShare realm="pages-share", header="X-Zylos-Share-Password"');
     assert.equal(response.headers.get('set-cookie'), null);
 
     // Wrong header on the raw markdown route:
@@ -635,7 +635,7 @@ test('unlock challenge status boundary: browser HTML is 200 while agent proof pa
     // Missing header on the raw markdown route:
     response = await fetch(`${share.shortUrl}.md`);
     assert.equal(response.status, 401);
-    assert.equal(response.headers.get('www-authenticate'), 'ZylosShare realm="pages-share"');
+    assert.equal(response.headers.get('www-authenticate'), 'ZylosShare realm="pages-share", header="X-Zylos-Share-Password"');
     assert.equal((await response.json()).code, 'password_required');
   } finally {
     server.close();
@@ -656,6 +656,50 @@ test('protected creation is refused when the owner surface is unauthenticated', 
     });
     assert.equal(response.status, 409);
     assert.equal((await response.json()).code, 'protection_unavailable');
+  } finally {
+    server.close();
+  }
+});
+
+test('password wall is self-describing for unfamiliar agents', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const ownerCookie = await login(origin);
+    const share = await createProtected(origin, ownerCookie);
+
+    // Browser challenge carries a human/agent-readable hint naming the header.
+    let response = await fetch(share.shortUrl, { redirect: 'manual' });
+    assert.equal(response.status, 200);
+    const challengeHtml = await response.text();
+    assert.match(challengeHtml, /login-hint/);
+    assert.match(challengeHtml, /X-Zylos-Share-Password/,
+      'unlock page must name the agent password header');
+
+    // Agent 401 names the header in both machine-readable channels.
+    response = await fetch(`${share.shortUrl}.md`);
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('www-authenticate'),
+      'ZylosShare realm="pages-share", header="X-Zylos-Share-Password"');
+    let problem = await response.json();
+    assert.equal(problem.code, 'password_required');
+    assert.equal(problem.password_header, 'X-Zylos-Share-Password',
+      'problem+json must tell the agent how to present the password');
+
+    // Wrong password is still a 401 and keeps the same self-description.
+    response = await fetch(`${share.shortUrl}.md`, {
+      headers: { 'X-Zylos-Share-Password': 'wrong-secret' },
+    });
+    assert.equal(response.status, 401);
+    problem = await response.json();
+    assert.equal(problem.code, 'invalid_password');
+    assert.equal(problem.password_header, 'X-Zylos-Share-Password');
+
+    // Negative control: a successful read advertises nothing.
+    response = await fetch(`${share.shortUrl}.md`, {
+      headers: { 'X-Zylos-Share-Password': 'viewer-secret' },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('www-authenticate'), null);
   } finally {
     server.close();
   }
