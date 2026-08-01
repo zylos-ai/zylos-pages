@@ -30,11 +30,14 @@
   viewport — instead of bare unstyled HTML. The card styles are shared with
   the login page via a common template module; the page needs no JavaScript
   and the form semantics are unchanged.
-- **Generated share passwords are now 8 numeric digits** (previously
+- **Generated share passwords are now 6 numeric digits** (previously
   22-character base64url). Short numeric passwords are practical to relay in
   chat, and brute force is bounded by the per-token pre-KDF rate limiter
-  rather than by password entropy. Provided passwords are unchanged
-  (8–1024 bytes).
+  rather than by password entropy — the share URL itself remains the primary
+  128-bit bearer secret.
+- **Provided share passwords now accept 4–1024 bytes** (previously
+  8–1024). The floor is enforced consistently across the share API, the
+  share manager, the CLI, and the owner-UI input hints.
 
 ### Fixed
 

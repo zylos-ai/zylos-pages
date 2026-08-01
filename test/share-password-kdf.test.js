@@ -10,11 +10,11 @@ import {
 import { SharePasswordRateLimiter } from '../src/security/share-password-rate-limit.js';
 import { generateSharePassword } from '../src/sharing/share-password-crypto.js';
 
-test('generated share passwords are exactly 8 numeric digits, leading zeros preserved', () => {
+test('generated share passwords are exactly 6 numeric digits, leading zeros preserved', () => {
   const generated = Array.from({ length: 64 }, () => generateSharePassword());
   for (const password of generated) {
-    assert.match(password, /^[0-9]{8}$/);
-    assert.ok(Buffer.byteLength(password, 'utf8') >= 8, 'must satisfy the provided-password minimum');
+    assert.match(password, /^[0-9]{6}$/);
+    assert.ok(Buffer.byteLength(password, 'utf8') >= 4, 'must satisfy the provided-password minimum');
   }
   assert.ok(new Set(generated).size > 32, 'generator must draw from the full space, not a degenerate range');
 });

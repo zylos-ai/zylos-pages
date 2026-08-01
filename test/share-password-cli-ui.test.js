@@ -53,7 +53,7 @@ test('CLI creates and repeatedly retrieves generated passwords without leaking t
 
   const shared = runJson(fx, ['share', 'secure/report', '--duration', '7d', '--password']);
   const secret = shared.protection.password;
-  assert.match(secret, /^[0-9]{8}$/);
+  assert.match(secret, /^[0-9]{6}$/);
 
   const listed = runJson(fx, ['shares', 'secure/report']);
   const described = runJson(fx, ['share-info', shared.shortUrl]);
@@ -105,6 +105,19 @@ test('provided CLI password is accepted only through stdin and stable failures s
   const argvRejected = run(fx, ['share', 'secure/provided', '--password', secret, '--json']);
   assert.notEqual(argvRejected.status, 0);
   assert.equal(JSON.parse(argvRejected.stdout).code, 'invalid_args');
+});
+
+test('provided CLI password length boundary: 4 bytes passes, 3 bytes fails', () => {
+  const fx = fixture();
+  runJson(fx, ['share-password', 'keyring', 'init']);
+  register(fx, 'secure/boundary');
+
+  const tooShort = run(fx, ['share', 'secure/boundary', '--password-stdin', '--json'], { input: '123\n' });
+  assert.notEqual(tooShort.status, 0);
+  assert.equal(JSON.parse(tooShort.stdout).code, 'invalid_password');
+
+  const shared = runJson(fx, ['share', 'secure/boundary', '--password-stdin'], { input: '1234\n' });
+  assert.equal(shared.protection.password, '1234');
 });
 
 test('owner UI sources fetch secrets explicitly and never persist them in browser storage or URLs', () => {

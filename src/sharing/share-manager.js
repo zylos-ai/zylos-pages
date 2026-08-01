@@ -451,8 +451,8 @@ function validateProvidedSharePassword(password) {
     throw Object.assign(new Error('Password is required'), { code: 'invalid_password', statusCode: 400 });
   }
   const bytes = Buffer.byteLength(password, 'utf8');
-  if (bytes < 8 || bytes > 1024) {
-    throw Object.assign(new Error('Password must be between 8 and 1024 bytes'), {
+  if (bytes < 4 || bytes > 1024) {
+    throw Object.assign(new Error('Password must be between 4 and 1024 bytes'), {
       code: 'invalid_password',
       statusCode: 400,
     });

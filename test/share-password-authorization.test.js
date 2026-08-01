@@ -487,7 +487,7 @@ test('owner lifecycle endpoints reveal only explicitly and invalidate old proof 
     assert.equal(response.status, 200);
     const enabled = await response.json();
     const firstPassword = enabled.protection.password;
-    assert.match(firstPassword, /^[0-9]{8}$/);
+    assert.match(firstPassword, /^[0-9]{6}$/);
 
     response = await fetch(`${origin}/api/shares/p/protected`, { headers: { Cookie: ownerCookie } });
     const listed = await response.json();
@@ -537,6 +537,42 @@ test('owner lifecycle endpoints reveal only explicitly and invalidate old proof 
     response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(response.status, 200);
     assert.match(response.headers.get('set-cookie'), /__Secure-share_access=/);
+  } finally {
+    server.close();
+  }
+});
+
+test('provided password length boundary: 4 bytes is accepted, 3 bytes is refused', async () => {
+  const { server, origin } = await makeServer();
+  try {
+    const ownerCookie = await login(origin);
+    let response = await fetch(`${origin}/api/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: ownerCookie },
+      body: JSON.stringify({ slug: 'p/protected', duration: '24h' }),
+    });
+    assert.equal(response.status, 200);
+    const share = await response.json();
+
+    response = await fetch(`${origin}/api/share/${share.tokenId}/password/enable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: ownerCookie },
+      body: JSON.stringify({ mode: 'provided', password: '123' }),
+    });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).code, 'invalid_password');
+
+    response = await fetch(`${origin}/api/share/${share.tokenId}/password/enable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: ownerCookie },
+      body: JSON.stringify({ mode: 'provided', password: '1234' }),
+    });
+    assert.equal(response.status, 200);
+
+    response = await fetch(`${origin}/s/${share.tokenId}.md`, {
+      headers: { 'X-Zylos-Share-Password': '1234' },
+    });
+    assert.equal(response.status, 200, 'the 4-byte password must actually unlock the share');
   } finally {
     server.close();
   }
