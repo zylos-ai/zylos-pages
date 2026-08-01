@@ -10,14 +10,13 @@ import {
 import { SharePasswordRateLimiter } from '../src/security/share-password-rate-limit.js';
 import { generateSharePassword } from '../src/sharing/share-password-crypto.js';
 
-test('generated share passwords are exactly 16 random bytes / 22 unpadded base64url characters', () => {
-  const generated = new Set(Array.from({ length: 64 }, () => generateSharePassword()));
-  assert.equal(generated.size, 64);
+test('generated share passwords are exactly 8 numeric digits, leading zeros preserved', () => {
+  const generated = Array.from({ length: 64 }, () => generateSharePassword());
   for (const password of generated) {
-    assert.match(password, /^[A-Za-z0-9_-]{22}$/);
-    assert.equal(Buffer.from(password, 'base64url').length, 16);
-    assert.equal(password.includes('='), false);
+    assert.match(password, /^[0-9]{8}$/);
+    assert.ok(Buffer.byteLength(password, 'utf8') >= 8, 'must satisfy the provided-password minimum');
   }
+  assert.ok(new Set(generated).size > 32, 'generator must draw from the full space, not a degenerate range');
 });
 
 test('share password hashes are self-describing and verify asynchronously', async () => {

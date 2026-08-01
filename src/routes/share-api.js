@@ -10,7 +10,6 @@ import {
   createPasswordProtectedShare,
   createShareAccessCookie,
   disableSharePassword,
-  generateSharePassword,
   getActiveShare,
   revealActiveSharePassword,
   revokeShare,
@@ -30,12 +29,21 @@ import {
   loadSharePasswordKeyring,
   resolveSharePasswordKeyFile,
 } from '../sharing/share-password-keyring.js';
+import { generateSharePassword } from '../sharing/share-password-crypto.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
  * Rejects requests without a matching host header.
+ *
+ * `allowNullOrigin` is a route-local exception for the literal `Origin: null`
+ * sent by opaque-origin webviews (e.g. WeChat's built-in browser posting the
+ * unlock form). Only the share unlock route opts in: forcing someone through
+ * unlock grants the attacker nothing (the response carries no content and the
+ * cookie is HttpOnly), and brute force is bounded by the pre-KDF rate limiter.
+ * A present Referer must still be same-origin, and an absent Origin is NOT
+ * treated as `null` — both-missing stays rejected.
  */
-function csrfCheck(req, res) {
+function csrfCheck(req, res, { allowNullOrigin = false } = {}) {
   const expectedHost = req.headers.host;
 
   function extractHost(urlOrOrigin) {
@@ -46,6 +54,13 @@ function csrfCheck(req, res) {
   const referer = req.headers.referer;
 
   if (origin) {
+    if (allowNullOrigin && origin === 'null') {
+      if (referer && extractHost(referer) !== expectedHost) {
+        res.status(403).json({ error: 'CSRF validation failed' });
+        return false;
+      }
+      return true;
+    }
     if (extractHost(origin) !== expectedHost) {
       res.status(403).json({ error: 'CSRF validation failed' });
       return false;
@@ -328,7 +343,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
   app.post('/s/:tokenId/unlock', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    if (!csrfCheck(req, res)) return;
+    if (!csrfCheck(req, res, { allowNullOrigin: true })) return;
     const share = getActiveShare(req.params.tokenId);
     if (!share) return sendApiError(res, 404, 'share_not_found', 'Share not found');
     if (!share.passwordProtected) {
