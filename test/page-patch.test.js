@@ -224,6 +224,15 @@ test('PATCH rejects invalid input', async () => {
     });
     assert.equal(crossOrigin.status, 403);
 
+    // The literal `Origin: null` is likewise rejected — the WeChat unlock
+    // exception is route-local to share unlock and must not reach this gate.
+    const nullOrigin = await fetch(`${origin}/api/pages/${page.pageId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Origin: 'null' },
+      body: JSON.stringify({ title: 'Nope' }),
+    });
+    assert.equal(nullOrigin.status, 403);
+
     assert.equal(getLogicalPage('invalid/input').title, 'Invalid Input');
   } finally {
     server.close();

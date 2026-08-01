@@ -37,11 +37,14 @@ import { generateSharePassword } from '../sharing/share-password-crypto.js';
  *
  * `allowNullOrigin` is a route-local exception for the literal `Origin: null`
  * sent by opaque-origin webviews (e.g. WeChat's built-in browser posting the
- * unlock form). Only the share unlock route opts in: forcing someone through
- * unlock grants the attacker nothing (the response carries no content and the
- * cookie is HttpOnly), and brute force is bounded by the pre-KDF rate limiter.
- * A present Referer must still be same-origin, and an absent Origin is NOT
- * treated as `null` — both-missing stays rejected.
+ * unlock form). Only the share unlock route opts in. A cross-site POST forced
+ * through unlock is low-impact but not nothing: it can overwrite the
+ * mount-path-scoped unlock cookie and force the victim to re-enter the
+ * password. That residual is accepted because no content is disclosed and no
+ * privilege is gained, and it stays bounded only through the combination of
+ * controls — a present Referer must still be same-origin, an absent Origin is
+ * NOT treated as `null` (both-missing stays rejected), and the pre-KDF rate
+ * limiter bounds brute force. No single control is the defense on its own.
  */
 function csrfCheck(req, res, { allowNullOrigin = false } = {}) {
   const expectedHost = req.headers.host;
