@@ -160,6 +160,37 @@ test('a valid default keyring left by a half-completed run is adopted', () => wi
   assert.deepEqual(fs.readFileSync(keyFile), before);
 }));
 
+test('a failed config commit leaves the old config bytes intact; the next run adopts', () => withoutKeyFileEnv(() => {
+  const home = makeHome({ sharing: { enabled: true } });
+  const configPath = path.join(home, 'zylos/components/pages/config.json');
+  const configBefore = fs.readFileSync(configPath);
+  const configDir = path.dirname(configPath);
+
+  // Inject a config-persistence failure: the keyring half succeeds (vault path
+  // is writable), then the pointer commit cannot create its temp file.
+  fs.chmodSync(configDir, 0o500);
+  const warned = capture();
+  let first;
+  try {
+    first = ensureSharePasswordKeyring({ home, log: () => {}, warn: warned.sink });
+  } finally {
+    fs.chmodSync(configDir, 0o700);
+  }
+  assert.equal(first.status, 'error');
+  assert.match(warned.lines.join('\n'), /keyring setup failed/);
+  // The old config must remain byte-identical — a truncated config would make
+  // every later run fail at parse and never reach adoption.
+  assert.deepEqual(fs.readFileSync(configPath), configBefore);
+  const keyFile = defaultSharePasswordKeyFile(home);
+  assert.equal(fs.existsSync(keyFile), true);
+  const keyBytes = fs.readFileSync(keyFile);
+
+  const second = ensureSharePasswordKeyring({ home, log: () => {}, warn: () => {} });
+  assert.equal(second.status, 'adopted');
+  assert.deepEqual(fs.readFileSync(keyFile), keyBytes);
+  assert.equal(readConfig(home).sharing.passwordKeyFile, keyFile);
+}));
+
 test('an invalid file at the default path is not adopted and config stays unchanged', () => withoutKeyFileEnv(() => {
   const home = makeHome({ sharing: { enabled: true } });
   const keyFile = defaultSharePasswordKeyFile(home);

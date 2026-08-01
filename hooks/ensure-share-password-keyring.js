@@ -30,6 +30,16 @@ export function defaultSharePasswordKeyFile(home) {
   return path.join(home, 'zylos/vault/credentials/pages/share-password-keys.json');
 }
 
+// Same atomic temp-file + rename shape as writeConfigFile in src/cli/pages.js:
+// a failed commit must leave the previous config.json bytes untouched, or the
+// next run cannot parse the config and never reaches the adoption branch.
+function commitConfigAtomic(configPath, config) {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  const tempPath = `${configPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  fs.renameSync(tempPath, configPath);
+}
+
 export function ensureSharePasswordKeyring({
   home = process.env.HOME,
   log = console.log,
@@ -72,7 +82,7 @@ export function ensureSharePasswordKeyring({
       log(`Share password keyring initialized: ${keyFile} (${created.activeKeyId})`);
     }
     config.sharing = { ...(config.sharing || {}), passwordKeyFile: keyFile };
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    commitConfigAtomic(configPath, config);
     log(`Set sharing.passwordKeyFile to default: ${keyFile}`);
     return created
       ? { status: 'created', keyFile, activeKeyId: created.activeKeyId }
