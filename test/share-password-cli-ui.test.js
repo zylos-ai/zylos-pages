@@ -53,7 +53,7 @@ test('CLI creates and repeatedly retrieves generated passwords without leaking t
 
   const shared = runJson(fx, ['share', 'secure/report', '--duration', '7d', '--password']);
   const secret = shared.protection.password;
-  assert.match(secret, /^[0-9]{8}$/);
+  assert.match(secret, /^[0-9]{6}$/);
 
   const listed = runJson(fx, ['shares', 'secure/report']);
   const described = runJson(fx, ['share-info', shared.shortUrl]);
@@ -107,6 +107,19 @@ test('provided CLI password is accepted only through stdin and stable failures s
   assert.equal(JSON.parse(argvRejected.stdout).code, 'invalid_args');
 });
 
+test('provided CLI password length boundary: 4 bytes passes, 3 bytes fails', () => {
+  const fx = fixture();
+  runJson(fx, ['share-password', 'keyring', 'init']);
+  register(fx, 'secure/boundary');
+
+  const tooShort = run(fx, ['share', 'secure/boundary', '--password-stdin', '--json'], { input: '123\n' });
+  assert.notEqual(tooShort.status, 0);
+  assert.equal(JSON.parse(tooShort.stdout).code, 'invalid_password');
+
+  const shared = runJson(fx, ['share', 'secure/boundary', '--password-stdin'], { input: '1234\n' });
+  assert.equal(shared.protection.password, '1234');
+});
+
 test('owner UI sources fetch secrets explicitly and never persist them in browser storage or URLs', () => {
   const shareScript = fs.readFileSync(path.join(repoRoot, 'assets/share.js'), 'utf8');
   const adminSource = fs.readFileSync(path.join(repoRoot, 'src/admin/Admin.jsx'), 'utf8');
@@ -122,4 +135,20 @@ test('owner UI sources fetch secrets explicitly and never persist them in browse
   assert.ok(!template.includes('protection.password'));
   assert.match(style, /\.share-list-items > \.share-item \{[^}]*flex-direction:\s*column;/s);
   assert.match(style, /\.share-list-items > \.share-item \.share-item-actions \{[^}]*width:\s*100%;[^}]*flex-wrap:\s*wrap;/s);
+});
+
+test('every owner-UI provided-password input advertises the 4-byte floor', () => {
+  const adminSource = fs.readFileSync(path.join(repoRoot, 'src/admin/Admin.jsx'), 'utf8');
+  const adminBundle = fs.readFileSync(path.join(repoRoot, 'assets/admin.js'), 'utf8');
+  const template = fs.readFileSync(path.join(repoRoot, 'src/templates/pageTemplate.js'), 'utf8');
+
+  for (const [name, source] of [['Admin.jsx', adminSource], ['pageTemplate.js', template]]) {
+    assert.ok(!/minlength="8"|minLength="8"|8–1024 bytes/i.test(source), `${name} must not advertise the old 8-byte floor`);
+  }
+  assert.match(adminSource, /minLength="4"/);
+  assert.match(template, /minlength="4"/);
+  // The shipped bundle is built from Admin.jsx; a stale build silently
+  // re-introduces the old floor, so it is pinned too (en dash minifies to –).
+  assert.ok(/minLength:"4"/.test(adminBundle) && !/8\\u20131024|8–1024/.test(adminBundle),
+    'assets/admin.js must be rebuilt after Admin.jsx password-floor changes');
 });

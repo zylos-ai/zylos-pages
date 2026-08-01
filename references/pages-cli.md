@@ -41,10 +41,10 @@ node src/cli/pages.js unshare --token <token-id>
 node src/cli/pages.js unshare reports/q3
 ```
 
-A share is unprotected by default. `--password` generates an 8-digit numeric
+A share is unprotected by default. `--password` generates a 6-digit numeric
 password (easy to relay in chat; brute force is bounded by the per-token
 rate limiter, not password entropy); `--password-stdin` reads a provided
-8–1024 byte password without placing it in argv. Both explicit secret-returning modes print the
+4–1024 byte password without placing it in argv. Both explicit secret-returning modes print the
 password to stdout, so treat terminal capture and `--json` output as sensitive.
 
 - `share` accepts `24h`, `7d`, `30d`, or `permanent`. Permanent links are always allowed — the `sharing.allowPermanent` gate was removed in 0.7.5, and a leftover key in `config.json` is ignored with a startup warning.

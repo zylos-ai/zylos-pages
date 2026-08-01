@@ -106,7 +106,7 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
           <div class="share-password-create-options" hidden>
             <label><input type="radio" name="share-password-mode" value="generated" checked> Generate a strong password</label>
             <label><input type="radio" name="share-password-mode" value="provided"> Provide a password</label>
-            <input type="password" class="share-provided-password" minlength="8" maxlength="1024" autocomplete="new-password" placeholder="8–1024 bytes" hidden>
+            <input type="password" class="share-provided-password" minlength="4" maxlength="1024" autocomplete="new-password" placeholder="4–1024 bytes" hidden>
           </div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
@@ -216,7 +216,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
           <div class="share-password-create-options" hidden>
             <label><input type="radio" name="share-password-mode" value="generated" checked> Generate a strong password</label>
             <label><input type="radio" name="share-password-mode" value="provided"> Provide a password</label>
-            <input type="password" class="share-provided-password" minlength="8" maxlength="1024" autocomplete="new-password" placeholder="8–1024 bytes" hidden>
+            <input type="password" class="share-provided-password" minlength="4" maxlength="1024" autocomplete="new-password" placeholder="4–1024 bytes" hidden>
           </div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
