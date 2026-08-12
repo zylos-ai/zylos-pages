@@ -1,11 +1,12 @@
 ---
 name: pages
-version: 0.9.0
+version: 0.9.1
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
   Use when writing reports, documentation, or any content that should be published
-  as a web page. Agent writes a .md file, it's immediately accessible via URL.
+  as a web page. Agent writes a .md file, registers it with the pages CLI, and
+  reports the internal URL (pages are only served after registration).
 type: capability
 
 lifecycle:
@@ -50,7 +51,7 @@ Render Markdown and HTML files as styled web pages.
 Use this CLI when an agent needs to register local Markdown/HTML files, manage share links, or add an allowed source root. It runs locally and writes the Pages DB/config directly; it does not use HTTP or tokens.
 
 ```bash
-PAGES_DIR="~/.claude/skills/pages"
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
 
 # Register a local source file as a logical page. Default access is private.
 node $PAGES_DIR/src/cli/pages.js register --source /absolute/report.md --uri reports/q3 --title "Q3 Report"
@@ -169,7 +170,7 @@ Accounting for links:
 ## Creating HTML Pages (CLI)
 
 ```bash
-PAGES_DIR="~/.claude/skills/pages"
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
 
 # List available templates
 node $PAGES_DIR/src/cli/pages.js templates
@@ -193,11 +194,24 @@ Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
 ## Quick Start (Markdown)
 
 ```bash
-# Write a page
-echo "# Hello World" > ~/zylos/http/public/pages/hello.md
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
+# Content root = contentDir in ~/zylos/components/pages/config.json
+CONTENT_DIR="$(node -p "require(process.env.HOME+'/zylos/components/pages/config.json').contentDir || process.env.HOME+'/zylos/http/public/pages'")"
 
-# View it at https://domain/pages/hello
+# 1. Write the markdown file under the content root (or any allowed source root)
+echo "# Hello World" > "$CONTENT_DIR/hello.md"
+
+# 2. Register it — pages are ONLY served after registration
+node "$PAGES_DIR/src/cli/pages.js" register \
+  --source "$CONTENT_DIR/hello.md" --uri hello --title "Hello World"
+
+# 3. Report the internal URL: https://domain/pages/p/hello
+#    (behind the pages owner password; see Sharing before minting links)
 ```
+
+Writing a file alone is not enough: unregistered files under the content
+directory are not served (the request 404s after login). This changed in
+v0.9.0 — registration is the gate for every page.
 
 ## References
 

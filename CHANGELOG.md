@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.9.1] - 2026-08-12
+
+### Fixed
+
+- **Docs no longer contradict the v0.9.0 registration model.** SKILL.md's
+  frontmatter description still said "Agent writes a .md file, it's
+  immediately accessible via URL", its Quick Start and README's Usage still
+  showed the pre-0.9.0 write-and-visit flow, while the Sharing section
+  correctly required registration. An agent following those sections
+  delivers a URL that 404s after login. All of them now document the actual
+  flow — write the file, register it with the pages CLI, report the
+  internal `/pages/p/<uri>` URL — with executable snippets: `PAGES_DIR`
+  uses `$HOME` (the previous quoted `~` never expanded) and points at the
+  real install path (`~/zylos/.claude/skills/pages`), and the content root
+  is resolved from `config.json` instead of assuming a machine-specific
+  path.
+- **post-install now registers the seeded welcome page.** The hook wrote
+  `welcome.md` but never registered it, so on a fresh install the sample
+  page 404'd under the registration model. It is now registered at
+  `/pages/p/welcome` (best-effort with a warning fallback), and the sample
+  page's own "How It Works" text teaches the registered flow.
+- **The configured contentDir is now an implicit allowed registration
+  root.** `registerLogicalPage` only accepted sources under
+  `externalFiles.allowedSources`, and the default config ships with only
+  `recruit` — so on a fresh install nothing under the service's own content
+  root could be registered (the welcome seed and the documented Quick Start
+  both failed with `source is outside the configured allowed root`).
+  `allowedSourceRoots` now always includes the effective `contentDir` as
+  the `pages-content` root; an explicit `pages-content` entry in config
+  still takes precedence. Locked by fresh-install regression tests
+  (implicit root on default config, explicit-entry precedence, and an
+  empty-HOME post-install run asserting `/pages/p/welcome` is registered).
+
 ## [0.9.0] - 2026-08-02
 
 ### Added
