@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.9.1] - 2026-08-12
+
+### Fixed
+
+- **SKILL.md no longer contradicts the v0.9.0 registration model.** The
+  frontmatter description still said "Agent writes a .md file, it's
+  immediately accessible via URL" and the Quick Start still showed the
+  pre-0.9.0 write-and-visit flow (`echo ... > http/public/pages/hello.md`),
+  while the Sharing section correctly required registration. An agent
+  following the description/Quick Start delivers a URL that 404s after
+  login. Both places now document the actual flow: write the file, register
+  it with the pages CLI, then report the internal URL.
+
 ## [0.9.0] - 2026-08-02
 
 ### Added

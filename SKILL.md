@@ -1,11 +1,12 @@
 ---
 name: pages
-version: 0.9.0
+version: 0.9.1
 description: >
   Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
   styled web pages with code highlighting, dark/light theme, and table of contents.
   Use when writing reports, documentation, or any content that should be published
-  as a web page. Agent writes a .md file, it's immediately accessible via URL.
+  as a web page. Agent writes a .md file, registers it with the pages CLI, and
+  reports the internal URL (pages are only served after registration).
 type: capability
 
 lifecycle:
@@ -193,11 +194,23 @@ Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
 ## Quick Start (Markdown)
 
 ```bash
-# Write a page
-echo "# Hello World" > ~/zylos/http/public/pages/hello.md
+PAGES_DIR="~/.claude/skills/pages"
 
-# View it at https://domain/pages/hello
+# 1. Write the markdown file (content dir or any allowed source root)
+echo "# Hello World" > ~/zylos/components/pages/content/hello.md
+
+# 2. Register it — pages are ONLY served after registration
+node $PAGES_DIR/src/cli/pages.js register \
+  --source ~/zylos/components/pages/content/hello.md \
+  --uri hello --title "Hello World"
+
+# 3. Report the internal URL: https://domain/pages/hello
+#    (behind the pages owner password; see Sharing before minting links)
 ```
+
+Writing a file alone is not enough: unregistered files under the content
+directory are not served (the request 404s after login). This changed in
+v0.9.0 — registration is the gate for every page.
 
 ## References
 
