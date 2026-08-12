@@ -21,6 +21,17 @@
   page 404'd under the registration model. It is now registered at
   `/pages/p/welcome` (best-effort with a warning fallback), and the sample
   page's own "How It Works" text teaches the registered flow.
+- **The configured contentDir is now an implicit allowed registration
+  root.** `registerLogicalPage` only accepted sources under
+  `externalFiles.allowedSources`, and the default config ships with only
+  `recruit` — so on a fresh install nothing under the service's own content
+  root could be registered (the welcome seed and the documented Quick Start
+  both failed with `source is outside the configured allowed root`).
+  `allowedSourceRoots` now always includes the effective `contentDir` as
+  the `pages-content` root; an explicit `pages-content` entry in config
+  still takes precedence. Locked by fresh-install regression tests
+  (implicit root on default config, explicit-entry precedence, and an
+  empty-HOME post-install run asserting `/pages/p/welcome` is registered).
 
 ## [0.9.0] - 2026-08-02
 

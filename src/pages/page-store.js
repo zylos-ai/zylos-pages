@@ -38,6 +38,13 @@ function allowedSourceRoots(config) {
       roots.push({ name, root: expandHome(root) });
     }
   }
+  // The content root the service renders from is always a valid registration
+  // root — a fresh install must be able to register pages (e.g. the seeded
+  // welcome page) without an explicit allowedSources entry. An explicit
+  // 'pages-content' entry above takes precedence.
+  if (typeof config.contentDir === 'string' && config.contentDir && !roots.some(r => r.name === 'pages-content')) {
+    roots.push({ name: 'pages-content', root: expandHome(config.contentDir) });
+  }
   return roots;
 }
 
