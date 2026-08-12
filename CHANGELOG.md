@@ -4,14 +4,23 @@
 
 ### Fixed
 
-- **SKILL.md no longer contradicts the v0.9.0 registration model.** The
+- **Docs no longer contradict the v0.9.0 registration model.** SKILL.md's
   frontmatter description still said "Agent writes a .md file, it's
-  immediately accessible via URL" and the Quick Start still showed the
-  pre-0.9.0 write-and-visit flow (`echo ... > http/public/pages/hello.md`),
-  while the Sharing section correctly required registration. An agent
-  following the description/Quick Start delivers a URL that 404s after
-  login. Both places now document the actual flow: write the file, register
-  it with the pages CLI, then report the internal URL.
+  immediately accessible via URL", its Quick Start and README's Usage still
+  showed the pre-0.9.0 write-and-visit flow, while the Sharing section
+  correctly required registration. An agent following those sections
+  delivers a URL that 404s after login. All of them now document the actual
+  flow — write the file, register it with the pages CLI, report the
+  internal `/pages/p/<uri>` URL — with executable snippets: `PAGES_DIR`
+  uses `$HOME` (the previous quoted `~` never expanded) and points at the
+  real install path (`~/zylos/.claude/skills/pages`), and the content root
+  is resolved from `config.json` instead of assuming a machine-specific
+  path.
+- **post-install now registers the seeded welcome page.** The hook wrote
+  `welcome.md` but never registered it, so on a fresh install the sample
+  page 404'd under the registration model. It is now registered at
+  `/pages/p/welcome` (best-effort with a warning fallback), and the sample
+  page's own "How It Works" text teaches the registered flow.
 
 ## [0.9.0] - 2026-08-02
 

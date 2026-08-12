@@ -72,9 +72,9 @@ This page was automatically created during installation. You can edit or delete 
 
 ## How It Works
 
-1. Write a \`.md\` file in \`~/zylos/http/public/pages/\`
-2. Visit \`https://your-domain/pages/filename\`
-3. See it rendered as a beautiful web page
+1. Write a \`.md\` file under the configured content root (\`contentDir\` in \`~/zylos/components/pages/config.json\`)
+2. Register it: \`node ~/zylos/.claude/skills/pages/src/cli/pages.js register --source <file> --uri <uri> --title "..."\`
+3. Visit \`https://your-domain/pages/p/<uri>\` — pages are only served after registration
 
 ## Features
 
@@ -87,10 +87,12 @@ This page was automatically created during installation. You can edit or delete 
 ## Example Code Block
 
 \`\`\`javascript
-// Agent writes a report
+// Agent writes a report, then registers it with the pages CLI
 const report = generateAnalysis();
-fs.writeFileSync('~/zylos/http/public/pages/q1-report.md', report);
-// Instantly available at /pages/q1-report
+fs.writeFileSync(contentDir + '/q1-report.md', report);
+// node .../src/cli/pages.js register --source <contentDir>/q1-report.md \
+//   --uri q1-report --title "Q1 Report"
+// Served at /pages/p/q1-report (behind the pages owner password)
 \`\`\`
 
 ## Example Table
@@ -169,8 +171,22 @@ ensureSharePasswordKeyring({
 const existingFiles = fs.readdirSync(CONTENT_DIR).filter(f => f.endsWith('.md'));
 if (existingFiles.length === 0) {
   console.log('\nCreating sample page...');
-  fs.writeFileSync(path.join(CONTENT_DIR, 'welcome.md'), SAMPLE_PAGE);
+  const welcomePath = path.join(CONTENT_DIR, 'welcome.md');
+  fs.writeFileSync(welcomePath, SAMPLE_PAGE);
   console.log('  - welcome.md created');
+  // Pages are only served after registration, so register the seed page
+  // or it would 404 on a fresh install.
+  try {
+    const { getConfig } = await import('../src/lib/config.js');
+    const { registerLogicalPage } = await import('../src/pages/page-store.js');
+    registerLogicalPage(
+      { uri: 'welcome', title: 'Welcome to Zylos Pages', sourcePath: welcomePath },
+      getConfig(),
+    );
+    console.log('  - welcome.md registered at /pages/p/welcome');
+  } catch (err) {
+    console.warn(`  - welcome.md registration failed (register manually via the pages CLI): ${err.message}`);
+  }
 } else {
   console.log('\nContent directory not empty, skipping sample page.');
 }

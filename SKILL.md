@@ -51,7 +51,7 @@ Render Markdown and HTML files as styled web pages.
 Use this CLI when an agent needs to register local Markdown/HTML files, manage share links, or add an allowed source root. It runs locally and writes the Pages DB/config directly; it does not use HTTP or tokens.
 
 ```bash
-PAGES_DIR="~/.claude/skills/pages"
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
 
 # Register a local source file as a logical page. Default access is private.
 node $PAGES_DIR/src/cli/pages.js register --source /absolute/report.md --uri reports/q3 --title "Q3 Report"
@@ -170,7 +170,7 @@ Accounting for links:
 ## Creating HTML Pages (CLI)
 
 ```bash
-PAGES_DIR="~/.claude/skills/pages"
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
 
 # List available templates
 node $PAGES_DIR/src/cli/pages.js templates
@@ -194,17 +194,18 @@ Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
 ## Quick Start (Markdown)
 
 ```bash
-PAGES_DIR="~/.claude/skills/pages"
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
+# Content root = contentDir in ~/zylos/components/pages/config.json
+CONTENT_DIR="$(node -p "require(process.env.HOME+'/zylos/components/pages/config.json').contentDir || process.env.HOME+'/zylos/http/public/pages'")"
 
-# 1. Write the markdown file (content dir or any allowed source root)
-echo "# Hello World" > ~/zylos/components/pages/content/hello.md
+# 1. Write the markdown file under the content root (or any allowed source root)
+echo "# Hello World" > "$CONTENT_DIR/hello.md"
 
 # 2. Register it — pages are ONLY served after registration
-node $PAGES_DIR/src/cli/pages.js register \
-  --source ~/zylos/components/pages/content/hello.md \
-  --uri hello --title "Hello World"
+node "$PAGES_DIR/src/cli/pages.js" register \
+  --source "$CONTENT_DIR/hello.md" --uri hello --title "Hello World"
 
-# 3. Report the internal URL: https://domain/pages/hello
+# 3. Report the internal URL: https://domain/pages/p/hello
 #    (behind the pages owner password; see Sharing before minting links)
 ```
 

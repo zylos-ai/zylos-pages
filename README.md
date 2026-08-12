@@ -23,7 +23,7 @@
   <img src="./assets/screenshot.png" alt="zylos-pages screenshot" width="720">
 </p>
 
-- **Zero-build publishing** — write a `.md` file, it's instantly a web page
+- **Zero-build publishing** — write a `.md` file, register it, it's a web page
 - **Beautiful rendering** — GitHub-style theme with dark/light mode
 - **Code highlighting** — VS Code quality syntax highlighting via shiki
 - **Fast** — LRU cache + singleflight dedup + file-watch invalidation
@@ -47,11 +47,19 @@ cd pages && npm install
 ## Usage
 
 ```bash
-# Write a page
-echo "# Hello World" > ~/zylos/http/public/pages/hello.md
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
+# Content root = contentDir in ~/zylos/components/pages/config.json
+CONTENT_DIR="$(node -p "require(process.env.HOME+'/zylos/components/pages/config.json').contentDir || process.env.HOME+'/zylos/http/public/pages'")"
 
-# Visit https://your-domain/pages/hello
-# Or browse all pages at https://your-domain/pages/
+# 1. Write a page
+echo "# Hello World" > "$CONTENT_DIR/hello.md"
+
+# 2. Register it — pages are only served after registration
+node "$PAGES_DIR/src/cli/pages.js" register \
+  --source "$CONTENT_DIR/hello.md" --uri hello --title "Hello World"
+
+# 3. Visit https://your-domain/pages/p/hello
+#    Or browse all pages at https://your-domain/pages/
 ```
 
 ### Frontmatter
