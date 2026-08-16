@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.10.0] - 2026-08-17
+
+### Added
+
+- **Attachment pages: register and share arbitrary files.** (#120, PR #138)
+  A third logical page type alongside markdown and HTML artifacts: any file
+  under an allowed source root can be registered as an attachment page and
+  shared through the standard share-link flow (including password
+  protection). Attachment shares serve the file as a download with a safe
+  `Content-Disposition` header and never render it inline.
+- **Independent share sessions coexist in one browser.** (#141, PR #142)
+  Unlocking one protected share no longer evicts another: each grant is
+  issued as its own `__Secure-share_access.<id>` cookie, scoped to its
+  share and never authorizing another link. One Pages mount keeps at most
+  16 grants within a 4096-byte recognized-cookie budget, evicting the
+  least-recently-used grant (and its server-side session) first.
+  Malformed, duplicate, or over-budget cookie sets fail closed. Owner
+  login/logout clears every presented grant. Existing singleton
+  `__Secure-share_access` sessions stay recognizable only for their
+  remaining one-hour lifetime and rotate to the per-share form on use.
+- **Cross-page navigation documentation rules.** (#136, PR #140) SKILL.md
+  and the rendering docs now specify when multi-page deliverables may link
+  between pages, which link forms survive each delivery surface (direct,
+  share, raw), and how the sanitizer's anchor allowlist supports compliant
+  inline links in markdown.
+
+### Changed
+
+- **Owner authentication is always on: `auth.enabled` removed.** (#135,
+  PR #137) The config escape hatch that could disable the owner
+  authentication wall is gone. Upgrades that had `auth.enabled` set have
+  the key deleted automatically while preserving the stored password hash.
+
+### Removed
+
+- **Development-plan working documents removed from the repository.**
+  (PR #139) Intermediate planning files do not belong in the shipped tree.
+
 ## [0.9.1] - 2026-08-12
 
 ### Fixed
