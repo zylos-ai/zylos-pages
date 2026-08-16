@@ -242,6 +242,52 @@ test('post-upgrade removes every legacy auth.enabled value and preserves owner c
   }
 });
 
+test('post-upgrade adds the attachment-page ceiling only when absent and is idempotent', () => {
+  const hook = path.join(repoRoot, 'hooks/post-upgrade.js');
+  for (const configured of [undefined, 123456]) {
+    const security = { allowRawHtml: true, maxFileSizeBytes: 77, renderTimeoutMs: 88 };
+    if (configured !== undefined) security.maxAttachmentSizeBytes = configured;
+    const home = makeHome({
+      auth: { password: 'scrypt:known-salt:known-hash' },
+      security,
+      sharing: { enabled: true },
+      unrelated: { keep: true },
+    });
+    const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
+    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    const once = readConfig(home);
+    assert.equal(once.security.maxAttachmentSizeBytes, configured ?? 50 * 1024 * 1024);
+    assert.equal(once.security.maxFileSizeBytes, 77);
+    assert.deepEqual(once.unrelated, { keep: true });
+    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    assert.deepEqual(readConfig(home), once);
+  }
+});
+
+test('post-install adds the attachment-page ceiling to an existing config without overwriting it', () => {
+  const hook = path.join(repoRoot, 'hooks/post-install.js');
+  for (const configured of [undefined, 654321]) {
+    const security = { allowRawHtml: true, maxFileSizeBytes: 91, renderTimeoutMs: 92 };
+    if (configured !== undefined) security.maxAttachmentSizeBytes = configured;
+    const home = makeHome({
+      auth: { password: 'scrypt:known-salt:known-hash' },
+      security,
+      sharing: { enabled: true },
+      externalFiles: { enabled: true, allowedSources: {} },
+      unrelated: { keep: 'yes' },
+    });
+    fs.mkdirSync(path.join(home, 'zylos/http/public/pages'), { recursive: true });
+    const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
+    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    const once = readConfig(home);
+    assert.equal(once.security.maxAttachmentSizeBytes, configured ?? 50 * 1024 * 1024);
+    assert.equal(once.security.maxFileSizeBytes, 91);
+    assert.deepEqual(once.unrelated, { keep: 'yes' });
+    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    assert.deepEqual(readConfig(home), once);
+  }
+});
+
 test('post-install hook initializes the keyring end to end', () => {
   const home = makeHome();
   fs.mkdirSync(path.join(home, 'zylos/http/public/pages'), { recursive: true });

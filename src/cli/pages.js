@@ -121,7 +121,7 @@ function output(result, json) {
 function humanize(result) {
   if (!result.ok) return `error: ${result.error}`;
   if (result.command === 'list') {
-    return result.entries.map(entry => `${entry.uri} [${entry.accessMode}] -> ${entry.sourcePath}`).join('\n') || 'no pages registered';
+    return result.entries.map(entry => `${entry.uri} [${entry.type}, ${entry.accessMode}] -> ${entry.sourcePath}`).join('\n') || 'no pages registered';
   }
   if (result.command === 'share') {
     return [
@@ -340,6 +340,7 @@ function commandRegister(args) {
     sourcePath: page.sourcePath,
     sourceRealPath: page.sourcePath,
     sourceRootName: page.sourceRootName,
+    type: page.type,
     accessMode: page.accessMode,
   }, args.json);
 }
@@ -356,6 +357,7 @@ function commandList(args) {
       sourcePath: entry.sourcePath,
       sourceRealPath: entry.sourcePath,
       sourceRootName: entry.sourceRootName,
+      type: entry.type,
       accessMode: entry.accessMode,
       url: getPageUrl(entry.uri),
       updatedAt: entry.updatedAt,

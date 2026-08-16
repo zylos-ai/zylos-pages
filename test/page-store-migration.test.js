@@ -81,10 +81,12 @@ test('initPageStore migrates uri-keyed logical_pages to page_id and is idempoten
     assert.equal(q3.title, 'Q3 Report');
     assert.equal(q3.source_path, '/tmp/q3.md');
     assert.equal(q3.source_root_name, 'reports');
+    assert.equal(q3.page_type, 'markdown');
     assert.equal(q3.access_mode, 'private');
     assert.equal(q3.created_at, 1000);
     assert.equal(q3.updated_at, 2000);
     assert.equal(top.access_mode, 'shared');
+    assert.equal(top.page_type, 'html');
 
     // uri stays unique after migration.
     const uriIndexed = db.prepare(`SELECT COUNT(*) AS count FROM pragma_index_list('logical_pages') WHERE "unique" = 1`).get();
@@ -98,5 +100,67 @@ test('initPageStore migrates uri-keyed logical_pages to page_id and is idempoten
     assert.equal(log.page_id, null);
   } finally {
     db.close();
+  }
+});
+
+test('initPageStore adds page_type to the existing page_id schema and preserves explicit values on rerun', async () => {
+  const currentDataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-store-page-type-'));
+  const currentDbPath = path.join(currentDataDir, 'pages.db');
+  try {
+    const currentDb = new Database(currentDbPath);
+    currentDb.exec(`
+      CREATE TABLE logical_pages (
+        page_id TEXT PRIMARY KEY,
+        uri TEXT NOT NULL UNIQUE,
+        title TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        source_ext TEXT NOT NULL,
+        source_root_name TEXT,
+        access_mode TEXT NOT NULL DEFAULT 'private',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE access_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        page_uri TEXT,
+        viewer_type TEXT NOT NULL,
+        share_token_id TEXT,
+        request_path TEXT,
+        status INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      INSERT INTO logical_pages VALUES
+        ('11111111-1111-4111-8111-111111111111', 'md', 'MD', '/tmp/md.md', '.md', NULL, 'private', 1, 1),
+        ('22222222-2222-4222-8222-222222222222', 'html', 'HTML', '/tmp/html.html', '.html', NULL, 'private', 1, 1);
+    `);
+    currentDb.close();
+
+    const run = () => execFileSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `const { initPageStore } = await import(${JSON.stringify(pageStoreUrl)}); initPageStore();`,
+    ], { env: { ...process.env, PAGES_DATA_DIR: currentDataDir } });
+    run();
+    const migrated = new Database(currentDbPath);
+    assert.deepEqual(
+      migrated.prepare('SELECT uri, page_type FROM logical_pages ORDER BY uri').all(),
+      [{ uri: 'html', page_type: 'html' }, { uri: 'md', page_type: 'markdown' }],
+    );
+    migrated.prepare("UPDATE logical_pages SET page_type = 'attachment' WHERE uri = 'md'").run();
+    migrated.prepare("UPDATE logical_pages SET page_type = 'unexpected' WHERE uri = 'html'").run();
+    migrated.close();
+    run();
+    const rerun = new Database(currentDbPath);
+    assert.equal(rerun.prepare("SELECT page_type FROM logical_pages WHERE uri = 'md'").get().page_type, 'attachment');
+    rerun.close();
+
+    const mappedType = execFileSync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `const { getLogicalPage } = await import(${JSON.stringify(pageStoreUrl)}); process.stdout.write(getLogicalPage('html').type);`,
+    ], { env: { ...process.env, PAGES_DATA_DIR: currentDataDir }, encoding: 'utf8' });
+    assert.equal(mappedType, 'attachment', 'unknown persisted page types fail closed');
+  } finally {
+    await rm(currentDataDir, { recursive: true, force: true });
   }
 });

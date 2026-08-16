@@ -95,7 +95,7 @@ async function pageSourceForAsset(pageUri, config = {}) {
   const normalizedUri = normalizeSlug(pageUri);
   const logicalUri = normalizedUri.startsWith('p/') ? normalizedUri.slice(2) : normalizedUri;
   const page = getLogicalPage(logicalUri);
-  if (page) return { sourcePath: page.sourcePath };
+  if (page && page.type !== 'attachment') return { sourcePath: page.sourcePath };
   throw new AssetResolutionError(404, 'Page not found');
 }
 

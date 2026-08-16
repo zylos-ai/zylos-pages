@@ -3,8 +3,10 @@
 import { getPage } from '../services/pageService.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
-import { injectShareViewer, injectNavSidebar, htmlArtifactTemplate } from '../templates/pageTemplate.js';
+import { attachmentPageTemplate, injectShareViewer, injectNavSidebar, htmlArtifactTemplate } from '../templates/pageTemplate.js';
 import { rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
+import { attachmentDescriptorMetadata, sendAttachmentDownload } from '../pages/attachment-page.js';
+import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
@@ -63,6 +65,46 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
     : res.locals.shareCanWriteAttachments === true;
 
   try {
+    let descriptor;
+    try {
+      descriptor = await resolvePageDescriptor(slug, config.contentDir);
+    } catch (err) {
+      // Exact registered URIs win. Only when the exact URI is absent does a
+      // trailing /download become the owner download endpoint for its prefix.
+      if (err.code !== 'ENOENT' || !isLogicalRoute || !slug.endsWith('/download')) throw err;
+      const attachmentSlug = slug.slice(0, -'/download'.length);
+      const attachment = await resolvePageDescriptor(attachmentSlug, config.contentDir);
+      if (attachment.type !== 'attachment') throw err;
+      await sendAttachmentDownload(res, attachment, config);
+      return;
+    }
+
+    if (descriptor.type === 'attachment') {
+      const metadata = await attachmentDescriptorMetadata(descriptor, config);
+      const share = shareContext || res.locals.shareContext;
+      const downloadUrl = isShareViewer && share?.tokenId
+        ? browserPath(browserBase, `s/${share.tokenId}/download`)
+        : browserPath(browserBase, `${displaySlug}/download`);
+      let html = attachmentPageTemplate({
+        title: descriptor.title || slug,
+        filename: metadata.filename,
+        sizeBytes: metadata.sizeBytes,
+        downloadUrl,
+        baseUrl: browserBase,
+        slug: displaySlug,
+      });
+      if (isShareViewer) {
+        html = injectShareViewer(html, { canWriteAttachments: false });
+      } else {
+        const pages = await scanPages(config.contentDir);
+        html = injectNavSidebar(html, pages, displaySlug, browserBase);
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(html);
+    }
+
     const result = await getPage(displaySlug, config, browserBase);
     const elapsed = Math.round(performance.now() - start);
     const isHtmlArtifact = result.type === 'html';

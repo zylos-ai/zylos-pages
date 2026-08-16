@@ -313,13 +313,26 @@ test('source symlink escaping allowed root is rejected', () => {
   assert.equal(result.code, 'source_outside_allowed_root');
 });
 
-test('missing and disallowed-extension sources are rejected', () => {
+test('renderable-looking symlink with a mismatched real extension is classified as attachment', () => {
+  const fixture = makeFixture();
+  const realSource = path.join(fixture.sourceRoot, 'payload.html');
+  const alias = path.join(fixture.sourceRoot, 'payload.md');
+  fs.writeFileSync(realSource, '<script>globalThis.executed = true</script>');
+  fs.symlinkSync(realSource, alias);
+
+  const registered = runCli(fixture, registerArgs('mismatch', alias));
+  assert.equal(registered.type, 'attachment');
+  assert.equal(registered.sourceRealPath, fs.realpathSync(realSource));
+});
+
+test('arbitrary file extensions register as attachment pages while missing sources are rejected', () => {
   const fixture = makeFixture();
   const txt = path.join(fixture.sourceRoot, 'notes.txt');
   fs.writeFileSync(txt, 'not a page\n');
 
-  const disallowed = runCli(fixture, registerArgs('notes', txt), { expectFailure: true });
-  assert.equal(disallowed.code, 'source_not_allowed');
+  const registered = runCli(fixture, registerArgs('notes', txt));
+  assert.equal(registered.type, 'attachment');
+  assert.equal(registered.sourceRealPath, fs.realpathSync(txt));
 
   const missing = runCli(fixture, registerArgs('missing', path.join(fixture.sourceRoot, 'missing.md')), { expectFailure: true });
   assert.equal(missing.code, 'source_missing');

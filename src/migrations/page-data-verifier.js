@@ -6,7 +6,7 @@ const ATTACHMENT_SNAPSHOT = 'artifact_attachments_by_uri';
 const STATE_ARCHIVE = path.join('migration-archive', 'artifact-state-orphans-v1.json');
 const REQUIRED = {
   logical_pages: [
-    'page_id', 'uri', 'title', 'source_path', 'source_ext', 'source_root_name',
+    'page_id', 'uri', 'title', 'source_path', 'source_ext', 'page_type', 'source_root_name',
     'access_mode', 'created_at', 'updated_at',
   ],
   artifact_state: ['page_id', 'key', 'value', 'updated_at'],
