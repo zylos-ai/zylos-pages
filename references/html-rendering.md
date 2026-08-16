@@ -82,6 +82,35 @@ HTML files are rendered differently from Markdown:
 - **Self-contained CSS**: Put all styles in a `<style>` block. Do not depend on external CSS or font hosts; the current CSP does not allow Google Fonts.
 - **Dark mode support**: Use `prefers-color-scheme` media query or CSS custom properties with a toggle.
 
+### Cross-page links
+
+Pages never lets another origin frame a document: ordinary responses send
+`frame-ancestors 'none'` + `X-Frame-Options: DENY`, and HTML artifacts served
+raw (`?raw=1`) or through a share link send `frame-ancestors 'self'` +
+`SAMEORIGIN` — any same-origin ancestor may frame them (in practice, Pages'
+own wrapper iframe); cross-origin framing is still refused.
+Host clients that open clicked links in an embedded webview are a different
+origin, so an in-place cross-page link shows a refusal there, while the same
+URL works as a top-level navigation. Author cross-page anchors to open a new
+tab, and leave same-page fragment anchors alone:
+
+```html
+<!-- Cross-page: link to another Pages document — open as top-level navigation -->
+<a href="/pages/p/reports/q3-summary" target="_blank" rel="noopener noreferrer">Q3 summary</a>
+
+<!-- Same-page fragment: navigates within this document — keep default behavior -->
+<a href="#findings">Jump to findings</a>
+```
+
+The same anchor works in Markdown sources: standard `[text](url)` syntax
+cannot carry `target`/`rel`, but the default sanitizer (`allowRawHtml:
+false`) allowlists inline HTML anchors with `href`, `title`, `target`, and
+`rel`, and the render pipeline preserves them end to end.
+
+The new-tab default preserves the anti-framing protection. Never weaken
+`frame-ancestors` or `X-Frame-Options` to make in-frame navigation work — the
+link target is the fix, not the headers.
+
 ### Dark mode pattern
 
 ```css

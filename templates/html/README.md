@@ -45,6 +45,7 @@ When generating an HTML report, pick the matching template and replace placehold
 - **Add sections**: Copy an existing `<section>` block and modify
 - **Change accent color**: Override `--accent`, `--accent-light`, `--accent-text` in `:root`
 - **Add components**: Use utility classes from base.css (`.card`, `.badge`, `.callout`, `.stat-grid`)
+- **Link to another Pages document**: Use `target="_blank" rel="noopener noreferrer"` so the link survives embedded webviews (Pages blocks cross-origin framing); keep same-page `#fragment` anchors default. See "Cross-page links" in `references/html-rendering.md`
 
 ## Design Principles
 
