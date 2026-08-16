@@ -87,7 +87,8 @@ HTML files are rendered differently from Markdown:
 Pages never lets another origin frame a document: ordinary responses send
 `frame-ancestors 'none'` + `X-Frame-Options: DENY`, and HTML artifacts served
 raw (`?raw=1`) or through a share link send `frame-ancestors 'self'` +
-`SAMEORIGIN` — only Pages' own same-origin wrapper iframe may frame them.
+`SAMEORIGIN` — any same-origin ancestor may frame them (in practice, Pages'
+own wrapper iframe); cross-origin framing is still refused.
 Host clients that open clicked links in an embedded webview are a different
 origin, so an in-place cross-page link shows a refusal there, while the same
 URL works as a top-level navigation. Author cross-page anchors to open a new

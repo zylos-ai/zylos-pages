@@ -216,8 +216,9 @@ photo, logical-asset, render, or page-cache paths.
 Pages never lets another origin frame a document. Ordinary responses carry
 `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`;
 HTML artifacts served raw (`?raw=1`) or through a share link instead carry
-`frame-ancestors 'self'` and `SAMEORIGIN`, so only Pages' own same-origin
-wrapper iframe may frame them. Some host clients open a clicked link inside
+`frame-ancestors 'self'` and `SAMEORIGIN`, which permit any same-origin
+ancestor — in practice Pages' own wrapper iframe — while still refusing
+every cross-origin frame. Some host clients open a clicked link inside
 an iframe or embedded webview; in that cross-origin context an in-place link
 from one Pages document to another shows a browser-level refusal, while the
 same URL opens fine as a top-level navigation (new tab). The fix is always
