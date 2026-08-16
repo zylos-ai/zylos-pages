@@ -84,12 +84,14 @@ HTML files are rendered differently from Markdown:
 
 ### Cross-page links
 
-Pages sends `Content-Security-Policy: frame-ancestors 'none'` and
-`X-Frame-Options: DENY` on every response, so a Pages document can never load
-inside a frame. Host clients that open clicked links in an embedded webview
-show a refusal for an in-place cross-page link, while the same URL works as a
-top-level navigation. Author cross-page anchors to open a new tab, and leave
-same-page fragment anchors alone:
+Pages never lets another origin frame a document: ordinary responses send
+`frame-ancestors 'none'` + `X-Frame-Options: DENY`, and HTML artifacts served
+raw (`?raw=1`) or through a share link send `frame-ancestors 'self'` +
+`SAMEORIGIN` — only Pages' own same-origin wrapper iframe may frame them.
+Host clients that open clicked links in an embedded webview are a different
+origin, so an in-place cross-page link shows a refusal there, while the same
+URL works as a top-level navigation. Author cross-page anchors to open a new
+tab, and leave same-page fragment anchors alone:
 
 ```html
 <!-- Cross-page: link to another Pages document — open as top-level navigation -->
@@ -98,6 +100,11 @@ same-page fragment anchors alone:
 <!-- Same-page fragment: navigates within this document — keep default behavior -->
 <a href="#findings">Jump to findings</a>
 ```
+
+The same anchor works in Markdown sources: standard `[text](url)` syntax
+cannot carry `target`/`rel`, but the default sanitizer (`allowRawHtml:
+false`) allowlists inline HTML anchors with `href`, `title`, `target`, and
+`rel`, and the render pipeline preserves them end to end.
 
 The new-tab default preserves the anti-framing protection. Never weaken
 `frame-ancestors` or `X-Frame-Options` to make in-frame navigation work — the

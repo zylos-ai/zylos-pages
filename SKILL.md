@@ -213,12 +213,15 @@ photo, logical-asset, render, or page-cache paths.
 
 ## Cross-Page Navigation
 
-Pages refuses to be embedded: every response carries
-`Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
-Some host clients open a clicked link inside an iframe or embedded webview; in
-that context an in-place link from one Pages document to another shows a
-browser-level refusal, while the same URL opens fine as a top-level navigation
-(new tab). The fix is always the link, never the headers.
+Pages never lets another origin frame a document. Ordinary responses carry
+`Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`;
+HTML artifacts served raw (`?raw=1`) or through a share link instead carry
+`frame-ancestors 'self'` and `SAMEORIGIN`, so only Pages' own same-origin
+wrapper iframe may frame them. Some host clients open a clicked link inside
+an iframe or embedded webview; in that cross-origin context an in-place link
+from one Pages document to another shows a browser-level refusal, while the
+same URL opens fine as a top-level navigation (new tab). The fix is always
+the link, never the headers.
 
 - A link from one Pages document to another Pages document defaults to
   `target="_blank" rel="noopener noreferrer"` — the new tab is a top-level
@@ -227,11 +230,12 @@ browser-level refusal, while the same URL opens fine as a top-level navigation
   within the already-loaded document and are never affected.
 - Never weaken `frame-ancestors` or `X-Frame-Options` to make embedded
   navigation work.
-- This per-link control exists in HTML artifacts. Markdown sources render
-  standard anchors and strip inline HTML by default (`allowRawHtml: false`),
-  so author a multi-page deliverable as HTML artifacts when it must be
-  clicked through from an embedding host. See
-  `references/html-rendering.md` for the compliant anchor example.
+- In HTML artifacts, write the anchor attributes directly. In Markdown
+  sources, standard `[text](url)` syntax cannot express `target`/`rel`, but
+  the default sanitizer (`allowRawHtml: false`) keeps inline HTML anchors
+  with `href`, `title`, `target`, and `rel` — write the cross-page link as an
+  inline HTML anchor. See `references/html-rendering.md` for the compliant
+  anchor example.
 
 ## Quick Start (Markdown)
 
