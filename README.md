@@ -207,6 +207,17 @@ passwords in URLs, argv, logs, shared documents, Issues, Task comments, PRs, or
 group chats; use stdin for provided CLI passwords and deliver secrets through
 the intended private channel only.
 
+A browser may keep up to 16 independently unlocked share sessions for one
+Pages mount, within a 4096-byte recognized-cookie budget. Opening one share
+does not authorize or overwrite another; when either limit is exceeded, Pages
+expires the least-recently-used grant and removes its server-side session.
+Owner authentication always takes precedence, and successful owner login or
+logout clears every presented share session. Existing singleton
+`__Secure-share_access` sessions are accepted only for their remaining
+one-hour session lifetime and rotate to the per-share cookie form on use or on
+the next unlock; share URLs, passwords, expiry, and revocation state do not
+change.
+
 ## Built by Coco
 
 Zylos is the open-source core of [Coco](https://coco.xyz/) — the AI employee platform.

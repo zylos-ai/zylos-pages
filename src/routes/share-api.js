@@ -9,6 +9,7 @@ import {
   createShare,
   createPasswordProtectedShare,
   createShareAccessCookie,
+  clearShareAccessCookieNameHeaders,
   disableSharePassword,
   getActiveShare,
   revealActiveSharePassword,
@@ -143,6 +144,27 @@ function appendSetCookie(res, cookie) {
   } else {
     res.setHeader('Set-Cookie', [current, cookie]);
   }
+}
+
+function appendSetCookies(res, cookies) {
+  for (const cookie of cookies || []) appendSetCookie(res, cookie);
+}
+
+function applyShareCookieDecision(req, res, decision, share, browserBase) {
+  const cookiePath = cookiePathFromBase(browserBase);
+  if (decision.migrateLegacy && decision.share?.valid) {
+    const rotated = createShareAccessCookie(
+      decision.share.pageId,
+      share.tokenId,
+      decision.share.expiresAt,
+      cookiePath,
+      decision.share.credentialVersion,
+      req.headers.cookie,
+    );
+    if (rotated) appendSetCookies(res, rotated.headers);
+    return;
+  }
+  appendSetCookies(res, clearShareAccessCookieNameHeaders(decision.clearCookieNames, cookiePath));
 }
 
 function registeredShareSlug(rawSlug) {
@@ -324,6 +346,8 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     const decision = await authorization.authorizeRead(req, share, {
       ownerAuthenticated: res.locals.authenticated === true,
     });
+    const browserBase = browserBaseFromRequest(req);
+    applyShareCookieDecision(req, res, decision, share, browserBase);
     if (!decision.authorized) {
       return sendReadFailure(req, res, decision, 'html', share.tokenId);
     }
@@ -360,6 +384,8 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     const decision = await authorization.authorizeRead(req, share, {
       ownerAuthenticated: res.locals.authenticated === true,
     });
+    const browserBase = browserBaseFromRequest(req);
+    applyShareCookieDecision(req, res, decision, share, browserBase);
     if (!decision.authorized) {
       return sendReadFailure(req, res, decision, 'markdown', share.tokenId);
     }
@@ -392,6 +418,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     const decision = await authorization.authorizeRead(req, share, {
       ownerAuthenticated: res.locals.authenticated === true,
     });
+    applyShareCookieDecision(req, res, decision, share, browserBase);
     if (!decision.authorized) {
       return sendReadFailure(req, res, decision, 'html', share.tokenId);
     }
@@ -411,9 +438,10 @@ export function setupShareApi(app, sharingConfig, config = {}) {
           share.expiresAt,
           cookiePathFromBase(browserBase),
           share.credentialVersion,
+          req.headers.cookie,
         );
         if (!accessCookie) return sendApiError(res, 404, 'share_not_found', 'Share not found');
-        appendSetCookie(res, accessCookie.header);
+        appendSetCookies(res, accessCookie.headers);
       }
       await renderSharePage(req, res, {
         slug: decision.share.slug,
@@ -449,11 +477,12 @@ export function setupShareApi(app, sharingConfig, config = {}) {
         decision.verified.expiresAt,
         cookiePathFromBase(browserBase),
         decision.verified.credentialVersion,
+        req.headers.cookie,
       );
       if (!accessCookie) {
         return sendReadFailure(req, res, { status: 401, code: 'invalid_password' }, 'html', share.tokenId);
       }
-      appendSetCookie(res, accessCookie.header);
+      appendSetCookies(res, accessCookie.headers);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Referrer-Policy', 'no-referrer');
       return res.redirect(303, browserPath(browserBase, `s/${share.tokenId}`));

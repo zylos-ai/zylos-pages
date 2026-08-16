@@ -382,7 +382,7 @@ test('share page access renders in place and signs referenced assets', async () 
       const body = await redirect.text();
       assert.match(body, /<base href="\/p\/renovation-checklist">/);
       const setCookie = redirect.headers.get('set-cookie');
-      assert.match(setCookie, /__Secure-share_access=/);
+      assert.match(setCookie, /__Secure-share_access\.[a-f0-9]{32}=/);
       assert.doesNotMatch(setCookie, /__Secure-share_scope=/);
       assert.match(setCookie, /HttpOnly/);
       assert.match(setCookie, /Secure/);
