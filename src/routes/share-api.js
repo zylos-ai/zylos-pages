@@ -31,6 +31,8 @@ import {
 } from '../sharing/share-password-keyring.js';
 import { generateSharePassword } from '../sharing/share-password-crypto.js';
 import { AUTH_CARD_CSS } from '../templates/authCardStyles.js';
+import { resolvePageDescriptor } from '../security/pathGuard.js';
+import { sendAttachmentDownload } from '../pages/attachment-page.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
@@ -314,6 +316,35 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     rateLimit: sharingConfig.passwordRateLimit,
   });
 
+  // GET /s/:tokenId/download — byte representation of an attachment page.
+  // Registered before /s/:tokenId so the literal suffix is never swallowed.
+  app.get('/s/:tokenId/download', async (req, res, next) => {
+    const share = getActiveShare(req.params.tokenId);
+    if (!share) return sendApiError(res, 404, 'share_not_found', 'Share not found');
+    const decision = await authorization.authorizeRead(req, share, {
+      ownerAuthenticated: res.locals.authenticated === true,
+    });
+    if (!decision.authorized) {
+      return sendReadFailure(req, res, decision, 'html', share.tokenId);
+    }
+    try {
+      const authorizedShare = decision.share || share;
+      const pageUri = authorizedShare.slug.startsWith('p/')
+        ? authorizedShare.slug.slice(2)
+        : authorizedShare.slug;
+      const descriptor = await resolvePageDescriptor(pageUri, config.contentDir);
+      if (descriptor.type !== 'attachment') {
+        return sendApiError(res, 404, 'attachment_not_found', 'Attachment page not found');
+      }
+      await sendAttachmentDownload(res, descriptor, config);
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return sendApiError(res, 404, 'attachment_not_found', 'Attachment page not found');
+      }
+      return next(err);
+    }
+  });
+
   // GET /s/:tokenId.md — raw markdown of the shared page. Audience and reach
   // match the share token itself (one page, read-only, expiry and revocation
   // honoured). The representation does not: this returns the source file
@@ -335,7 +366,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
     const authorizedShare = decision.share;
     const pageUri = authorizedShare.slug.startsWith('p/') ? authorizedShare.slug.slice(2) : authorizedShare.slug;
     const page = getLogicalPage(pageUri);
-    if (!page || page.sourceExt !== '.md') {
+    if (!page || page.type !== 'markdown') {
       return res.status(404).send('Not a markdown page');
     }
     try {

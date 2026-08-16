@@ -45,6 +45,7 @@ const INITIAL_CONFIG = {
   security: {
     allowRawHtml: false,
     maxFileSizeBytes: 1048576,
+    maxAttachmentSizeBytes: 50 * 1024 * 1024,
     renderTimeoutMs: 5000,
   },
   rateLimit: {
@@ -142,6 +143,13 @@ if (!fs.existsSync(configPath)) {
           recruit: path.join(HOME, 'zylos/components/recruit'),
         },
       };
+      migrated = true;
+    }
+    if (!existing.security || typeof existing.security !== 'object' || Array.isArray(existing.security)) {
+      existing.security = { ...INITIAL_CONFIG.security };
+      migrated = true;
+    } else if (!Object.prototype.hasOwnProperty.call(existing.security, 'maxAttachmentSizeBytes')) {
+      existing.security.maxAttachmentSizeBytes = INITIAL_CONFIG.security.maxAttachmentSizeBytes;
       migrated = true;
     }
     if (migrated) {

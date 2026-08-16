@@ -117,7 +117,7 @@ function rejectInvalidParams(req, res) {
 // caller from creating an unowned namespace by convention alone.
 function requirePageId(artifact) {
   const page = getLogicalPage(artifact);
-  if (!page) {
+  if (!page || page.type === 'attachment') {
     throw Object.assign(new Error('Artifact not found'), { statusCode: 404 });
   }
   return page.pageId;

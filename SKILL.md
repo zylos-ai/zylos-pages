@@ -2,11 +2,10 @@
 name: pages
 version: 0.9.1
 description: >
-  Markdown-to-HTML rendering component for zylos. Renders .md files as beautifully
-  styled web pages with code highlighting, dark/light theme, and table of contents.
-  Use when writing reports, documentation, or any content that should be published
-  as a web page. Agent writes a .md file, registers it with the pages CLI, and
-  reports the internal URL (pages are only served after registration).
+  Registered Markdown, HTML, and downloadable file pages for zylos. Use for styled
+  documents or when a local file should be exposed as a safe attachment page.
+  Agents register the source with the pages CLI and report the internal URL; files
+  are served only after registration.
 type: capability
 
 lifecycle:
@@ -44,11 +43,11 @@ dependencies: []
 
 # Zylos Pages
 
-Render Markdown and HTML files as styled web pages.
+Render Markdown and HTML files as styled web pages, or expose arbitrary files as safe download pages.
 
 ## Agent CLI (Local DB)
 
-Use this CLI when an agent needs to register local Markdown/HTML files, manage share links, or add an allowed source root. It runs locally and writes the Pages DB/config directly; it does not use HTTP or tokens.
+Use this CLI when an agent needs to register local Markdown/HTML/download files, manage share links, or add an allowed source root. It runs locally and writes the Pages DB/config directly; it does not use HTTP or tokens.
 
 ```bash
 PAGES_DIR="$HOME/zylos/.claude/skills/pages"
@@ -125,7 +124,8 @@ So:
 - **Deliver passwords only in the intended private conversation.** Never put
   them in a project group, Issue/Task comment, PR, KB page, command argument,
   URL, or routine log. For Agent reads, send `X-Zylos-Share-Password` only on
-  `GET`/`HEAD /s/<token>` or `/s/<token>.md`; it does not authorize writes.
+  `GET`/`HEAD /s/<token>`, `/s/<token>.md`, or
+  `/s/<token>/download`; it does not authorize writes.
 - A protected link does not hide a parallel live unprotected link to the same
   page. Both owner consoles warn about this condition without blocking work.
 
@@ -190,6 +190,26 @@ owns the document asks for a link they can hand to someone, choose protected
 or unprotected deliberately, and state that choice. See "Sharing" above.
 
 Templates: `technical-proposal`, `research-report`, `comparison`, `evaluation`.
+
+## Registering a Downloadable File
+
+```bash
+PAGES_DIR="$HOME/zylos/.claude/skills/pages"
+node "$PAGES_DIR/src/cli/pages.js" register \
+  --source /absolute/file.pdf --uri files/report --title "Report PDF"
+```
+
+Only sources whose requested extension and real (symlink-resolved) extension
+both match `.md` or `.html` enter a renderer. Every other regular file becomes
+`type=attachment`. The owner opens `/pages/p/files/report` and downloads from
+`/pages/p/files/report/download`; shared visitors use `/pages/s/<token>` and
+`/pages/s/<token>/download`. Never create a share unless the document owner
+explicitly asks for one.
+
+Attachment downloads are capped by `security.maxAttachmentSizeBytes` (50 MiB
+by default), use a MIME extension allowlist with an octet-stream fallback,
+force attachment disposition, and never enter raw Markdown, state, embedded
+photo, logical-asset, render, or page-cache paths.
 
 ## Quick Start (Markdown)
 

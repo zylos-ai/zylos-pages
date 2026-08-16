@@ -1,5 +1,11 @@
 # External File Registration Technical Plan
 
+> Historical planning record. The implemented SQLite logical-page registry and
+> the attachment-page extension supersede the symlink/JSON-registry proposal
+> below. Use [External File Registration](external-file-registration.md) and
+> [Issue #120 implementation inventory](dev-plan-issue-120.md) as the current
+> contract.
+
 This document contains the implementation plan for
 [External File Registration](external-file-registration.md).
 

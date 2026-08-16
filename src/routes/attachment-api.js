@@ -123,7 +123,7 @@ function clientIp(req) {
 // name in the URL is turned into the identity everything else uses.
 function requirePageId(artifact) {
   const page = getLogicalPage(artifact);
-  if (!page) {
+  if (!page || page.type === 'attachment') {
     throw Object.assign(new Error('Artifact not found'), { statusCode: 404 });
   }
   return page.pageId;
@@ -242,7 +242,10 @@ function rejectInvalidFileParams(req, res) {
 
 async function ensureArtifactExists(artifact, contentDir) {
   try {
-    await resolvePageDescriptor(artifact, contentDir);
+    const descriptor = await resolvePageDescriptor(artifact, contentDir);
+    if (descriptor.type === 'attachment') {
+      throw Object.assign(new Error('Artifact not found'), { statusCode: 404 });
+    }
   } catch (err) {
     if (err.code === 'ENOENT') {
       throw Object.assign(new Error('Artifact not found'), { statusCode: 404 });

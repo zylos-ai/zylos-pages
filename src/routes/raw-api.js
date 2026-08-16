@@ -28,7 +28,7 @@ export function setupRawApi(app, config) {
       resolveSafePath(slug, config.contentDir);
       const pageUri = slug.startsWith('p/') ? slug.slice(2) : slug;
       const logicalPage = getLogicalPage(pageUri);
-      if (!logicalPage || logicalPage.sourceExt !== '.md') {
+      if (!logicalPage || logicalPage.type !== 'markdown') {
         logger.info('raw markdown not found', { path: slug });
         return res.status(404).json({ error: 'Page not found' });
       }

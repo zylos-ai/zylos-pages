@@ -5,7 +5,11 @@ import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
 
-const PAGE_EXTENSIONS = new Set(['.md', '.html']);
+const RENDERABLE_PAGE_EXTENSIONS = new Map([
+  ['.md', 'markdown'],
+  ['.html', 'html'],
+]);
+const PAGE_TYPES = new Set(['markdown', 'html', 'attachment']);
 
 let initialized = false;
 let db;
@@ -49,11 +53,11 @@ function allowedSourceRoots(config) {
 }
 
 export class SourceValidationError extends Error {
-  constructor(code, message) {
+  constructor(code, message, statusCode = null) {
     super(message);
     this.name = 'SourceValidationError';
     this.code = code;
-    this.statusCode = code === 'source_missing' ? 404 : 400;
+    this.statusCode = statusCode ?? (code === 'source_missing' ? 404 : 400);
   }
 }
 
@@ -63,6 +67,7 @@ const LOGICAL_PAGES_COLUMNS = `
       title TEXT NOT NULL,
       source_path TEXT NOT NULL,
       source_ext TEXT NOT NULL,
+      page_type TEXT NOT NULL CHECK (page_type IN ('markdown', 'html', 'attachment')),
       source_root_name TEXT,
       access_mode TEXT NOT NULL DEFAULT 'private' CHECK (access_mode IN ('private', 'shared')),
       created_at INTEGER NOT NULL,
@@ -77,12 +82,13 @@ function migrateLogicalPagesToPageId() {
   const migrate = db.transaction(() => {
     db.exec(`CREATE TABLE logical_pages_next (${LOGICAL_PAGES_COLUMNS})`);
     const insert = db.prepare(`
-      INSERT INTO logical_pages_next (page_id, uri, title, source_path, source_ext, source_root_name, access_mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO logical_pages_next (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const rows = db.prepare('SELECT * FROM logical_pages').all();
     for (const row of rows) {
       insert.run(crypto.randomUUID(), row.uri, row.title, row.source_path, row.source_ext,
+        row.source_ext === '.html' ? 'html' : 'markdown',
         row.source_root_name, row.access_mode, row.created_at, row.updated_at);
     }
     db.exec('DROP TABLE logical_pages');
@@ -91,6 +97,20 @@ function migrateLogicalPagesToPageId() {
   });
   const count = migrate();
   logger.info('logical_pages migrated to page_id primary key', { rows: count });
+}
+
+// page_id shipped before page_type. Keep this migration separate from the
+// uri-keyed rebuild above so both historical schemas converge idempotently.
+function ensurePageTypeColumn() {
+  const columns = db.prepare('PRAGMA table_info(logical_pages)').all().map(column => column.name);
+  if (!columns.includes('page_type')) {
+    db.exec('ALTER TABLE logical_pages ADD COLUMN page_type TEXT');
+  }
+  db.prepare(`
+    UPDATE logical_pages
+    SET page_type = CASE WHEN source_ext = '.html' THEN 'html' ELSE 'markdown' END
+    WHERE page_type IS NULL
+  `).run();
 }
 
 function ensureAccessLogPageIdColumn() {
@@ -119,6 +139,7 @@ export function initPageStore() {
     CREATE INDEX IF NOT EXISTS idx_access_logs_created ON access_logs(created_at);
     CREATE INDEX IF NOT EXISTS idx_access_logs_page ON access_logs(page_uri, created_at DESC);
   `);
+  ensurePageTypeColumn();
   ensureAccessLogPageIdColumn();
   initialized = true;
 }
@@ -129,9 +150,6 @@ export function validateSourcePath(sourcePath, config, options = {}) {
   }
 
   const originalExt = path.extname(sourcePath).toLowerCase();
-  if (!PAGE_EXTENSIONS.has(originalExt)) {
-    throw new SourceValidationError('source_not_allowed', 'source must be a .md or .html file');
-  }
 
   let sourceRealPath;
   try {
@@ -141,8 +159,25 @@ export function validateSourcePath(sourcePath, config, options = {}) {
   }
 
   const realExt = path.extname(sourceRealPath).toLowerCase();
-  if (!PAGE_EXTENSIONS.has(realExt)) {
-    throw new SourceValidationError('source_not_allowed', 'source must resolve to a .md or .html file');
+  const pageType = originalExt === realExt
+    ? (RENDERABLE_PAGE_EXTENSIONS.get(realExt) || 'attachment')
+    : 'attachment';
+  let sourceStats;
+  try {
+    sourceStats = fs.statSync(sourceRealPath);
+  } catch {
+    throw new SourceValidationError('source_missing', 'source file does not exist');
+  }
+  if (!sourceStats.isFile()) {
+    throw new SourceValidationError('source_not_file', 'source must be a regular file');
+  }
+  const maxAttachmentSizeBytes = config.security?.maxAttachmentSizeBytes ?? 50 * 1024 * 1024;
+  if (pageType === 'attachment' && sourceStats.size > maxAttachmentSizeBytes) {
+    throw new SourceValidationError(
+      'source_too_large',
+      `attachment is ${sourceStats.size} bytes (max ${maxAttachmentSizeBytes})`,
+      413,
+    );
   }
 
   const roots = allowedSourceRoots(config);
@@ -167,6 +202,7 @@ export function validateSourcePath(sourcePath, config, options = {}) {
       return {
         sourceRealPath,
         sourceExt: realExt,
+        pageType,
         sourceRootName: candidate.name,
         sourceRootRealPath: rootRealPath,
       };
@@ -192,12 +228,13 @@ export function registerLogicalPage({ uri, title, sourcePath, component, accessM
   const validated = validateSourcePath(sourcePath, config, { component });
   const current = nowMs();
   db.prepare(`
-    INSERT INTO logical_pages (page_id, uri, title, source_path, source_ext, source_root_name, access_mode, created_at, updated_at)
-    VALUES (@pageId, @uri, @title, @sourcePath, @sourceExt, @sourceRootName, @accessMode, @createdAt, @updatedAt)
+    INSERT INTO logical_pages (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, created_at, updated_at)
+    VALUES (@pageId, @uri, @title, @sourcePath, @sourceExt, @pageType, @sourceRootName, @accessMode, @createdAt, @updatedAt)
     ON CONFLICT(uri) DO UPDATE SET
       title = excluded.title,
       source_path = excluded.source_path,
       source_ext = excluded.source_ext,
+      page_type = excluded.page_type,
       source_root_name = excluded.source_root_name,
       access_mode = excluded.access_mode,
       updated_at = excluded.updated_at
@@ -207,6 +244,7 @@ export function registerLogicalPage({ uri, title, sourcePath, component, accessM
     title: title.trim(),
     sourcePath: validated.sourceRealPath,
     sourceExt: validated.sourceExt,
+    pageType: validated.pageType,
     sourceRootName: validated.sourceRootName,
     accessMode,
     createdAt: current,
@@ -219,12 +257,14 @@ export function registerLogicalPage({ uri, title, sourcePath, component, accessM
 
 function mapPageRecord(record) {
   if (!record) return null;
+  const type = PAGE_TYPES.has(record.page_type) ? record.page_type : 'attachment';
   return {
     pageId: record.page_id,
     uri: record.uri,
     title: record.title,
     sourcePath: record.source_path,
     sourceExt: record.source_ext,
+    type,
     sourceRootName: record.source_root_name,
     accessMode: record.access_mode,
     createdAt: record.created_at,
@@ -401,7 +441,7 @@ export function listLogicalPagesForNavigation() {
     description: '',
     date: new Date(record.updated_at).toISOString().split('T')[0],
     tags: [],
-    type: record.source_ext === '.html' ? 'html' : 'markdown',
+    type: mapPageRecord(record).type,
   }));
 }
 

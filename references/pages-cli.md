@@ -7,16 +7,21 @@ The agent CLI is `src/cli/pages.js`. It runs locally, uses the same config/data 
 ### Register
 
 ```bash
-node src/cli/pages.js register --source /absolute/file.md --uri reports/q3 --title "Q3 Report" --component reports
+node src/cli/pages.js register --source /absolute/file.pdf --uri reports/q3 --title "Q3 Report" --component reports
 ```
 
-- `--source` must be an absolute `.md` or `.html` file path.
+- `--source` must be an absolute path to a regular file.
 - `--uri` is the logical page path used at `/pages/p/<uri>`.
 - `--title` defaults to the URI when omitted.
 - `--component` optionally restricts validation to one configured allowed source root.
 - Registration defaults to `private`; create a share explicitly when public access is needed.
 
-The command calls `registerLogicalPage()`, so the same four validation gates as HTTP registration apply: absolute path, allowed extension, file exists, and source is inside an allowed root.
+The command calls `registerLogicalPage()`, so the same validation gates as HTTP
+registration apply: absolute path, regular file, file exists, and the resolved
+source is inside an allowed root. Matching requested/real `.md` and `.html`
+extensions produce renderable pages; every other file (including a symlink
+extension mismatch) produces `type=attachment`. Attachment registration and
+download are capped by `security.maxAttachmentSizeBytes`.
 
 ### List
 
@@ -25,7 +30,8 @@ node src/cli/pages.js list
 node src/cli/pages.js list --q report --json
 ```
 
-Lists registered logical pages from the DB. `--q` searches page titles.
+Lists registered logical pages from the DB, including `type` (`markdown`,
+`html`, or `attachment`). `--q` searches page titles.
 
 ### Share / Shares / Share-info / Unshare
 
@@ -52,6 +58,9 @@ password to stdout, so treat terminal capture and `--json` output as sensitive.
 
 - `share` accepts `24h`, `7d`, `30d`, or `permanent`. Permanent links are always allowed — the `sharing.allowPermanent` gate was removed in 0.7.5, and a leftover key in `config.json` is ignored with a startup warning.
 - Registered logical pages are shared as `p/<uri>` and return `/pages/s/<tokenId>`.
+- Attachment shares use the same token/password/expiry/revocation ledger. Their
+  landing page is `/pages/s/<tokenId>` and bytes are downloaded from
+  `/pages/s/<tokenId>/download`.
 - Share link base URL priority is `PAGES_BASE_URL` env var, then `publicBaseUrl` in `config.json`, then the neutral `/pages` path fallback.
 - `shares <uri>` lists active share tokens for one page.
 - `shares --all` lists every live share on the instance, with the uri and protection metadata each token exposes. It never returns plaintext.

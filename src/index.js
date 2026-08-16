@@ -38,7 +38,7 @@ console.log(`[pages] Data directory: ${DATA_DIR}`);
 let config = getConfig();
 console.log(`[pages] Config loaded, enabled: ${config.enabled}`);
 console.log(`[pages] Content dir: ${config.contentDir}`);
-console.log(`[pages] Security: rawHtml=${config.security.allowRawHtml}, maxFileSize=${config.security.maxFileSizeBytes}, timeout=${config.security.renderTimeoutMs}ms`);
+console.log(`[pages] Security: rawHtml=${config.security.allowRawHtml}, maxFileSize=${config.security.maxFileSizeBytes}, maxAttachmentSize=${config.security.maxAttachmentSizeBytes}, timeout=${config.security.renderTimeoutMs}ms`);
 console.log(`[pages] Cache: max=${config.cache.maxEntries}, ttl=${config.cache.ttlSeconds}s`);
 console.log(`[pages] Owner authentication: ${typeof config.auth?.password === 'string' && config.auth.password.length > 0 ? 'configured' : 'misconfigured (missing password; protected routes return 503)'}`);
 console.log(`[pages] Sharing: enabled=${config.sharing?.enabled ?? true}`);

@@ -72,12 +72,13 @@ export async function resolvePageDescriptor(slug, contentRoot) {
   const logicalPage = getLogicalPage(slug);
   if (logicalPage) {
     return {
-      type: logicalPage.sourceExt === '.html' ? 'html' : 'markdown',
+      type: logicalPage.type,
       filePath: logicalPage.sourcePath,
       slug,
       logical: true,
       title: logicalPage.title,
       accessMode: logicalPage.accessMode,
+      pageId: logicalPage.pageId,
     };
   }
 

@@ -144,6 +144,27 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
 </html>`;
 }
 
+export function attachmentPageTemplate({ title, filename, sizeBytes, downloadUrl, baseUrl, slug }) {
+  const sizeLabel = `${Number(sizeBytes).toLocaleString('en-US')} bytes`;
+  let html = pageTemplate({
+    title,
+    description: `Download ${filename}`,
+    date: null,
+    tags: [],
+    bodyHtml: `<p><strong>${escapeHtml(filename)}</strong></p>
+        <p>${escapeHtml(sizeLabel)}</p>
+        <p><a class="btn btn-primary" href="${escapeHtml(downloadUrl)}">Download file</a></p>`,
+    tocItems: [],
+    baseUrl,
+    slug,
+  });
+  html = html.replace(/\s*<link rel="alternate" type="text\/markdown"[^>]*>/, '');
+  html = html.replace(/\s*<script src="[^"]*\/_assets\/raw\.js[^"]*" defer><\/script>/, '');
+  html = html.replace(/\s*<button class="copy-raw-btn[\s\S]*?<\/button>/, '');
+  html = html.replace(/\s*<label class="share-editable-option"[\s\S]*?<\/label>/, '');
+  return html;
+}
+
 /**
  * Inject data-viewer="share" on the <html> tag for share token viewers.
  * This activates CSS rules that hide auth-only elements.

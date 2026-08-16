@@ -25,6 +25,12 @@ export async function getPage(rawSlug, config, browserBase = '') {
   const publicSlug = slug.startsWith('p/') ? slug : routeSlug;
   const cacheKey = `${browserBase || '/'}:${slug}`;
   const descriptor = await resolvePageDescriptor(routeSlug, config.contentDir);
+  if (descriptor.type === 'attachment') {
+    const err = new Error('Attachment pages cannot enter the render pipeline');
+    err.code = 'ATTACHMENT_NOT_RENDERABLE';
+    err.statusCode = 404;
+    throw err;
+  }
 
   // Check cache — with mtime validation as safety net.
   // fs.watch on Linux can miss events from editors that use write-to-temp-then-rename
@@ -54,6 +60,12 @@ export async function getPage(rawSlug, config, browserBase = '') {
   // Singleflight: only one render/read per slug at a time
   const { result, shared } = await singleflight(cacheKey, async () => {
     const current = await resolvePageDescriptor(routeSlug, config.contentDir);
+    if (current.type === 'attachment') {
+      throw Object.assign(new Error('Attachment pages cannot enter the render pipeline'), {
+        code: 'ATTACHMENT_NOT_RENDERABLE',
+        statusCode: 404,
+      });
+    }
     let rendered;
     let st;
 

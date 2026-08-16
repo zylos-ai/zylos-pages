@@ -5,7 +5,7 @@
 <h1 align="center">zylos-pages</h1>
 
 <p align="center">
-  Markdown-to-HTML rendering component for zylos — write .md, get beautiful web pages
+  Registered Markdown, HTML, and downloadable file pages for zylos
 </p>
 
 <p align="center">
@@ -29,6 +29,7 @@
 - **Fast** — LRU cache + singleflight dedup + file-watch invalidation
 - **Navigation sidebar** — slide-out pages list for quick article switching
 - **Table of Contents** — independent scrolling TOC for long documents
+- **Attachment pages** — register and safely share arbitrary local files without rendering their bytes
 
 ## Install
 
@@ -61,6 +62,22 @@ node "$PAGES_DIR/src/cli/pages.js" register \
 # 3. Visit https://your-domain/pages/p/hello
 #    Or browse all pages at https://your-domain/pages/
 ```
+
+To publish a file as a download page, register it through the same allowed-root
+gate. Files other than matching `.md`/`.html` sources become `attachment`
+pages; their landing page is `/pages/p/<uri>` and the owner download endpoint
+is `/pages/p/<uri>/download`. A share keeps the same `/pages/s/<token>` ledger
+and downloads through `/pages/s/<token>/download`.
+
+```bash
+node "$PAGES_DIR/src/cli/pages.js" register \
+  --source /absolute/resume.pdf --uri resumes/howard --title "Howard's resume"
+```
+
+Attachment bytes are never sent through Markdown/HTML rendering, raw/state,
+embedded-photo, or logical-asset APIs. Downloads use the extension MIME
+allowlist (otherwise `application/octet-stream`), always force
+`Content-Disposition: attachment`, and are `no-store`.
 
 ### Frontmatter
 
@@ -122,7 +139,11 @@ Edit `~/zylos/components/pages/config.json`:
   "contentDir": "~/zylos/http/public/pages",
   "theme": { "colorScheme": "auto", "codeTheme": "github-dark" },
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },
-  "security": { "allowRawHtml": false, "maxFileSizeBytes": 1048576 },
+  "security": {
+    "allowRawHtml": false,
+    "maxFileSizeBytes": 1048576,
+    "maxAttachmentSizeBytes": 52428800
+  },
   "sharing": {
     "enabled": true,
     "passwordKeyFile": "/secure/pages/share-password-keys.json",
@@ -138,6 +159,11 @@ Edit `~/zylos/components/pages/config.json`:
 
 The `state` ceilings and write-rate limits apply only to share-link visitors;
 authenticated owner writes are intentionally exempt.
+
+`security.maxFileSizeBytes` remains the render ceiling. The separate
+`security.maxAttachmentSizeBytes` ceiling applies to attachment registration
+and download (default 50 MiB); install and upgrade hooks add it only when the
+key is absent and preserve configured values.
 
 ### Optional share passwords
 

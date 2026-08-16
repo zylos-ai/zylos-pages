@@ -23,6 +23,7 @@ function createSchema(db, { constraints = true } = {}) {
       title TEXT NOT NULL,
       source_path TEXT NOT NULL,
       source_ext TEXT NOT NULL,
+      page_type TEXT NOT NULL,
       source_root_name TEXT,
       access_mode TEXT NOT NULL,
       created_at INTEGER NOT NULL,
@@ -51,9 +52,9 @@ function createSchema(db, { constraints = true } = {}) {
 function insertPage(db, pageId = PAGE_ID, uri = 'reports/clean') {
   db.prepare(`
     INSERT INTO logical_pages (
-      page_id, uri, title, source_path, source_ext, source_root_name,
+      page_id, uri, title, source_path, source_ext, page_type, source_root_name,
       access_mode, created_at, updated_at
-    ) VALUES (?, ?, 'Report', '/isolated/report.md', '.md', 'content', 'private', 1, 1)
+    ) VALUES (?, ?, 'Report', '/isolated/report.md', '.md', 'markdown', 'content', 'private', 1, 1)
   `).run(pageId, uri);
 }
 

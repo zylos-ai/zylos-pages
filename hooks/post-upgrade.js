@@ -29,12 +29,17 @@ if (fs.existsSync(configPath)) {
   }
 
   // Migration: add security section if missing
-  if (!config.security) {
+  if (!config.security || typeof config.security !== 'object' || Array.isArray(config.security)) {
     config.security = {
       allowRawHtml: false,
       maxFileSizeBytes: 1048576,
+      maxAttachmentSizeBytes: 50 * 1024 * 1024,
       renderTimeoutMs: 5000,
     };
+    migrated = true;
+  }
+  if (!Object.prototype.hasOwnProperty.call(config.security, 'maxAttachmentSizeBytes')) {
+    config.security.maxAttachmentSizeBytes = 50 * 1024 * 1024;
     migrated = true;
   }
 
