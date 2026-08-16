@@ -26,6 +26,11 @@ function cookieHeader(setCookie) {
     .join('; ');
 }
 
+function shareAccessCookie(setCookie) {
+  const match = setCookie?.match(/(__Secure-share_access\.[a-f0-9]{32})=([^;,]+)/);
+  return match ? `${match[1]}=${match[2]}` : '';
+}
+
 function makeServer({ auth = false, authConfig = null, sharingEnabled = true, shareViewer = false } = {}) {
   const contentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zylos-pages-share-content-'));
   fs.mkdirSync(path.join(contentDir, 'docs'), { recursive: true });
@@ -359,7 +364,7 @@ test('short share URL sets access cookie and renders clean page in place', async
     assert.equal(redirect.status, 200);
     assert.equal(redirect.headers.get('location'), null);
     const setCookie = redirect.headers.get('set-cookie');
-    assert.match(setCookie, /__Secure-share_access=/);
+    assert.match(setCookie, /__Secure-share_access\.[a-f0-9]{32}=/);
     assert.doesNotMatch(setCookie, /__Secure-share_scope=/);
     assert.match(await redirect.text(), /<base href="\/p\/docs\/page">/);
   } finally {
@@ -496,7 +501,7 @@ test('legacy long share token bypass is rejected while short links still work', 
 
     response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('set-cookie'), /__Secure-share_access=/);
+    assert.match(response.headers.get('set-cookie'), /__Secure-share_access\.[a-f0-9]{32}=/);
   } finally {
     server.close();
   }
@@ -515,7 +520,7 @@ test('login session takes precedence over share-access cookie on /p/ routes (#10
     const shareVisit = await fetch(share.url, { redirect: 'manual' });
     assert.equal(shareVisit.status, 200);
     const shareCookie = cookieHeader(shareVisit.headers.get('set-cookie'));
-    assert.match(shareCookie, /__Secure-share_access=/);
+    assert.match(shareCookie, /__Secure-share_access\.[a-f0-9]{32}=/);
 
     // Both cookies present — the login session must win: authenticated view,
     // never the shell-less share view.
@@ -577,26 +582,28 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
       duration: '24h',
     });
     const shareVisit = await fetch(share.url, { redirect: 'manual' });
-    assert.match(shareVisit.headers.get('set-cookie'), /__Secure-share_access=/);
+    assert.match(shareVisit.headers.get('set-cookie'), /__Secure-share_access\.[a-f0-9]{32}=/);
 
     // Logging in clears any lingering share-access cookie.
+    const shareCookie = shareAccessCookie(shareVisit.headers.get('set-cookie'));
+    const shareCookieName = shareCookie.split('=', 1)[0];
     const relogin = await fetch(`${origin}/login`, {
       method: 'POST',
       redirect: 'manual',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Cookie: shareCookie },
       body: new URLSearchParams({ password: 'secret' }),
     });
     assert.equal(relogin.status, 302);
-    assert.match(relogin.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
+    assert.match(relogin.headers.get('set-cookie'), new RegExp(`${shareCookieName.replace('.', '\\.')}=;[^,]*Max-Age=0`));
 
     // Logging out clears it too.
     const logout = await fetch(`${origin}/logout`, {
       method: 'POST',
       redirect: 'manual',
-      headers: { Origin: origin, Cookie: cookieHeader(sessionCookie) },
+      headers: { Origin: origin, Cookie: `${cookieHeader(sessionCookie)}; ${shareCookie}` },
     });
     assert.equal(logout.status, 302);
-    assert.match(logout.headers.get('set-cookie'), /__Secure-share_access=;.*Max-Age=0/);
+    assert.match(logout.headers.get('set-cookie'), new RegExp(`${shareCookieName.replace('.', '\\.')}=;[^,]*Max-Age=0`));
 
     // Which stored cookie a Set-Cookie replaces is decided by name + Domain +
     // Path (RFC 6265 5.3); Secure is required on top only because the name
@@ -604,7 +611,7 @@ test('login and logout clear an existing share-access cookie (#102)', async () =
     // visit actually sent, rather than against hand-written literals.
     const attributes = (setCookie) => new Set(
       setCookie.split(/,\s*(?=__Secure-|__Host-)/)
-        .find(entry => entry.startsWith('__Secure-share_access='))
+        .find(entry => /^__Secure-share_access\.[a-f0-9]{32}=/.test(entry))
         .split(';').slice(1)
         .map(part => part.trim())
         .filter(part => part && !/^Max-Age=/i.test(part))
@@ -650,9 +657,7 @@ test('logout clears the browser copy of a share session but does not revoke the 
       duration: '24h',
     });
     const shareVisit = await fetch(share.url, { redirect: 'manual' });
-    const shareAccess = shareVisit.headers.get('set-cookie')
-      .match(/__Secure-share_access=([^;,]+)/)[1];
-    const shareCookie = `__Secure-share_access=${shareAccess}`;
+    const shareCookie = shareAccessCookie(shareVisit.headers.get('set-cookie'));
 
     // Positive control: the retained cookie grants the shared page.
     const before = await fetch(`${origin}/p/docs/page`, {

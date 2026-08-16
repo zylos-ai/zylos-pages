@@ -37,8 +37,12 @@ test.after(() => {
 });
 
 function cookieValue(setCookie, name) {
-  const match = setCookie?.match(new RegExp(`${name}=([^;,]+)`));
-  return match ? `${name}=${match[1]}` : '';
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cookieName = name === '__Secure-share_access'
+    ? `(${escaped}\\.[a-f0-9]{32})`
+    : `(${escaped})`;
+  const match = setCookie?.match(new RegExp(`${cookieName}=([^;,]+)`));
+  return match ? `${match[1]}=${match[2]}` : '';
 }
 
 async function makeServer() {
@@ -335,7 +339,7 @@ test('unlock accepts the literal null Origin as a route-local exception with eve
   }
 });
 
-test('null-origin unlock shares the pre-KDF limiter and the mount-path cookie interference is bounded', async () => {
+test('null-origin unlock shares the pre-KDF limiter and keeps per-share authority non-transitive', async () => {
   const { server, origin } = await makeServer();
   try {
     const ownerCookie = await login(origin);
@@ -365,10 +369,8 @@ test('null-origin unlock shares the pre-KDF limiter and the mount-path cookie in
     });
     assert.equal(response.status, 429, 'exhausted token budget must reject even the correct password');
 
-    // Discriminating control for the accepted low-impact interference: the
-    // share session cookie is mount-path scoped and shared by name, so a later
-    // unlock of B replaces A's browser session — A falls back to the password
-    // challenge instead of leaking anything.
+    // Discriminating control: B receives its own mount-path-scoped session,
+    // and that session cannot authorize A.
     response = await fetch(`${shareB.shortUrl}/unlock`, {
       method: 'POST',
       redirect: 'manual',
@@ -378,11 +380,11 @@ test('null-origin unlock shares the pre-KDF limiter and the mount-path cookie in
     assert.equal(response.status, 303);
     const cookieB = cookieValue(response.headers.get('set-cookie'), '__Secure-share_access');
     assert.ok(cookieB);
-    assert.match(response.headers.get('set-cookie'), /Path=\//, 'cookie stays mount-path scoped (the documented interference surface)');
+    assert.match(response.headers.get('set-cookie'), /Path=\//, 'cookie stays mount-path scoped');
 
     response = await fetch(shareA.shortUrl, { redirect: 'manual', headers: { Cookie: cookieB } });
     assert.equal(response.status, 200, 'challenge re-prompt ships as 200 for webviews');
-    assert.equal(response.headers.get('x-zylos-share-error'), 'password_required', 'B\'s session must not authorize A — interference is re-prompt only');
+    assert.equal(response.headers.get('x-zylos-share-error'), 'password_required', 'B\'s session must not authorize A');
     const reprompt = await response.text();
     assert.match(reprompt, /Unlock shared page/);
     assert.doesNotMatch(reprompt, /private body/, 'foreign session must not leak A\'s content');
@@ -536,7 +538,7 @@ test('owner lifecycle endpoints reveal only explicitly and invalidate old proof 
     assert.deepEqual((await response.json()).protection, { type: 'none' });
     response = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(response.status, 200);
-    assert.match(response.headers.get('set-cookie'), /__Secure-share_access=/);
+    assert.match(response.headers.get('set-cookie'), /__Secure-share_access\.[a-f0-9]{32}=/);
   } finally {
     server.close();
   }

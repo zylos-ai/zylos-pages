@@ -9,12 +9,12 @@ import { CONFIG_PATH } from '../lib/config.js';
 import { logger } from '../utils/logger.js';
 import {
   LEGACY_SHARE_COOKIE_CLEAR_HEADERS,
-  SHARE_ACCESS_COOKIE_NAME,
   SHARE_SCOPE_COOKIE_NAME,
-  clearShareAccessCookieHeader,
+  clearShareAccessCookieHeaders,
+  clearShareAccessCookieNameHeaders,
   clearShareScopeCookieHeader,
   createShareAccessCookie,
-  verifyShareAccessCookie,
+  verifyShareAccessCookies,
 } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, cookiePathFromBase, isPathWithinBase } from '../lib/browser-base.js';
 import { isAssetExtension } from '../utils/mime.js';
@@ -181,11 +181,6 @@ function getSessionCookie(req) {
   return cookies[COOKIE_NAME] || null;
 }
 
-function getShareAccessCookie(req) {
-  const cookies = parseCookies(req.headers.cookie);
-  return cookies[SHARE_ACCESS_COOKIE_NAME] || null;
-}
-
 function appendSetCookie(res, cookie) {
   const current = res.getHeader('Set-Cookie');
   if (!current) {
@@ -226,13 +221,29 @@ function clearShareScopeCookie(res, cookiePath = '/') {
   appendSetCookie(res, clearShareScopeCookieHeader(cookiePath));
 }
 
-function clearShareAccessCookie(res, cookiePath = '/') {
-  appendSetCookie(res, clearShareAccessCookieHeader(cookiePath));
+function appendSetCookies(res, headers) {
+  for (const header of headers || []) appendSetCookie(res, header);
 }
 
-function setShareAccessCookie(res, pageId, tokenId, tokenExpiresAt, cookiePath = '/') {
-  const cookie = createShareAccessCookie(pageId, tokenId, tokenExpiresAt, cookiePath);
-  appendSetCookie(res, cookie.header);
+function clearShareAccessCookies(res, cookieHeader, cookiePath = '/') {
+  appendSetCookies(res, clearShareAccessCookieHeaders(cookieHeader, cookiePath));
+}
+
+function clearSelectedShareAccessCookies(res, names, cookiePath = '/') {
+  appendSetCookies(res, clearShareAccessCookieNameHeaders(names, cookiePath));
+}
+
+function setShareAccessCookie(res, pageId, tokenId, tokenExpiresAt, cookiePath = '/', cookieHeader = '', credentialVersion = 0) {
+  const cookie = createShareAccessCookie(
+    pageId,
+    tokenId,
+    tokenExpiresAt,
+    cookiePath,
+    credentialVersion,
+    cookieHeader,
+  );
+  if (cookie) appendSetCookies(res, cookie.headers);
+  return cookie;
 }
 
 function acceptShareViewer(res, result, options = {}) {
@@ -241,8 +252,17 @@ function acceptShareViewer(res, result, options = {}) {
   res.locals.shareSlug = result.slug;
   res.locals.shareCanWriteAttachments = result.canWriteAttachments === true;
   res.locals.shareContext = result;
+  clearSelectedShareAccessCookies(res, result.clearCookieNames, options.cookiePath || '/');
   if (options.refreshAccessCookie) {
-    setShareAccessCookie(res, result.pageId, result.tokenId, result.expiresAt, options.cookiePath || '/');
+    setShareAccessCookie(
+      res,
+      result.pageId,
+      result.tokenId,
+      result.expiresAt,
+      options.cookiePath || '/',
+      options.cookieHeader || '',
+      result.credentialVersion,
+    );
   }
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -446,7 +466,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     const token = createSession(remember);
     const cookiePath = cookiePathFromBase(browserBase);
     setSessionCookie(res, token, remember, cookiePath);
-    clearShareAccessCookie(res, cookiePath);
+    clearShareAccessCookies(res, req.headers.cookie, cookiePath);
     clearShareScopeCookie(res, cookiePath);
     clearLegacyHostCookies(res);
 
@@ -488,7 +508,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     const browserBase = browserBaseFromRequest(req);
     const cookiePath = cookiePathFromBase(browserBase);
     clearSessionCookie(res, cookiePath);
-    clearShareAccessCookie(res, cookiePath);
+    clearShareAccessCookies(res, req.headers.cookie, cookiePath);
     clearShareScopeCookie(res, cookiePath);
     clearLegacyHostCookies(res);
     res.redirect(302, `${browserPath(browserBase, 'login')}?next=${encodeURIComponent(browserRoot(browserBase))}`);
@@ -553,23 +573,33 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
         && !isAssetPath(req.path)
         && req.path !== '/') {
       const slug = req.path.slice(1);
-      const result = verifyShareAccessCookie(getShareAccessCookie(req), slug);
+      const result = verifyShareAccessCookies(req.headers.cookie, slug);
       if (result.valid) {
-        acceptShareViewer(res, result);
+        acceptShareViewer(res, result, {
+          cookiePath: cookiePathFromBase(browserBase),
+          cookieHeader: req.headers.cookie,
+          refreshAccessCookie: result.legacy === true,
+        });
         return next();
       }
+      clearSelectedShareAccessCookies(res, result.clearCookieNames, cookiePathFromBase(browserBase));
     }
 
     if (req.path.startsWith('/api/state/') || isAttachmentApi(req)) {
       const artifact = artifactFromApiPath(req.path);
       let result = { valid: false };
       try {
-        if (artifact) result = verifyShareAccessCookie(getShareAccessCookie(req), artifact);
+        if (artifact) result = verifyShareAccessCookies(req.headers.cookie, artifact);
       } catch { /* malformed encoding — treat as invalid */ }
       if (result.valid) {
-        acceptShareViewer(res, result);
+        acceptShareViewer(res, result, {
+          cookiePath: cookiePathFromBase(browserBase),
+          cookieHeader: req.headers.cookie,
+          refreshAccessCookie: result.legacy === true,
+        });
         return next();
       }
+      clearSelectedShareAccessCookies(res, result.clearCookieNames, cookiePathFromBase(browserBase));
     }
 
     if (isAssetPath(req.path)) {

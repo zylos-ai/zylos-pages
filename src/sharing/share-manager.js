@@ -19,6 +19,7 @@ import {
 const SECRET_BYTES = 32;
 const TOKEN_ID_BYTES = 16;
 const SHARE_ACCESS_BYTES = 32;
+const SHARE_ACCESS_COOKIE_ID_BYTES = 16;
 const SHARE_SESSION_MAX_AGE_SECONDS = 3600;
 const SHARE_ASSET_MAX_AGE_MS = 3600_000;
 
@@ -26,6 +27,12 @@ const SHARE_ASSET_MAX_AGE_MS = 3600_000;
 // prefix — __Host- mandates Path=/, which makes cookies collide between
 // multiple pages instances on one host (issue #104).
 export const SHARE_ACCESS_COOKIE_NAME = '__Secure-share_access';
+export const SHARE_ACCESS_COOKIE_PREFIX = `${SHARE_ACCESS_COOKIE_NAME}.`;
+export const SHARE_ACCESS_COOKIE_LIMIT = 16;
+export const SHARE_ACCESS_COOKIE_BUDGET_BYTES = 4096;
+const SHARE_ACCESS_COOKIE_CLEANUP_LIMIT = 32;
+const SHARE_ACCESS_COOKIE_NAME_PATTERN = /^__Secure-share_access\.([a-f0-9]{32})$/;
+const SHARE_ACCESS_COOKIE_VALUE_PATTERN = /^[a-f0-9]{64}$/;
 
 // Clear-only. Shares moved to signed asset URLs in 0.7.0 (#73) and nothing has
 // issued or read this cookie since; the name survives so login and logout can
@@ -58,6 +65,9 @@ let _listSharesForPage;
 let _listAllShares;
 let _insertShareSession;
 let _getShareSession;
+let _getNamedShareSession;
+let _getLegacyShareSession;
+let _setShareSessionCookieId;
 let _touchShareSession;
 let _deleteShareSession;
 let _deleteExpiredShareSessions;
@@ -145,6 +155,7 @@ function initShareStore() {
     CREATE INDEX IF NOT EXISTS idx_shares_page_created ON shares(page_id, created_at DESC);
     CREATE TABLE IF NOT EXISTS share_sessions (
       token_hash TEXT PRIMARY KEY,
+      cookie_id TEXT,
       token_id TEXT NOT NULL,
       page_id TEXT NOT NULL,
       created_at INTEGER NOT NULL,
@@ -170,6 +181,11 @@ function initShareStore() {
   addColumnIfMissing(db, 'shares', 'credential_version', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfMissing(db, 'shares', 'password_set_at', 'INTEGER');
   addColumnIfMissing(db, 'share_sessions', 'credential_version', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'share_sessions', 'cookie_id', 'TEXT');
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_share_sessions_cookie_id
+    ON share_sessions(cookie_id) WHERE cookie_id IS NOT NULL
+  `);
   const malformedCredentialRows = db.prepare(`
     SELECT COUNT(*) AS count
     FROM shares
@@ -230,9 +246,9 @@ function initShareStore() {
     ORDER BY created_at DESC
   `);
   _insertShareSession = db.prepare(`
-    INSERT OR REPLACE INTO share_sessions
-      (token_hash, token_id, page_id, created_at, last_activity_at, expires_at, credential_version)
-    SELECT @tokenHash, @tokenId, @pageId, @createdAt, @createdAt, @expiresAt, @credentialVersion
+    INSERT OR IGNORE INTO share_sessions
+      (token_hash, cookie_id, token_id, page_id, created_at, last_activity_at, expires_at, credential_version)
+    SELECT @tokenHash, @cookieId, @tokenId, @pageId, @createdAt, @createdAt, @expiresAt, @credentialVersion
     FROM shares
     WHERE token_id = @tokenId
       AND page_id = @pageId
@@ -248,6 +264,25 @@ function initShareStore() {
     FROM share_sessions
     JOIN shares ON shares.token_id = share_sessions.token_id
     WHERE share_sessions.token_hash = ?
+  `);
+  _getNamedShareSession = db.prepare(`
+    SELECT share_sessions.*, shares.expires_at AS share_expires_at, shares.revoked AS share_revoked
+         , shares.can_write_attachments AS can_write_attachments
+         , shares.credential_version AS share_credential_version
+    FROM share_sessions
+    JOIN shares ON shares.token_id = share_sessions.token_id
+    WHERE share_sessions.cookie_id = ? AND share_sessions.token_hash = ?
+  `);
+  _getLegacyShareSession = db.prepare(`
+    SELECT share_sessions.*, shares.expires_at AS share_expires_at, shares.revoked AS share_revoked
+         , shares.can_write_attachments AS can_write_attachments
+         , shares.credential_version AS share_credential_version
+    FROM share_sessions
+    JOIN shares ON shares.token_id = share_sessions.token_id
+    WHERE share_sessions.cookie_id IS NULL AND share_sessions.token_hash = ?
+  `);
+  _setShareSessionCookieId = db.prepare(`
+    UPDATE share_sessions SET cookie_id = ? WHERE token_hash = ? AND cookie_id IS NULL
   `);
   _touchShareSession = db.prepare('UPDATE share_sessions SET last_activity_at = ? WHERE token_hash = ?');
   _deleteShareSession = db.prepare('DELETE FROM share_sessions WHERE token_hash = ?');
@@ -530,31 +565,326 @@ export function getActiveShareToken(tokenId) {
   return { ...record, token: legacyTokenFor(record) };
 }
 
-export function createShareAccessCookie(pageId, tokenId, tokenExpiresAt, cookiePath = '/', credentialVersion = 0) {
-  initShareStore();
-  const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SESSION_MAX_AGE_SECONDS);
-  const token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
-  const createdAt = nowMs();
-  const expiresAt = createdAt + maxAge * 1000;
-  const inserted = _insertShareSession.run({
-    tokenHash: sha256(token),
-    tokenId,
-    pageId,
-    createdAt,
-    expiresAt,
-    credentialVersion,
-    now: createdAt,
-  });
-  if (inserted.changes === 0) return null;
+function shareAccessCookieHeader(name, value, cookiePath, maxAge) {
+  return `${name}=${value}; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=${maxAge}`;
+}
+
+function clearNamedShareAccessCookieHeader(name, cookiePath = '/') {
+  return shareAccessCookieHeader(name, '', cookiePath, 0);
+}
+
+function boundedCookieNames(names) {
+  return [...new Set(names || [])].slice(0, SHARE_ACCESS_COOKIE_CLEANUP_LIMIT);
+}
+
+/**
+ * Parse only cookies that this version of Pages owns. Names outside the exact
+ * per-share pattern are ignored, even when they share a textual prefix. A
+ * recognized name with a malformed value, a duplicate recognized name, or a
+ * request above either resource budget is fail-closed for authorization.
+ */
+export function parseShareAccessCookies(header) {
+  const result = {
+    valid: true,
+    malformed: false,
+    duplicate: false,
+    overBudget: false,
+    cookies: [],
+    legacy: null,
+    recognizedNames: [],
+    recognizedBytes: 0,
+  };
+  if (typeof header !== 'string' || header.length === 0) return result;
+
+  const seen = new Set();
+  for (const rawPair of header.split(';')) {
+    const pair = rawPair.trim();
+    if (!pair) continue;
+    const separator = pair.indexOf('=');
+    const name = separator === -1 ? pair : pair.slice(0, separator).trim();
+    const value = separator === -1 ? '' : pair.slice(separator + 1);
+    const nameMatch = SHARE_ACCESS_COOKIE_NAME_PATTERN.exec(name);
+    const isLegacy = name === SHARE_ACCESS_COOKIE_NAME;
+    if (!nameMatch && !isLegacy) continue;
+
+    result.recognizedNames.push(name);
+    result.recognizedBytes += Buffer.byteLength(`${name}=${value}`, 'utf8') +
+      (result.recognizedNames.length === 1 ? 0 : 2);
+    if (seen.has(name)) result.duplicate = true;
+    seen.add(name);
+    if (!SHARE_ACCESS_COOKIE_VALUE_PATTERN.test(value)) result.malformed = true;
+
+    if (isLegacy) {
+      result.legacy = { name, value };
+      continue;
+    }
+
+    result.cookies.push({ name, cookieId: nameMatch[1], value });
+  }
+
+  result.overBudget = result.recognizedNames.length > SHARE_ACCESS_COOKIE_LIMIT ||
+    result.recognizedBytes > SHARE_ACCESS_COOKIE_BUDGET_BYTES;
+  result.valid = !result.malformed && !result.duplicate && !result.overBudget;
+  return result;
+}
+
+function shareSessionState(session, tokenHash, current = nowMs()) {
+  if (!session) return { valid: false, stale: true };
+  if (isPastDeadline(session.expires_at, current) ||
+      session.share_revoked ||
+      hasExpired(session.share_expires_at, current) ||
+      session.credential_version !== session.share_credential_version) {
+    _deleteShareSession.run(tokenHash);
+    return { valid: false, stale: true };
+  }
+  const page = getLogicalPageById(session.page_id);
+  if (!page) {
+    _deleteShareSession.run(tokenHash);
+    return { valid: false, stale: true };
+  }
+  return { valid: true, page };
+}
+
+function sessionResult(session, page) {
   return {
-    value: token,
-    maxAge,
-    header: `${SHARE_ACCESS_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=${maxAge}`,
+    valid: true,
+    slug: `p/${page.uri}`,
+    uri: page.uri,
+    pageId: session.page_id,
+    tokenId: session.token_id,
+    expiresAt: session.share_expires_at,
+    credentialVersion: session.share_credential_version,
+    viewerType: 'share',
+    canWriteAttachments: session.can_write_attachments === 1,
   };
 }
 
+function inspectNamedCookie(entry, current = nowMs()) {
+  if (!SHARE_ACCESS_COOKIE_VALUE_PATTERN.test(entry.value)) {
+    return { valid: false, stale: true, entry };
+  }
+  const tokenHash = sha256(entry.value);
+  const session = _getNamedShareSession.get(entry.cookieId, tokenHash);
+  const state = shareSessionState(session, tokenHash, current);
+  return { ...state, entry, session, tokenHash };
+}
+
+function cookiePairBytes(name, value) {
+  return Buffer.byteLength(`${name}=${value}`, 'utf8');
+}
+
+function serializedCookieBytes(entries) {
+  if (entries.length === 0) return 0;
+  return entries.reduce((total, entry) => total + cookiePairBytes(entry.name, entry.value), 0) +
+    (entries.length - 1) * 2;
+}
+
+/**
+ * Mint one browser cookie for one share. The caller supplies the request's
+ * Cookie header so this boundary can replace the current share's own grant,
+ * prune stale grants, expire the legacy singleton, and enforce the per-browser
+ * 16-cookie / 4096-byte budgets before issuing the new cookie.
+ */
+function createShareAccessCookieInTransaction(
+  pageId,
+  tokenId,
+  tokenExpiresAt,
+  cookiePath = '/',
+  credentialVersion = 0,
+  requestCookieHeader = '',
+) {
+  const parsed = parseShareAccessCookies(requestCookieHeader);
+  const current = nowMs();
+  const cleanupNames = new Set();
+  const validExisting = [];
+
+  if (parsed.malformed || parsed.duplicate) {
+    // A malformed/ambiguous request cannot carry authority. Clear every exact
+    // Pages-owned name it presented and remove only rows whose name+secret pair
+    // we can prove, then recover by issuing a fresh independent grant.
+    for (const entry of parsed.cookies) {
+      cleanupNames.add(entry.name);
+      if (!SHARE_ACCESS_COOKIE_VALUE_PATTERN.test(entry.value)) continue;
+      const tokenHash = sha256(entry.value);
+      if (_getNamedShareSession.get(entry.cookieId, tokenHash)) _deleteShareSession.run(tokenHash);
+    }
+  } else {
+    for (const entry of parsed.cookies) {
+      const inspected = inspectNamedCookie(entry, current);
+      if (inspected.valid) validExisting.push(inspected);
+      else cleanupNames.add(entry.name);
+    }
+  }
+
+  // A new unlock/open is the migration boundary for the singleton. Existing
+  // singleton sessions expire within one hour, so accepting them only until
+  // first use (and never issuing another) makes the compatibility window
+  // naturally bounded by the existing session TTL.
+  if (parsed.legacy) {
+    cleanupNames.add(SHARE_ACCESS_COOKIE_NAME);
+    if (SHARE_ACCESS_COOKIE_VALUE_PATTERN.test(parsed.legacy.value)) {
+      const legacyHash = sha256(parsed.legacy.value);
+      const legacySession = _getLegacyShareSession.get(legacyHash);
+      const legacyState = shareSessionState(legacySession, legacyHash, current);
+      if (legacyState.valid && !parsed.malformed && !parsed.duplicate) {
+        let migratedCookieId;
+        let migrated = false;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          migratedCookieId = crypto.randomBytes(SHARE_ACCESS_COOKIE_ID_BYTES).toString('hex');
+          try {
+            if (_setShareSessionCookieId.run(migratedCookieId, legacyHash).changes === 1) {
+              migrated = true;
+              break;
+            }
+          } catch (err) {
+            if (!String(err.code).startsWith('SQLITE_CONSTRAINT')) throw err;
+          }
+        }
+        if (migrated) {
+          validExisting.push({
+            valid: true,
+            page: legacyState.page,
+            session: legacySession,
+            tokenHash: legacyHash,
+            migrated: true,
+            entry: {
+              name: `${SHARE_ACCESS_COOKIE_PREFIX}${migratedCookieId}`,
+              cookieId: migratedCookieId,
+              value: parsed.legacy.value,
+            },
+          });
+        } else {
+          _deleteShareSession.run(legacyHash);
+        }
+      } else if (legacySession) {
+        _deleteShareSession.run(legacyHash);
+      }
+    }
+  }
+
+  // Re-opening the same share replaces only this browser's existing grant.
+  // Reuse its discriminator so Set-Cookie overwrites that exact browser slot.
+  const sameShare = validExisting
+    .filter(item => item.session.token_id === tokenId)
+    .sort((a, b) => b.session.last_activity_at - a.session.last_activity_at ||
+      b.session.created_at - a.session.created_at);
+  const reusable = sameShare[0];
+  for (const item of sameShare) {
+    _deleteShareSession.run(item.tokenHash);
+    if (item !== reusable) cleanupNames.add(item.entry.name);
+  }
+
+  const survivors = validExisting.filter(item => item.session.token_id !== tokenId);
+  let cookieId = reusable?.entry.cookieId || crypto.randomBytes(SHARE_ACCESS_COOKIE_ID_BYTES).toString('hex');
+  let name = `${SHARE_ACCESS_COOKIE_PREFIX}${cookieId}`;
+  let token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
+
+  // Enforce both limits against the browser's actual recognized cookies.
+  // Eviction is deterministic: least recently used, then oldest, then name.
+  survivors.sort((a, b) => a.session.last_activity_at - b.session.last_activity_at ||
+    a.session.created_at - b.session.created_at || a.entry.name.localeCompare(b.entry.name));
+  const withinBudget = () => {
+    const entries = [...survivors.map(item => item.entry), { name, value: token }];
+    return entries.length <= SHARE_ACCESS_COOKIE_LIMIT &&
+      serializedCookieBytes(entries) <= SHARE_ACCESS_COOKIE_BUDGET_BYTES;
+  };
+  while (!withinBudget() && survivors.length > 0) {
+    const evicted = survivors.shift();
+    _deleteShareSession.run(evicted.tokenHash);
+    cleanupNames.add(evicted.entry.name);
+  }
+  if (!withinBudget()) {
+    throw Object.assign(new Error('Share cookie budget cannot accommodate a grant'), {
+      code: 'share_session_not_created',
+    });
+  }
+
+  const maxAge = cookieMaxAge(tokenExpiresAt, SHARE_SESSION_MAX_AGE_SECONDS);
+  const expiresAt = current + maxAge * 1000;
+  let inserted;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    inserted = _insertShareSession.run({
+      tokenHash: sha256(token),
+      cookieId,
+      tokenId,
+      pageId,
+      createdAt: current,
+      expiresAt,
+      credentialVersion,
+      now: current,
+    });
+    if (inserted.changes === 1) break;
+    cookieId = crypto.randomBytes(SHARE_ACCESS_COOKIE_ID_BYTES).toString('hex');
+    name = `${SHARE_ACCESS_COOKIE_PREFIX}${cookieId}`;
+    token = crypto.randomBytes(SHARE_ACCESS_BYTES).toString('hex');
+  }
+  if (inserted?.changes !== 1) {
+    throw Object.assign(new Error('Could not create share session'), {
+      code: 'share_session_not_created',
+    });
+  }
+
+  const header = shareAccessCookieHeader(name, token, cookiePath, maxAge);
+  const cleanupHeaders = boundedCookieNames(cleanupNames)
+    .filter(cleanupName => cleanupName !== name)
+    .map(cleanupName => clearNamedShareAccessCookieHeader(cleanupName, cookiePath));
+  const migrationHeaders = survivors
+    .filter(item => item.migrated)
+    .map(item => shareAccessCookieHeader(
+      item.entry.name,
+      item.entry.value,
+      cookiePath,
+      Math.max(0, Math.floor((item.session.expires_at - current) / 1000)),
+    ));
+  return {
+    name,
+    value: token,
+    maxAge,
+    header,
+    cleanupHeaders,
+    migrationHeaders,
+    headers: [...cleanupHeaders, ...migrationHeaders, header],
+  };
+}
+
+export function createShareAccessCookie(
+  pageId,
+  tokenId,
+  tokenExpiresAt,
+  cookiePath = '/',
+  credentialVersion = 0,
+  requestCookieHeader = '',
+) {
+  initShareStore();
+  try {
+    return db.transaction(() => createShareAccessCookieInTransaction(
+      pageId,
+      tokenId,
+      tokenExpiresAt,
+      cookiePath,
+      credentialVersion,
+      requestCookieHeader,
+    ))();
+  } catch (err) {
+    if (err.code === 'share_session_not_created') return null;
+    throw err;
+  }
+}
+
 export function clearShareAccessCookieHeader(cookiePath = '/') {
-  return `${SHARE_ACCESS_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=0`;
+  return clearNamedShareAccessCookieHeader(SHARE_ACCESS_COOKIE_NAME, cookiePath);
+}
+
+export function clearShareAccessCookieHeaders(cookieHeader, cookiePath = '/') {
+  const parsed = parseShareAccessCookies(cookieHeader);
+  return boundedCookieNames([SHARE_ACCESS_COOKIE_NAME, ...parsed.recognizedNames])
+    .map(name => clearNamedShareAccessCookieHeader(name, cookiePath));
+}
+
+export function clearShareAccessCookieNameHeaders(names, cookiePath = '/') {
+  return boundedCookieNames(names)
+    .filter(name => name === SHARE_ACCESS_COOKIE_NAME || SHARE_ACCESS_COOKIE_NAME_PATTERN.test(name))
+    .map(name => clearNamedShareAccessCookieHeader(name, cookiePath));
 }
 
 export function verifyShareAccessCookie(cookieValue, requestSlug) {
@@ -622,6 +952,95 @@ export function verifyShareAccessCookieForToken(cookieValue, tokenId) {
     viewerType: 'share',
     canWriteAttachments: session.can_write_attachments === 1,
   };
+}
+
+function failedCookieSet(parsed) {
+  return boundedCookieNames(parsed.recognizedNames);
+}
+
+function verifyLegacyCookie(entry, current = nowMs()) {
+  if (!entry || !SHARE_ACCESS_COOKIE_VALUE_PATTERN.test(entry.value)) {
+    return { valid: false, stale: Boolean(entry) };
+  }
+  const tokenHash = sha256(entry.value);
+  const session = _getLegacyShareSession.get(tokenHash);
+  const state = shareSessionState(session, tokenHash, current);
+  return { ...state, session, tokenHash };
+}
+
+/** Verify a request's bounded set of per-share cookies for one logical page. */
+export function verifyShareAccessCookies(cookieHeader, requestSlug) {
+  initShareStore();
+  const parsed = parseShareAccessCookies(cookieHeader);
+  if (!parsed.valid) {
+    return { valid: false, clearCookieNames: failedCookieSet(parsed), malformed: true };
+  }
+
+  const current = nowMs();
+  const clearCookieNames = [];
+  let match = null;
+  for (const entry of parsed.cookies) {
+    const inspected = inspectNamedCookie(entry, current);
+    if (!inspected.valid) {
+      clearCookieNames.push(entry.name);
+      continue;
+    }
+    if (!match && pageUriFromSlug(requestSlug) === inspected.page.uri) match = inspected;
+  }
+  if (match) {
+    _touchShareSession.run(current, match.tokenHash);
+    return { ...sessionResult(match.session, match.page), clearCookieNames };
+  }
+
+  const legacy = verifyLegacyCookie(parsed.legacy, current);
+  if (legacy.valid && pageUriFromSlug(requestSlug) === legacy.page.uri) {
+    _touchShareSession.run(current, legacy.tokenHash);
+    return {
+      ...sessionResult(legacy.session, legacy.page),
+      legacy: true,
+      clearCookieNames,
+    };
+  }
+  if (parsed.legacy && legacy.stale) clearCookieNames.push(SHARE_ACCESS_COOKIE_NAME);
+  return { valid: false, clearCookieNames };
+}
+
+/** Verify a request's bounded set of per-share cookies for one share token. */
+export function verifyShareAccessCookiesForToken(cookieHeader, tokenId) {
+  initShareStore();
+  if (!isTokenId(tokenId)) return { valid: false, clearCookieNames: [] };
+  const parsed = parseShareAccessCookies(cookieHeader);
+  if (!parsed.valid) {
+    return { valid: false, clearCookieNames: failedCookieSet(parsed), malformed: true };
+  }
+
+  const current = nowMs();
+  const clearCookieNames = [];
+  let match = null;
+  for (const entry of parsed.cookies) {
+    const inspected = inspectNamedCookie(entry, current);
+    if (!inspected.valid) {
+      clearCookieNames.push(entry.name);
+      continue;
+    }
+    if (!match && inspected.session.token_id === tokenId) match = inspected;
+  }
+  if (match) {
+    _touchShareSession.run(current, match.tokenHash);
+    return { ...sessionResult(match.session, match.page), clearCookieNames };
+  }
+
+  const legacy = verifyLegacyCookie(parsed.legacy, current);
+  if (legacy.valid && legacy.session.token_id === tokenId) {
+    _touchShareSession.run(current, legacy.tokenHash);
+    return {
+      ...sessionResult(legacy.session, legacy.page),
+      legacy: true,
+      clearCookieNames,
+    };
+  }
+  if (parsed.legacy && legacy.stale) clearCookieNames.push(SHARE_ACCESS_COOKIE_NAME);
+  return { valid: false, clearCookieNames };
 }
 
 export function verifyShare(token, requestSlug) {

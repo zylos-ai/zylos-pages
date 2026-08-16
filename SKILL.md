@@ -128,6 +128,13 @@ So:
   `/s/<token>/download`; it does not authorize writes.
 - A protected link does not hide a parallel live unprotected link to the same
   page. Both owner consoles warn about this condition without blocking work.
+- Independently unlocked shares coexist in one browser: each grant remains
+  scoped to its own share/page and never authorizes another link. One Pages
+  mount retains at most 16 grants within a 4096-byte recognized-cookie budget,
+  evicting the least-recently-used grant first. Owner login/logout clears all
+  presented grants. Legacy singleton browser sessions rotate automatically to
+  the per-share form and remain recognizable only for their existing one-hour
+  session lifetime.
 
 Revoking:
 

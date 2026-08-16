@@ -98,8 +98,12 @@ test.after(() => {
 });
 
 function cookieValue(setCookie, name) {
-  const match = setCookie?.match(new RegExp(`${name}=([^;,]+)`));
-  return match ? `${name}=${match[1]}` : '';
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cookieName = name === '__Secure-share_access'
+    ? `(${escaped}\\.[a-f0-9]{32})`
+    : `(${escaped})`;
+  const match = setCookie?.match(new RegExp(`${cookieName}=([^;,]+)`));
+  return match ? `${match[1]}=${match[2]}` : '';
 }
 
 async function login() {

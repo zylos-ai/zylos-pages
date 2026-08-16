@@ -1,8 +1,7 @@
 import {
-  SHARE_ACCESS_COOKIE_NAME,
   getActiveShare,
   verifyActiveSharePassword,
-  verifyShareAccessCookieForToken,
+  verifyShareAccessCookiesForToken,
 } from '../sharing/share-manager.js';
 import { SharePasswordRateLimiter } from './share-password-rate-limit.js';
 
@@ -11,15 +10,6 @@ export const SHARE_PASSWORD_HEADER = 'x-zylos-share-password';
 // self-description). The name is not a secret — protection rests on the
 // password hash and the pre-KDF rate limiter.
 export const SHARE_PASSWORD_HEADER_NAME = 'X-Zylos-Share-Password';
-
-function parseCookie(header, name) {
-  if (!header) return null;
-  for (const pair of header.split(';')) {
-    const [key, ...rest] = pair.trim().split('=');
-    if (key === name) return rest.join('=');
-  }
-  return null;
-}
 
 export function sharePasswordClientIp(req) {
   return req.ip || req.socket?.remoteAddress || '';
@@ -66,17 +56,28 @@ export function createShareAuthorization({
       return { authorized: true, proof: 'unprotected', share };
     }
 
-    const cookie = parseCookie(req.headers.cookie, SHARE_ACCESS_COOKIE_NAME);
-    const session = verifyShareAccessCookieForToken(cookie, share.tokenId);
+    const session = verifyShareAccessCookiesForToken(req.headers.cookie, share.tokenId);
     if (session.valid) {
-      return { authorized: true, proof: 'session', share: session };
+      return {
+        authorized: true,
+        proof: 'session',
+        share: session,
+        clearCookieNames: session.clearCookieNames,
+        migrateLegacy: session.legacy === true,
+      };
     }
 
     const password = req.headers[SHARE_PASSWORD_HEADER];
     if (typeof password !== 'string' || password.length === 0) {
-      return { authorized: false, code: 'password_required', status: 401 };
+      return {
+        authorized: false,
+        code: 'password_required',
+        status: 401,
+        clearCookieNames: session.clearCookieNames,
+      };
     }
-    return verifyProof(req, share.tokenId, password);
+    const proof = await verifyProof(req, share.tokenId, password);
+    return { ...proof, clearCookieNames: session.clearCookieNames };
   }
 
   return { authorizeRead, verifyProof, rateLimiter };
