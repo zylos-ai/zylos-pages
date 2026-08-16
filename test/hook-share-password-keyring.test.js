@@ -216,6 +216,32 @@ test('post-upgrade hook initializes the keyring end to end', () => {
   assert.equal(readConfig(home).sharing.passwordKeyFile, keyFile);
 });
 
+test('post-upgrade removes every legacy auth.enabled value and preserves owner credentials idempotently', () => {
+  const knownHash = 'scrypt:known-salt:known-hash';
+  for (const legacyEnabled of [false, true, undefined]) {
+    const auth = { password: knownHash, note: 'keep-auth-setting' };
+    if (legacyEnabled !== undefined) auth.enabled = legacyEnabled;
+    const home = makeHome({
+      auth,
+      sharing: { enabled: true },
+      unrelated: { marker: 'keep-unrelated-setting' },
+    });
+    const hook = path.join(repoRoot, 'hooks/post-upgrade.js');
+    const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
+
+    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    const once = readConfig(home);
+    assert.equal(Object.hasOwn(once.auth, 'enabled'), false);
+    assert.equal(once.auth.password, knownHash);
+    assert.equal(once.auth.note, 'keep-auth-setting');
+    assert.deepEqual(once.unrelated, { marker: 'keep-unrelated-setting' });
+
+    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    const twice = readConfig(home);
+    assert.deepEqual(twice, once, `second run should be idempotent for enabled=${legacyEnabled}`);
+  }
+});
+
 test('post-install hook initializes the keyring end to end', () => {
   const home = makeHome();
   fs.mkdirSync(path.join(home, 'zylos/http/public/pages'), { recursive: true });

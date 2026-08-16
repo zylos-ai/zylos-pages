@@ -367,18 +367,17 @@ function loginPageHtml(baseUrl, error, next) {
 /**
  * Set up cookie-based session auth on an Express app.
  * @param {Express} app
- * @param {object} authConfig - { enabled, password }
+ * @param {object} authConfig - { password }
  * Browser-visible paths are derived from X-Forwarded-Prefix when Caddy strips
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
 export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
   migratePasswordIfNeeded(authConfig);
 
-  const authDisabled = authConfig.enabled === false;
   const authPasswordConfigured = typeof authConfig.password === 'string' && authConfig.password.length > 0;
-  const authMisconfigured = !authDisabled && !authPasswordConfigured;
+  const authMisconfigured = !authPasswordConfigured;
 
-  if (!authDisabled && authPasswordConfigured) {
+  if (authPasswordConfigured) {
     initSessionStore();
   }
 
@@ -510,14 +509,12 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     // precedence over every share proof. Resolve it before allowing the public
     // route through so /s/<token> cannot demote an owner to a share viewer.
     if (shortSharePath) {
-      if (!authDisabled && !authMisconfigured && validateSession(getSessionCookie(req))) {
+      if (!authMisconfigured && validateSession(getSessionCookie(req))) {
         res.locals.authenticated = true;
         res.setHeader('Cache-Control', 'no-store');
       }
       return next();
     }
-
-    if (authDisabled) return next();
 
     if ((req.method === 'GET' || req.method === 'HEAD')
         && req.path.startsWith('/assets/')

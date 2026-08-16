@@ -41,12 +41,12 @@ function cookieValue(setCookie, name) {
   return match ? `${name}=${match[1]}` : '';
 }
 
-async function makeServer({ authEnabled = true } = {}) {
+async function makeServer() {
   const sourcePath = path.join(contentDir, 'page.md');
   fs.writeFileSync(sourcePath, '# Protected source\n\nprivate body\n');
   const config = {
     contentDir,
-    auth: { enabled: authEnabled, password: authEnabled ? ownerPasswordHash : null },
+    auth: { password: ownerPasswordHash },
     sharing: {
       enabled: true,
       passwordKeyFile: keyFile,
@@ -643,10 +643,11 @@ test('unlock challenge status boundary: browser HTML is 200 while agent proof pa
 });
 
 test('protected creation is refused when the owner surface is unauthenticated', async () => {
-  const { server, origin } = await makeServer({ authEnabled: false });
+  const { server, origin } = await makeServer();
   try {
     const response = await fetch(`${origin}/api/share`, {
       method: 'POST',
+      redirect: 'manual',
       headers: { 'Content-Type': 'application/json', Origin: origin },
       body: JSON.stringify({
         slug: 'p/protected',
@@ -654,8 +655,8 @@ test('protected creation is refused when the owner surface is unauthenticated', 
         protection: { type: 'password', mode: 'generated' },
       }),
     });
-    assert.equal(response.status, 409);
-    assert.equal((await response.json()).code, 'protection_unavailable');
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get('location'), /^\/login(?:\?|$)/);
   } finally {
     server.close();
   }

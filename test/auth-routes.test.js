@@ -83,7 +83,6 @@ test.after(() => {
 });
 
 function makeServer(authConfig = {
-  enabled: true,
   password: hashPassword('secret'),
 }) {
   const app = express();
@@ -109,8 +108,8 @@ function makeServer(authConfig = {
   });
 }
 
-test('auth enabled without password fails closed while allowing only public assets and explicit share paths', async () => {
-  const { server, origin } = await makeServer({ enabled: true, password: null });
+test('legacy auth.enabled=false without password still fails closed while allowing only public assets and explicit share paths', async () => {
+  const { server, origin } = await makeServer({ enabled: false, password: null });
   try {
     const allowed = [
       '/_assets/style.css',
@@ -154,6 +153,37 @@ test('auth enabled without password fails closed while allowing only public asse
       headers: { Origin: origin },
     });
     assert.equal(logout.status, 503);
+  } finally {
+    server.close();
+  }
+});
+
+test('legacy auth.enabled=false cannot bypass the owner wall when a password is configured', async () => {
+  const { server, origin } = await makeServer({
+    enabled: false,
+    password: hashPassword('secret'),
+  });
+  try {
+    for (const requestPath of ['/', '/docs/page', '/api/pages']) {
+      const response = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
+      assert.equal(response.status, 302, `${requestPath} should require owner login`);
+      assert.match(response.headers.get('location'), /^\/login(?:\?|$)/);
+    }
+
+    const invalidCookie = await fetch(`${origin}/`, {
+      redirect: 'manual',
+      headers: { Cookie: '__Secure-zylos_pages_session=not-a-session' },
+    });
+    assert.equal(invalidCookie.status, 302);
+    assert.match(invalidCookie.headers.get('location'), /^\/login(?:\?|$)/);
+
+    const cookie = await loginCookies(origin);
+    const owner = await fetch(`${origin}/`, {
+      redirect: 'manual',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(owner.status, 200);
+    assert.equal(await owner.text(), 'root');
   } finally {
     server.close();
   }

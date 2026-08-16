@@ -80,12 +80,20 @@ async function withServer(authConfig, fn, overrides = {}) {
     sourcePath: path.join(contentDir, 'short-state.html'),
     component: 'content',
   }, config);
-  setupAuth(app, authConfig || { enabled: false, password: null });
+  setupAuth(app, authConfig || { password: hashPassword('secret') });
   setupShareApi(app, { enabled: true }, config);
   setupStateApi(app, config);
   app.get('/', (_req, res) => res.send('root'));
   try {
-    await withApp(app, fn);
+    await withApp(app, async ({ origin }) => {
+      const ownerCookie = await login(origin);
+      const ownerFetch = (input, init = {}) => {
+        const headers = new Headers(init.headers);
+        headers.set('Cookie', ownerCookie);
+        return fetch(input, { ...init, headers });
+      };
+      await fn({ origin, ownerCookie, fetch: ownerFetch });
+    });
   } finally {
     await rm(contentDir, { recursive: true, force: true });
   }
@@ -104,7 +112,6 @@ async function login(origin) {
 
 function authConfig() {
   return {
-    enabled: true,
     password: hashPassword('secret'),
   };
 }
@@ -219,9 +226,9 @@ test('state store isolates page identities', () => {
   assert.deepEqual(getStateValue(pageTwo, 'shared'), { found: true, value: false });
 });
 
-test('state API works with auth disabled and supports CRUD', async () => {
+test('state API supports owner-authenticated CRUD', async () => {
   await registerStatePage('api-crud');
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     const artifact = 'api-crud';
 
     let res = await fetch(`${origin}/api/state/${artifact}`);
@@ -271,7 +278,7 @@ test('state API works with auth disabled and supports CRUD', async () => {
 
 test('state API distinguishes stored null from missing key', async () => {
   await registerStatePage('api-null');
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     const res = await fetch(`${origin}/api/state/api-null/null-key`, {
       method: 'PUT',
       headers: sameOriginHeaders(origin),
@@ -291,7 +298,7 @@ test('state API distinguishes stored null from missing key', async () => {
 
 test('state API CSRF checks mutating requests only', async () => {
   await registerStatePage('csrf');
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     let res = await fetch(`${origin}/api/state/csrf/key`, {
       method: 'PUT',
       headers: sameOriginHeaders(origin),
@@ -334,7 +341,7 @@ test('state API CSRF checks mutating requests only', async () => {
 });
 
 test('state API rejects an unregistered artifact instead of creating a namespace', async () => {
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     const artifact = 'definitely-not-a-registered-page';
     const db = getPagesDb();
     const before = db.prepare('SELECT COUNT(*) AS n FROM artifact_state').get().n;
@@ -369,7 +376,7 @@ test('state API rejects an unregistered artifact instead of creating a namespace
 test('state follows page_id across a logical page rename', async () => {
   const page = await registerStatePage('state-before-rename');
 
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     let res = await fetch(`${origin}/api/state/state-before-rename/checklist`, {
       method: 'PUT',
       headers: sameOriginHeaders(origin),
@@ -608,7 +615,7 @@ test('legacy share tokens do not grant access to raw API or pages', async () => 
 });
 
 test('state API validates artifact IDs and keys', async () => {
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     let res = await fetch(`${origin}/api/state/BadArtifact`);
     assert.equal(res.status, 400);
 
@@ -638,7 +645,7 @@ test('state API validates artifact IDs and keys', async () => {
 
 test('state API validates request body shape and JSON', async () => {
   await registerStatePage('body');
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     let res = await fetch(`${origin}/api/state/body/key`, {
       method: 'PUT',
       headers: sameOriginHeaders(origin),
@@ -678,7 +685,7 @@ test('state API validates request body shape and JSON', async () => {
 
 test('state API enforces raw body and value JSON byte limits', async () => {
   await registerStatePage('limits');
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     const exactValue = 'a'.repeat(VALUE_JSON_LIMIT_BYTES - 2);
     assert.equal(Buffer.byteLength(JSON.stringify(exactValue), 'utf8'), VALUE_JSON_LIMIT_BYTES);
 
@@ -865,7 +872,7 @@ test('state mutation audit covers success, rate limit, CSRF, invalid input, unkn
     assert.equal(audits.some(line => JSON.stringify(line).includes('__Secure-')), false);
   }, { state });
 
-  await withServer({ enabled: false, password: null }, async ({ origin }) => {
+  await withServer(authConfig(), async ({ origin, fetch }) => {
     const audits = await captureStateAuditLines(async () => {
       assert.equal((await fetch(`${origin}/api/state/not-registered/key`, {
         method: 'DELETE', headers: { Origin: origin },

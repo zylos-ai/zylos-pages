@@ -38,7 +38,7 @@ async function makeContentDir() {
 }
 
 function authConfig() {
-  return { enabled: true, password: hashPassword('secret') };
+  return { password: hashPassword('secret') };
 }
 
 function baseConfig(contentDir, auth = authConfig(), extra = {}) {
@@ -63,7 +63,7 @@ function registerContentPage(contentDir, uri, title = uri) {
 
 async function withServer(config, fn, options = {}) {
   const app = express();
-  setupAuth(app, config.auth || { enabled: false, password: null }, config.sharing || { enabled: true });
+  setupAuth(app, config.auth || authConfig(), config.sharing || { enabled: true });
   setupShareApi(app, config.sharing || { enabled: true }, config);
   setupAttachmentApi(app, config, options);
   app.get('/s/:slug', (_req, res) => res.status(200).send('fallback'));
@@ -274,22 +274,26 @@ test('authenticated users can upload, list, read, and delete image attachments',
   }
 });
 
-test('auth-disabled mode rejects upload and delete mutations by default', async () => {
+test('legacy auth.enabled=false still requires owner login for upload and delete mutations', async () => {
   const contentDir = await makeContentDir();
   try {
-    await withServer(baseConfig(contentDir, { enabled: false, password: null }), async ({ origin }) => {
+    await withServer(baseConfig(contentDir, { enabled: false, password: hashPassword('secret') }), async ({ origin }) => {
       let res = await fetch(`${origin}/api/attachments/renovation-checklist/photo-log`, {
         method: 'POST',
+        redirect: 'manual',
         headers: { Origin: origin },
         body: formData(JPEG),
       });
-      assert.equal(res.status, 403);
+      assert.equal(res.status, 302);
+      assert.match(res.headers.get('location'), /^\/login(?:\?|$)/);
 
       res = await fetch(`${origin}/api/attachments/renovation-checklist/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, {
         method: 'DELETE',
+        redirect: 'manual',
         headers: { Origin: origin },
       });
-      assert.equal(res.status, 403);
+      assert.equal(res.status, 302);
+      assert.match(res.headers.get('location'), /^\/login(?:\?|$)/);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

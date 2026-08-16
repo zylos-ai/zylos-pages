@@ -19,6 +19,15 @@ if (fs.existsSync(configPath)) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   let migrated = false;
 
+  // auth.enabled was an escape hatch around the owner authentication wall.
+  // Remove the legacy key by presence (including false) while preserving the
+  // password hash and every unrelated setting verbatim at the value level.
+  if (config.auth && typeof config.auth === 'object'
+      && Object.prototype.hasOwnProperty.call(config.auth, 'enabled')) {
+    delete config.auth.enabled;
+    migrated = true;
+  }
+
   // Migration: add security section if missing
   if (!config.security) {
     config.security = {
