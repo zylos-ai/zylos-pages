@@ -153,8 +153,7 @@ function registeredShareSlug(rawSlug) {
 }
 
 function protectionAvailable(config) {
-  return config.auth?.enabled === true &&
-    typeof config.auth?.password === 'string' && config.auth.password.length > 0;
+  return typeof config.auth?.password === 'string' && config.auth.password.length > 0;
 }
 
 function loadConfiguredKeyring(config) {

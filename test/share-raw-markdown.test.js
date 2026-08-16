@@ -60,7 +60,7 @@ function makeServer({ auth = false, maxFileSizeBytes = 1024 * 1024 } = {}) {
     }, config);
   }
   if (auth) {
-    setupAuth(app, { enabled: true, password: hashPassword('secret') }, { enabled: true });
+    setupAuth(app, { password: hashPassword('secret') }, { enabled: true });
   }
   setupShareApi(app, { enabled: true, allowPermanent: false }, config);
 

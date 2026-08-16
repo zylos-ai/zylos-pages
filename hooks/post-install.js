@@ -27,7 +27,6 @@ const INITIAL_CONFIG = {
   port: 3462,
   contentDir: CONTENT_DIR,
   auth: {
-    enabled: true,
     password: hashedPassword,
   },
   theme: {
@@ -124,8 +123,7 @@ if (!fs.existsSync(configPath)) {
   console.log('\nCreating default config.json...');
   fs.writeFileSync(configPath, JSON.stringify(INITIAL_CONFIG, null, 2));
   console.log('  - config.json created');
-  console.log(`\n  Auth enabled. Username: pages  Password: ${generatedPassword}`);
-  console.log('  To disable auth, set auth.enabled = false in config.json');
+  console.log(`\n  Owner password: ${generatedPassword}`);
 } else {
   // If config exists but has no auth section, add it
   try {
@@ -133,7 +131,7 @@ if (!fs.existsSync(configPath)) {
     let migrated = false;
     let generatedAuth = false;
     if (!existing.auth) {
-      existing.auth = { enabled: true, password: hashedPassword };
+      existing.auth = { password: hashedPassword };
       migrated = true;
       generatedAuth = true;
     }
@@ -150,7 +148,7 @@ if (!fs.existsSync(configPath)) {
       fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
       console.log('\nUpdated existing config.');
       if (generatedAuth) {
-        console.log(`  Auth enabled. Password: ${generatedPassword}`);
+        console.log(`  Owner password: ${generatedPassword}`);
       }
     } else {
       console.log('\nConfig already exists, skipping.');

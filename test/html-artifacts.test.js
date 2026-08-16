@@ -37,7 +37,7 @@ function baseConfig(contentDir) {
     },
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
-    auth: { enabled: false, password: null },
+    auth: { password: hashPassword('secret') },
     externalFiles: { allowedSources: { content: contentDir } },
   };
 }
@@ -66,7 +66,7 @@ async function withServer(config, fn) {
   initCache({ maxEntries: 50, ttlSeconds: 60 });
   const app = express();
   app.use(securityHeaders());
-  setupAuth(app, config.auth || { enabled: false, password: null });
+  setupAuth(app, config.auth || { password: hashPassword('secret') });
   setupShareApi(app, config.sharing || { enabled: true }, config);
   setupRawApi(app, config);
   app.get('/:slug(*)', pageRoute(config));
@@ -78,7 +78,20 @@ async function withServer(config, fn) {
   const origin = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    await fn({ origin });
+    const loginResponse = await fetch(`${origin}/login`, {
+      method: 'POST',
+      redirect: 'manual',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ password: 'secret' }),
+    });
+    assert.equal(loginResponse.status, 302);
+    const ownerCookie = cookieHeader(loginResponse.headers.get('set-cookie'));
+    const ownerFetch = (input, init = {}) => {
+      const headers = new Headers(init.headers);
+      headers.set('Cookie', ownerCookie);
+      return fetch(input, { ...init, headers });
+    };
+    await fn({ origin, ownerCookie, fetch: ownerFetch });
   } finally {
     await new Promise((resolve, reject) => {
       server.close((err) => err ? reject(err) : resolve());
@@ -150,7 +163,7 @@ test('page route serves markdown with default CSP and html artifacts wrapped wit
     registerPage(config, 'artifact', artifactPath, 'Artifact');
     registerPage(config, 'both', bothPath, 'Both HTML');
 
-    await withServer(config, async ({ origin }) => {
+    await withServer(config, async ({ origin, fetch }) => {
       const markdown = await fetch(`${origin}/foo`);
       assert.equal(markdown.status, 200);
       assert.equal(markdown.headers.get('content-security-policy'), DEFAULT_CSP);
@@ -236,7 +249,7 @@ test('shared html artifacts render directly while shared markdown keeps page hea
 
     await withServer({
       ...config,
-      auth: { enabled: true, password: hashPassword('secret') },
+      auth: { password: hashPassword('secret') },
     }, async ({ origin }) => {
       const redirect = await fetch(`${origin}/shared.html?token=${encodeURIComponent(htmlShare.token)}`, { redirect: 'manual' });
       assert.equal(redirect.status, 302);
@@ -281,7 +294,7 @@ test('html pages require auth when no valid share token is present', async () =>
 
     await withServer({
       ...config,
-      auth: { enabled: true, password: hashPassword('secret') },
+      auth: { password: hashPassword('secret') },
     }, async ({ origin }) => {
       const res = await fetch(`${origin}/private`, { redirect: 'manual' });
       assert.equal(res.status, 302);
@@ -304,7 +317,7 @@ test('raw API returns markdown when both html and markdown exist, and share view
 
     await withServer({
       ...config,
-      auth: { enabled: true, password: hashPassword('secret') },
+      auth: { password: hashPassword('secret') },
     }, async ({ origin }) => {
       const rawAsShare = await fetch(`${origin}/api/raw/source?token=${encodeURIComponent(token)}`, { redirect: 'manual' });
       assert.equal(rawAsShare.status, 302);

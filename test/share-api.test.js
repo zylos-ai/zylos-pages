@@ -367,10 +367,10 @@ test('short share URL sets access cookie and renders clean page in place', async
   }
 });
 
-test('short share URL remains accessible when auth is enabled without password', async () => {
+test('short share URL remains accessible when the owner password is missing', async () => {
   const share = createShare('docs/page', '24h');
   const { server, origin } = await makeServer({
-    authConfig: { enabled: true, password: null },
+    authConfig: { password: null },
   });
   try {
     const response = await fetch(`${origin}/s/${share.tokenId}`);

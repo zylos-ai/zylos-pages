@@ -33,7 +33,7 @@ test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-function baseConfig(contentDir, auth = { enabled: false, password: null }) {
+function baseConfig(contentDir, auth = { password: hashPassword('secret') }) {
   return {
     contentDir,
     security: {
@@ -65,7 +65,7 @@ async function withServer(config, fn) {
   initCache({ maxEntries: 50, ttlSeconds: 60 });
   const app = express();
   app.use(securityHeaders());
-  setupAuth(app, config.auth || { enabled: false, password: null });
+  setupAuth(app, config.auth || { password: hashPassword('secret') });
   setupShareApi(app, config.sharing || { enabled: true }, config);
   setupStateApi(app);
   app.get('/', (_req, res) => res.send('root'));
@@ -84,7 +84,13 @@ async function withServer(config, fn) {
   const origin = `http://127.0.0.1:${server.address().port}`;
 
   try {
-    await fn({ origin });
+    const ownerCookie = sessionCookie(await login(origin));
+    const ownerFetch = (input, init = {}) => {
+      const headers = new Headers(init.headers);
+      headers.set('Cookie', ownerCookie);
+      return fetch(input, { ...init, headers });
+    };
+    await fn({ origin, ownerCookie, fetch: ownerFetch });
   } finally {
     await new Promise((resolve, reject) => {
       server.close((err) => err ? reject(err) : resolve());
@@ -137,7 +143,7 @@ function logicalAssetPath(html, assetName) {
   return match[1].replace(/&amp;/g, '&');
 }
 
-async function rawGet(origin, requestPath) {
+async function rawGet(origin, requestPath, cookie) {
   const url = new URL(origin);
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -145,6 +151,7 @@ async function rawGet(origin, requestPath) {
       port: url.port,
       path: requestPath,
       method: 'GET',
+      headers: cookie ? { Cookie: cookie } : {},
     }, (res) => {
       res.resume();
       res.on('end', () => resolve(res));
@@ -168,11 +175,11 @@ test('logical asset route serves registered page assets with MIME, ETag, 304, an
     await writeFile(path.join(contentDir, 'tool.exe'), 'not allowed');
     registerPage(config, 'page', pagePath, 'Page');
 
-    await withServer(config, async ({ origin }) => {
+    await withServer(config, async ({ origin, fetch }) => {
       let res = await fetch(`${origin}/assets/page?path=image.jpg`);
       assert.equal(res.status, 200);
       assert.equal(res.headers.get('content-type'), 'image/jpeg');
-      assert.equal(res.headers.get('cache-control'), 'public, max-age=3600');
+      assert.equal(res.headers.get('cache-control'), 'no-store');
       const etag = res.headers.get('etag');
       assert.ok(etag);
 
@@ -252,7 +259,7 @@ test('root route serves admin console and /admin is not mounted', async () => {
 test('asset route follows auth wall, session auth, and method boundaries', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     const pagePath = path.join(contentDir, 'private.md');
     await writeFile(pagePath, '# Private\n');
     await writeFile(path.join(contentDir, 'private.jpg'), 'private');
@@ -302,7 +309,7 @@ test('authenticated /p view resolves out-of-directory assets within allowed root
     await writeFile(outsideSibling, 'outside root');
 
     const config = {
-      ...baseConfig(contentDir, { enabled: true, password: hashPassword('secret') }),
+      ...baseConfig(contentDir, { password: hashPassword('secret') }),
       sourceRegistry: {
         allowedSources: {
           docs: sourceRoot,
@@ -357,7 +364,7 @@ test('authenticated /p view resolves out-of-directory assets within allowed root
 test('share page access renders in place and signs referenced assets', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     const pagePath = path.join(contentDir, 'renovation-checklist.html');
     await writeFile(pagePath, '<!doctype html><img src="kitchen-ref.jpg">');
     await writeFile(path.join(contentDir, 'kitchen-ref.jpg'), 'kitchen image');
@@ -409,7 +416,7 @@ test('share page access renders in place and signs referenced assets', async () 
 test('signed share assets allow page assets while isolating unsigned siblings', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     await mkdir(path.join(contentDir, 'docs'));
     await mkdir(path.join(contentDir, 'other'));
     await mkdir(path.join(contentDir, 'shared'));
@@ -455,7 +462,7 @@ test('signed share assets allow page assets while isolating unsigned siblings', 
 test('signed share assets work for p-prefixed logical page shares', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     await mkdir(path.join(contentDir, 'docs'));
     const pagePath = path.join(contentDir, 'docs', 'prefixed.html');
     await writeFile(pagePath, '<!doctype html><img src="hero.png">');
@@ -486,7 +493,7 @@ test('signed share assets work for p-prefixed logical page shares', async () => 
 test('a residual share-scope cookie grants nothing on any route', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     const pagePath = path.join(contentDir, 'scoped.html');
     await writeFile(pagePath, '<!doctype html><img src="pic.png">');
     await writeFile(path.join(contentDir, 'pic.png'), 'pic');
@@ -572,7 +579,7 @@ test('a residual share-scope cookie grants nothing on any route', async () => {
 test('revoked share invalidates existing signed asset URLs', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     const pagePath = path.join(contentDir, 'shared.html');
     await writeFile(pagePath, '<!doctype html><img src="asset.jpg">');
     await writeFile(path.join(contentDir, 'asset.jpg'), 'asset');
@@ -605,20 +612,19 @@ test('asset route rejects traversal, null byte, and double-encoded traversal', a
     const pagePath = path.join(contentDir, 'page.md');
     await writeFile(pagePath, '# Page\n');
     registerPage(config, 'page', pagePath, 'Page');
-    const cookie = RESIDUAL_SCOPE_COOKIE;
-    await withServer(config, async ({ origin }) => {
-      let res = await rawGet(origin, '/assets/page?path=%2e%2e%2Fsecret.jpg');
+    await withServer(config, async ({ origin, ownerCookie }) => {
+      let res = await rawGet(origin, '/assets/page?path=%2e%2e%2Fsecret.jpg', ownerCookie);
+      assert.equal(res.statusCode, 404);
+
+      res = await rawGet(origin, '/assets/page?path=bad%00slug.jpg', ownerCookie);
       assert.equal(res.statusCode, 400);
 
-      res = await rawGet(origin, '/assets/page?path=bad%00slug.jpg');
-      assert.equal(res.statusCode, 400);
-
-      res = await rawGet(origin, '/assets/page?path=%252e%252e%2Fsecret.jpg');
-      assert.equal(res.statusCode, 400);
+      res = await rawGet(origin, '/assets/page?path=%252e%252e%2Fsecret.jpg', ownerCookie);
+      assert.equal(res.statusCode, 404);
 
       res = await fetch(`${origin}/%E0%A4%A.jpg`, {
         redirect: 'manual',
-        headers: { Cookie: cookie },
+        headers: { Cookie: ownerCookie },
       });
       assert.equal(res.status, 400);
     });
@@ -630,7 +636,7 @@ test('asset route rejects traversal, null byte, and double-encoded traversal', a
 test('login clears legacy share-scope cookie without overwriting session cookie', async () => {
   const contentDir = await makeContentDir();
   try {
-    const config = baseConfig(contentDir, { enabled: true, password: hashPassword('secret') });
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
     const pagePath = path.join(contentDir, 'shared.html');
     await writeFile(pagePath, '<!doctype html><h1>Shared</h1>');
     registerPage(config, 'shared', pagePath, 'Shared');
@@ -659,7 +665,7 @@ test('markdown, html artifact, extension redirects, and state API still work wit
     registerPage(config, 'foo', fooPath, 'Foo');
     registerPage(config, 'artifact', artifactPath, 'Artifact');
 
-    await withServer(config, async ({ origin }) => {
+    await withServer(config, async ({ origin, fetch }) => {
       let res = await fetch(`${origin}/foo`);
       assert.equal(res.status, 200);
       assert.match(await res.text(), /Foo/);

@@ -32,7 +32,6 @@ export const DEFAULT_CONFIG = {
     minHeadings: 3,
   },
   auth: {
-    enabled: true,
     password: null,
   },
   security: {
