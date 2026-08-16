@@ -211,6 +211,28 @@ by default), use a MIME extension allowlist with an octet-stream fallback,
 force attachment disposition, and never enter raw Markdown, state, embedded
 photo, logical-asset, render, or page-cache paths.
 
+## Cross-Page Navigation
+
+Pages refuses to be embedded: every response carries
+`Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`.
+Some host clients open a clicked link inside an iframe or embedded webview; in
+that context an in-place link from one Pages document to another shows a
+browser-level refusal, while the same URL opens fine as a top-level navigation
+(new tab). The fix is always the link, never the headers.
+
+- A link from one Pages document to another Pages document defaults to
+  `target="_blank" rel="noopener noreferrer"` — the new tab is a top-level
+  navigation, so the anti-framing protection never blocks it.
+- Same-page fragment links (`href="#section"`) stay as they are: they navigate
+  within the already-loaded document and are never affected.
+- Never weaken `frame-ancestors` or `X-Frame-Options` to make embedded
+  navigation work.
+- This per-link control exists in HTML artifacts. Markdown sources render
+  standard anchors and strip inline HTML by default (`allowRawHtml: false`),
+  so author a multi-page deliverable as HTML artifacts when it must be
+  clicked through from an embedding host. See
+  `references/html-rendering.md` for the compliant anchor example.
+
 ## Quick Start (Markdown)
 
 ```bash
