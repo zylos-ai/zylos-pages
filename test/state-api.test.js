@@ -430,7 +430,7 @@ test('state API allows short-share cookie CRUD for the matching artifact', async
     const redirect = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(redirect.status, 200);
     assert.equal(redirect.headers.get('location'), null);
-    assert.match(await redirect.text(), /<base href="\/p\/short-state">/);
+    assert.match(await redirect.text(), new RegExp(`<base href="/s/${share.tokenId}">`));
     const cookies = cookieHeader(redirect.headers.get('set-cookie'));
 
     let res = await fetch(`${origin}/api/state/short-state`, {

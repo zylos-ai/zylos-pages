@@ -28,7 +28,16 @@ function injectBaseHref(html, baseHref) {
 }
 
 async function finalizeShareHtml(html, { config, browserBase, displaySlug, share }) {
-  let output = injectBaseHref(html, browserPath(browserBase, displaySlug));
+  // Share viewers load the document at /s/<token>. The base href must resolve
+  // in-page fragment links within that same share route. Pointing it at the
+  // page's own /p/<uri> path makes a "#anchor" click resolve to /p/<uri>#anchor
+  // — a *different* path than the /s/<token> document — so the browser performs
+  // a full navigation onto the private route instead of an in-page scroll
+  // (issue #144). Scope the base to the share token, consistent with the
+  // share-scoped markdown-alternate and attachment-download links elsewhere in
+  // this route. Fall back to the display slug only if no token is present.
+  const baseSlug = share?.tokenId ? `s/${share.tokenId}` : displaySlug;
+  let output = injectBaseHref(html, browserPath(browserBase, baseSlug));
   output = await rewriteSignedShareAssetRefs(output, {
     baseUrl: browserBase,
     pageUri: displaySlug.startsWith('p/') ? displaySlug.slice(2) : displaySlug,

@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Share pages: in-page navigation no longer bounces viewers onto the
+  private route.** (#144) Share renders injected `<base href="/p/<uri>">`
+  (the private/owner path) while the document was served at `/s/<token>`.
+  Because the base path differed from the document path, clicking any in-page
+  `#fragment` link (tabs, table of contents) resolved to `/p/<uri>#…` and
+  triggered a *full navigation* onto the private route instead of an in-page
+  scroll, surfacing as an auth failure for share viewers. The share
+  `<base href>` is now scoped to the share route (`/s/<token>`), so fragment
+  links stay same-document and scroll in place with no request — consistent
+  with the already share-scoped markdown-alternate and attachment-download
+  links. The `/p/` share-cookie bypass remains as defense-in-depth for direct
+  hits and legacy links.
+
 ## [0.10.0] - 2026-08-17
 
 ### Added

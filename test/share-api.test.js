@@ -366,7 +366,8 @@ test('short share URL sets access cookie and renders clean page in place', async
     const setCookie = redirect.headers.get('set-cookie');
     assert.match(setCookie, /__Secure-share_access\.[a-f0-9]{32}=/);
     assert.doesNotMatch(setCookie, /__Secure-share_scope=/);
-    assert.match(await redirect.text(), /<base href="\/p\/docs\/page">/);
+    // In-page fragment nav must resolve within the share route, not /p/ (#144).
+    assert.match(await redirect.text(), new RegExp(`<base href="/s/${share.tokenId}">`));
   } finally {
     server.close();
   }
@@ -550,8 +551,9 @@ test('share-access cookie still grants the share view when unauthenticated (#102
     const shareCookie = cookieHeader(shareVisit.headers.get('set-cookie'));
 
     // Share cookie only (no login session): the /p/ logical route must keep
-    // serving the share view — share pages carry <base href=".../p/<uri>">,
-    // so anchor/TOC navigation from a share lands here.
+    // serving the share view as defense-in-depth for direct /p/ hits and legacy
+    // links. (Share pages now scope <base href> to /s/<token>, so ordinary
+    // in-page nav stays on the share route; see #144.)
     const page = await fetch(`${origin}/p/docs/page?locals=1`, {
       redirect: 'manual',
       headers: { Cookie: shareCookie },

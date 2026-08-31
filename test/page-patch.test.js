@@ -266,7 +266,7 @@ test('share links survive rename and move; uri access follows the new uri', asyn
     const shared = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });
     assert.equal(shared.status, 200);
     const body = await shared.text();
-    assert.match(body, /<base href="\/p\/archive\/team\/weekly-report">/);
+    assert.match(body, new RegExp(`<base href="/s/${share.tokenId}">`));
     assert.match(shared.headers.get('set-cookie'), /__Secure-share_access\.[a-f0-9]{32}=/);
 
     // The share record follows the page, keyed by page_id.
