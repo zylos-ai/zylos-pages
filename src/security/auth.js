@@ -565,9 +565,10 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     }
 
     // Share access session bypass for pages and raw HTML artifacts —
-    // unauthenticated fallback only. Must keep matching /p/<uri>: share views
-    // carry <base href=".../p/<uri>">, so anchor/TOC navigation from a share
-    // lands on the logical route and relies on this bypass.
+    // unauthenticated fallback only. Kept as defense-in-depth for direct /p/
+    // hits and legacy share links. Share pages now scope their <base href> to
+    // /s/<token>, so ordinary in-page (anchor/TOC) navigation stays on the
+    // share route and no longer relies on this bypass (issue #144).
     if ((req.method === 'GET' || req.method === 'HEAD')
         && !req.path.startsWith('/api/')
         && !isAssetPath(req.path)
