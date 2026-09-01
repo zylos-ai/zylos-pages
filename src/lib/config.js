@@ -44,6 +44,9 @@ export const DEFAULT_CONFIG = {
     windowMs: 60000,
     max: 60,
   },
+  handoff: {
+    rateLimit: { windowMs: 60000, max: 8 },
+  },
   proxy: {
     trust: 'loopback',
   },

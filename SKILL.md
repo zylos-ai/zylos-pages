@@ -104,6 +104,20 @@ node $PAGES_DIR/src/cli/pages.js allow-root add /absolute/reports --name reports
 
 Long-form parameter details and safety notes: `references/pages-cli.md`.
 
+## Secure handoff
+
+For a human to deliver a short-lived sensitive value, use the one-time local
+client at `src/cli/secure-handoff.js`; do not place the value in a page, state
+key, share password, command argument, environment variable, Issue, or log.
+Spawn the client with fixed argv and write create/status/await/consume/revoke
+JSON directly to stdin. It reaches the running Pages process through a `0600`
+Unix socket that is not routed by Caddy. Give the human only the returned
+`submitUrl`, retain the management token only in caller memory, and keep the
+one-time await response out of routine output. Browser Fetch Metadata protects
+same-origin POSTs through a stripped proxy; set an absolute `publicBaseUrl` as
+the fallback for clients that omit it. Full protocol and cleanup guidance is
+in `docs/secure-handoff.md`.
+
 ## Sharing
 
 Registering a page protects it with the Pages owner password. `share` mints

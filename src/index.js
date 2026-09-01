@@ -26,6 +26,9 @@ import { cleanupShares } from './sharing/share-manager.js';
 import { setupAssetRoute } from './routes/asset.js';
 import { setupLogicalAssetRoute } from './routes/logical-assets.js';
 import { setupPageApi } from './routes/page-api.js';
+import { setupHandoffRoutes } from './routes/handoff.js';
+import { handoffStore } from './handoff/handoff-store.js';
+import { startHandoffControlServer } from './handoff/handoff-control.js';
 import { adminRoute } from './routes/admin.js';
 import { pageRoute } from './routes/pages.js';
 import { logger } from './utils/logger.js';
@@ -56,6 +59,8 @@ if (!config.enabled) {
 
 let server = null;
 let cleanupTimer = null;
+let handoffCleanupTimer = null;
+let handoffControl = null;
 
 // Watch for config changes
 watchConfig((newConfig) => {
@@ -95,6 +100,14 @@ async function main() {
     immutable: true,
   };
   app.use('/_assets', express.static(assetsDir, staticOptions));
+
+  // One-time handoff forms are public bearer paths. Register them before the
+  // owner-auth wall; create/status/consume/revoke remain local helpers only.
+  const handoffConfig = { ...config.handoff, publicBaseUrl: config.publicBaseUrl };
+  setupHandoffRoutes(app, handoffConfig);
+  handoffControl = await startHandoffControlServer({
+    config: handoffConfig,
+  });
 
   // Share API routes (after auth — requires authenticated session)
   const sharingConfig = config.sharing || { enabled: true };
@@ -141,6 +154,8 @@ async function main() {
       logger.error('share cleanup failed', { err: err.message });
     }
   }, 3600_000);
+  handoffCleanupTimer = setInterval(() => handoffStore.cleanup(), 60_000);
+  handoffCleanupTimer.unref?.();
 }
 
 // Graceful shutdown
@@ -148,6 +163,8 @@ function shutdown() {
   console.log(`[pages] Shutting down...`);
   stopWatcher();
   if (cleanupTimer) clearInterval(cleanupTimer);
+  if (handoffCleanupTimer) clearInterval(handoffCleanupTimer);
+  handoffControl?.close();
   if (server) {
     server.close(() => {
       console.log(`[pages] Server closed`);
