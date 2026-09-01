@@ -132,7 +132,11 @@ data before discarding the backup.
 
 Pages includes a process-local, one-time form for general human-to-agent
 delivery of short-lived sensitive values. It is zero-retention and fails closed
-on restart. See [the lifecycle and integration guidance](docs/secure-handoff.md).
+on restart. Separate local clients reach the daemon over a `0600` Unix socket;
+no management endpoint is exposed through Caddy. Stripped-proxy deployments
+use browser Fetch Metadata for same-origin checks; set an absolute
+`publicBaseUrl` as the fallback for clients that omit it. See [the lifecycle
+and integration guidance](docs/secure-handoff.md).
 
 ## Configuration
 
@@ -142,6 +146,7 @@ Edit `~/zylos/components/pages/config.json`:
 {
   "enabled": true,
   "port": 3462,
+  "publicBaseUrl": "https://agent.example/pages",
   "contentDir": "~/zylos/http/public/pages",
   "theme": { "colorScheme": "auto", "codeTheme": "github-dark" },
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },

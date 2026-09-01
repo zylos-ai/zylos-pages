@@ -11,9 +11,32 @@ function noStore(res) {
   res.setHeader('Referrer-Policy', 'no-referrer');
 }
 
-function sameOrigin(req) {
-  const protoHeader = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const expected = `${protoHeader || req.protocol}://${req.headers.host}`;
+function configuredPublicOrigin(config) {
+  if (!config.publicBaseUrl) return null;
+  try {
+    const url = new URL(config.publicBaseUrl);
+    return ['http:', 'https:'].includes(url.protocol) ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function sameOrigin(req, config) {
+  const fetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
+  if (fetchSite) {
+    if (fetchSite !== 'same-origin') return false;
+    const assertedOrigin = req.headers.origin || req.headers.referer;
+    try {
+      return ['http:', 'https:'].includes(new URL(assertedOrigin).protocol);
+    } catch {
+      return false;
+    }
+  }
+  // publicBaseUrl is local operator configuration and remains authoritative
+  // when an edge rewrites Host before Caddy. Never infer browser origin from
+  // X-Forwarded-Host or X-Forwarded-Proto, which a client may be able to spoof.
+  const directProtocol = req.socket?.encrypted ? 'https' : 'http';
+  const expected = configuredPublicOrigin(config) || `${directProtocol}://${req.headers.host}`;
   for (const candidate of [req.headers.origin, req.headers.referer]) {
     if (!candidate) continue;
     try { return new URL(candidate).origin === expected; } catch { return false; }
@@ -70,7 +93,7 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
       if (limit.retryAfterSeconds) res.setHeader('Retry-After', String(limit.retryAfterSeconds));
       return res.status(limit.reason === 'rate_limited' ? 429 : 404).send('Handoff unavailable');
     }
-    if (!sameOrigin(req)) return res.status(403).send('Forbidden');
+    if (!sameOrigin(req, config)) return res.status(403).send('Forbidden');
     if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/x-www-form-urlencoded')) {
       return res.status(415).send('Unsupported Media Type');
     }

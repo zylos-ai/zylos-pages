@@ -106,15 +106,17 @@ Long-form parameter details and safety notes: `references/pages-cli.md`.
 
 ## Secure handoff
 
-For a human to deliver a short-lived sensitive value to an in-process agent
-integration, use the one-time handoff scaffold in
-`src/handoff/handoff-store.js`; do not place the value in a page, state key,
-share password, command argument, environment variable, Issue, or log. Create a
-1–15 minute session, give the human only `/pages/handoff/<id>`, and retain the
-returned management token only in caller memory. Use `awaitAndConsume` for the
-normal path, `status` for non-secret lifecycle checks, and `revoke` on
-abandonment. Full integration and cleanup guidance is in
-`docs/secure-handoff.md`.
+For a human to deliver a short-lived sensitive value, use the one-time local
+client at `src/cli/secure-handoff.js`; do not place the value in a page, state
+key, share password, command argument, environment variable, Issue, or log.
+Spawn the client with fixed argv and write create/status/await/consume/revoke
+JSON directly to stdin. It reaches the running Pages process through a `0600`
+Unix socket that is not routed by Caddy. Give the human only the returned
+`submitUrl`, retain the management token only in caller memory, and keep the
+one-time await response out of routine output. Browser Fetch Metadata protects
+same-origin POSTs through a stripped proxy; set an absolute `publicBaseUrl` as
+the fallback for clients that omit it. Full protocol and cleanup guidance is
+in `docs/secure-handoff.md`.
 
 ## Sharing
 
