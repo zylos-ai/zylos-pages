@@ -128,6 +128,12 @@ start Pages again. **Do not revert the code against the migrated database.**
 Confirm the restored old version starts and serves the expected page/state
 data before discarding the backup.
 
+## Secure handoff
+
+Pages includes a process-local, one-time form for general human-to-agent
+delivery of short-lived sensitive values. It is zero-retention and fails closed
+on restart. See [the lifecycle and integration guidance](docs/secure-handoff.md).
+
 ## Configuration
 
 Edit `~/zylos/components/pages/config.json`:

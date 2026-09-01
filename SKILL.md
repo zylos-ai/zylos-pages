@@ -104,6 +104,18 @@ node $PAGES_DIR/src/cli/pages.js allow-root add /absolute/reports --name reports
 
 Long-form parameter details and safety notes: `references/pages-cli.md`.
 
+## Secure handoff
+
+For a human to deliver a short-lived sensitive value to an in-process agent
+integration, use the one-time handoff scaffold in
+`src/handoff/handoff-store.js`; do not place the value in a page, state key,
+share password, command argument, environment variable, Issue, or log. Create a
+1–15 minute session, give the human only `/pages/handoff/<id>`, and retain the
+returned management token only in caller memory. Use `awaitAndConsume` for the
+normal path, `status` for non-secret lifecycle checks, and `revoke` on
+abandonment. Full integration and cleanup guidance is in
+`docs/secure-handoff.md`.
+
 ## Sharing
 
 Registering a page protects it with the Pages owner password. `share` mints
