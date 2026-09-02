@@ -207,6 +207,40 @@ test('browser Fetch Metadata enforces same-origin through an unconfigured host-r
   });
 });
 
+test('Chrome same-origin navigation with opaque Origin submits once while other Fetch Metadata shapes fail closed', async () => {
+  const store = new HandoffStore();
+  const config = { publicBaseUrl: 'https://agent.example/pages' };
+  await withServer(store, async origin => {
+    const chromeNavigation = store.create();
+    const opened = await form(origin, chromeNavigation.id);
+    const csrf = csrfFrom(opened.html);
+    const waiting = store.awaitAndConsume(chromeNavigation.id, chromeNavigation.manageToken);
+    const secret = 'accepted opaque-origin navigation';
+    const accepted = await submit(origin, chromeNavigation.id, csrf, secret, {
+      Origin: 'null',
+      'Sec-Fetch-Site': 'same-origin',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Dest': 'document',
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(await waiting, secret);
+    assert.equal(store.status(chromeNavigation.id, chromeNavigation.manageToken).state, 'consumed');
+
+    for (const headers of [
+      { Origin: 'null', 'Sec-Fetch-Site': 'cross-site' },
+      { Origin: 'null', 'Sec-Fetch-Site': 'same-site' },
+      { Origin: 'null', 'Sec-Fetch-Site': 'none' },
+      { Origin: 'null' },
+    ]) {
+      const rejected = store.create();
+      const rejectedForm = await form(origin, rejected.id);
+      const response = await submit(origin, rejected.id, csrfFrom(rejectedForm.html), 'must not submit', headers);
+      assert.equal(response.status, 403);
+      assert.equal(store.status(rejected.id, rejected.manageToken).state, 'waiting');
+    }
+  }, config);
+});
+
 test('exactly one concurrent submission and consumption can succeed', async () => {
   const store = new HandoffStore();
   const created = store.create();

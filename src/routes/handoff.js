@@ -24,13 +24,9 @@ function configuredPublicOrigin(config) {
 function sameOrigin(req, config) {
   const fetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
   if (fetchSite) {
-    if (fetchSite !== 'same-origin') return false;
-    const assertedOrigin = req.headers.origin || req.headers.referer;
-    try {
-      return ['http:', 'https:'].includes(new URL(assertedOrigin).protocol);
-    } catch {
-      return false;
-    }
+    // Sec-Fetch-Site is browser-controlled and remains meaningful when a
+    // navigation carries an opaque Origin (the literal value "null").
+    return fetchSite === 'same-origin';
   }
   // publicBaseUrl is local operator configuration and remains authoritative
   // when an edge rewrites Host before Caddy. Never infer browser origin from
