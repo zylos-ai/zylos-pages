@@ -229,6 +229,7 @@ test('Chrome same-origin navigation with opaque Origin submits once while other 
     for (const headers of [
       { Origin: 'null', 'Sec-Fetch-Site': 'cross-site' },
       { Origin: 'null', 'Sec-Fetch-Site': 'same-site' },
+      { Origin: 'null', 'Sec-Fetch-Site': 'none' },
       { Origin: 'null' },
     ]) {
       const rejected = store.create();
