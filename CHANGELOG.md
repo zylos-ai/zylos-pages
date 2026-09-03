@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.11.0] - 2026-09-03
+
+### Added
+
+- **Secure Handoff provides short-lived, single-use delivery of sensitive
+  values to an active agent.** (#147, PR #148) A local client creates,
+  awaits, consumes, checks, and revokes handoff sessions through a mode-0600
+  Unix socket. The public surface accepts POST submissions without placing
+  values in URLs, command arguments, environment variables, routine logs, or
+  persistent Pages state, and fails closed across expiry, restart, duplicate
+  submission, duplicate consumption, and cleanup.
+- **Secure Handoff documentation and regression coverage.** The threat model,
+  lifecycle, integration contract, and cleanup rules are documented, with
+  tests for CSRF/origin enforcement, rate and body limits, concurrency,
+  restart behavior, zero-retention markers, and existing Pages behavior.
+
+### Fixed
+
+- **Chrome opaque-origin handoff submissions now work without weakening the
+  cross-site boundary.** (PR #149) `Origin: null` is accepted only when Fetch
+  Metadata proves a same-origin navigation; cross-site and ambiguous requests
+  continue to fail closed.
+- **The successful handoff page now matches the submission form.** (PR #150)
+  Completion uses the same brand, card, palette, and typography while retaining
+  `no-store` behavior and never echoing submitted content.
+
 ## [0.10.1] - 2026-08-31
 
 ### Fixed
