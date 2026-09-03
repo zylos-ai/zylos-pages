@@ -96,7 +96,7 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
     try {
       const form = await readForm(req);
       store.submit(req.params.id, form.get('csrf'), form.get('value'));
-      return res.type('html').send(handoffResultHtml());
+      return res.type('html').send(handoffResultHtml({ assetBase: browserBaseFromRequest(req) }));
     } catch (err) {
       const status = err.statusCode || (err.code === 'csrf' ? 403 : err.code === 'value_too_large' ? 413 : err.code === 'unavailable' ? 409 : 400);
       return res.status(status).send(status === 403 ? 'Forbidden' : status === 413 ? 'Request too large' : 'Handoff unavailable');

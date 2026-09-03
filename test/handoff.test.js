@@ -85,6 +85,10 @@ test('one-time form submits and await atomically consumes without reflecting the
     const response = await submit(origin, created.id, csrf, secret);
     const resultHtml = await response.text();
     assert.equal(response.status, 200);
+    assert.match(resultHtml, /Handoff complete/);
+    assert.match(resultHtml, /Your value was submitted securely\./);
+    assert.match(resultHtml, /href="\/_assets\/style\.css"/);
+    assert.match(resultHtml, /src="\/_assets\/logo\.png"/);
     assert.doesNotMatch(resultHtml, new RegExp(secret));
     assert.equal(await waiting, secret);
     assert.equal(store.status(created.id, created.manageToken).state, 'consumed');
