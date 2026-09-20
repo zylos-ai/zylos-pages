@@ -5,7 +5,10 @@ description: >
   Registered Markdown, HTML, and downloadable file pages for zylos. Use for styled
   documents or when a local file should be exposed as a safe attachment page.
   Agents register the source with the pages CLI and report the internal URL; files
-  are served only after registration.
+  are served only after registration. Also provides secure one-time, burn-after-read
+  sensitive-value handoff both ways between an agent and the human owner
+  (agent→owner secure-handoff and owner→agent reveal) via same-origin,
+  CSRF-protected pages over a local control socket.
 type: capability
 
 lifecycle:
