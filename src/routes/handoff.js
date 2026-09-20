@@ -34,11 +34,6 @@ function normalizedHost(req) {
 
 function sameOrigin(req, config) {
   const fetchSite = String(req.headers['sec-fetch-site'] || '').toLowerCase();
-  if (fetchSite) {
-    // Sec-Fetch-Site is browser-controlled and remains meaningful when a
-    // navigation carries an opaque Origin (the literal value "null").
-    return fetchSite === 'same-origin';
-  }
   // publicBaseUrl is local operator configuration and remains authoritative
   // when an edge rewrites Host before Caddy. Never infer browser origin from
   // X-Forwarded-Host or X-Forwarded-Proto, which a client may be able to spoof.
@@ -46,9 +41,18 @@ function sameOrigin(req, config) {
   const expected = configuredPublicOrigin(config) || `${directProtocol}://${req.headers.host}`;
   for (const candidate of [req.headers.origin, req.headers.referer]) {
     if (!candidate) continue;
-    try { return new URL(candidate).origin === expected; } catch { return false; }
+    if (String(candidate).toLowerCase() === 'null') continue;
+    try {
+      return new URL(candidate).origin === expected
+        && (!fetchSite || fetchSite === 'same-origin');
+    } catch {
+      return false;
+    }
   }
-  return false;
+  // Chrome may send an opaque Origin for a same-origin form navigation. Fetch
+  // Metadata is the fallback only for that explicit compatibility case.
+  return String(req.headers.origin || '').toLowerCase() === 'null'
+    && fetchSite === 'same-origin';
 }
 
 function readForm(req) {

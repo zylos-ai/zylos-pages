@@ -316,6 +316,20 @@ test('reveal POST rejects Origin, Host, and CSRF failures without consuming the 
   }
 });
 
+test('reveal rejects a concrete wrong Origin even when Fetch Metadata says same-origin', async () => {
+  const store = new HandoffStore();
+  const created = store.createReveal({ value: 'still available' });
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const response = await reveal(origin, created.id, csrfFrom(opened.html), {
+      Origin: 'https://evil.example',
+      'Sec-Fetch-Site': 'same-origin',
+    });
+    assert.equal(response.status, 403);
+    assert.equal(store.status(created.id, created.manageToken).state, 'ready');
+  });
+});
+
 test('reveal TTL boundaries, expiry, restart loss, and input validation fail closed', async () => {
   let now = 10_000;
   const store = new HandoffStore({ now: () => now });
@@ -362,8 +376,9 @@ test('configured public origin survives stripped proxy rewrites and rejects cros
   }, config);
 });
 
-test('browser Fetch Metadata enforces same-origin through an unconfigured host-rewriting proxy', async () => {
+test('configured public origin remains authoritative through a host-rewriting proxy', async () => {
   const store = new HandoffStore();
+  const config = { publicBaseUrl: 'https://public.example/pages' };
   await withServer(store, async internalOrigin => {
     const positive = store.create();
     const positiveForm = await form(internalOrigin, positive.id);
@@ -386,7 +401,7 @@ test('browser Fetch Metadata enforces same-origin through an unconfigured host-r
     });
     assert.equal(denied.status, 403);
     assert.equal(store.status(negative.id, negative.manageToken).state, 'waiting');
-  });
+  }, config);
 });
 
 test('Chrome same-origin navigation with opaque Origin submits once while other Fetch Metadata shapes fail closed', async () => {
@@ -457,6 +472,20 @@ test('POST rejects missing/cross-origin proof, wrong CSRF, media type, empty and
       assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
     });
   }
+});
+
+test('submit rejects a concrete wrong Origin even when Fetch Metadata says same-origin', async () => {
+  const store = new HandoffStore();
+  const created = store.create();
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const response = await submit(origin, created.id, csrfFrom(opened.html), 'must not submit', {
+      Origin: 'https://evil.example',
+      'Sec-Fetch-Site': 'same-origin',
+    });
+    assert.equal(response.status, 403);
+    assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
+  });
 });
 
 test('raw request body limit rejects before retaining a value', async () => {
