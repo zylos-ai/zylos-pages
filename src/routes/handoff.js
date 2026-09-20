@@ -1,6 +1,6 @@
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { HANDOFF_MAX_VALUE_BYTES, handoffStore } from '../handoff/handoff-store.js';
-import { handoffFormHtml, handoffResultHtml } from '../templates/handoffTemplate.js';
+import { handoffFormHtml, handoffResultHtml, handoffRevealHtml, handoffRevealedHtml } from '../templates/handoffTemplate.js';
 
 export const HANDOFF_BODY_LIMIT_BYTES = HANDOFF_MAX_VALUE_BYTES + 512;
 const ID_RE = /^[a-f0-9]{32}$/;
@@ -16,6 +16,17 @@ function configuredPublicOrigin(config) {
   try {
     const url = new URL(config.publicBaseUrl);
     return ['http:', 'https:'].includes(url.protocol) ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizedHost(req) {
+  const value = req.headers.host;
+  if (typeof value !== 'string' || !value || /[\s/@\\]/.test(value)) return null;
+  try {
+    const parsed = new URL(`http://${value}`);
+    return parsed.host === value ? parsed.host.toLowerCase() : null;
   } catch {
     return null;
   }
@@ -69,10 +80,12 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
     noStore(res);
     if (!ID_RE.test(req.params.id)) return res.status(404).send('Handoff unavailable');
     const session = store.publicView(req.params.id);
-    const csrfToken = store.formCsrfToken(req.params.id);
+    const routeHost = normalizedHost(req);
+    const csrfToken = routeHost && store.formCsrfToken(req.params.id, routeHost);
     if (!session || !csrfToken) return res.status(404).send('Handoff unavailable');
     const browserBase = browserBaseFromRequest(req);
-    return res.type('html').send(handoffFormHtml({
+    const render = session.mode === 'reveal' ? handoffRevealHtml : handoffFormHtml;
+    return res.type('html').send(render({
       action: browserPath(browserBase, `handoff/${session.id}`),
       csrfToken,
       label: session.label,
@@ -84,6 +97,10 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
   app.post(route, async (req, res) => {
     noStore(res);
     if (!ID_RE.test(req.params.id) || !store.publicView(req.params.id)) return res.status(404).send('Handoff unavailable');
+    const routeHost = normalizedHost(req);
+    if (!routeHost || !store.routeHostMatches(req.params.id, routeHost)) return res.status(403).send('Forbidden');
+    const session = store.publicView(req.params.id);
+    if (session?.mode === 'reveal' && !req.headers.origin) return res.status(403).send('Forbidden');
     const limit = store.recordAttempt(req.params.id, req.ip || req.socket?.remoteAddress, config.rateLimit);
     if (!limit.allowed) {
       if (limit.retryAfterSeconds) res.setHeader('Retry-After', String(limit.retryAfterSeconds));
@@ -95,6 +112,12 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
     }
     try {
       const form = await readForm(req);
+      const liveSession = store.publicView(req.params.id);
+      if (!liveSession) return res.status(409).send('Handoff unavailable');
+      if (liveSession.mode === 'reveal') {
+        const value = store.reveal(req.params.id, form.get('csrf'));
+        return res.type('html').send(handoffRevealedHtml({ value, assetBase: browserBaseFromRequest(req) }));
+      }
       store.submit(req.params.id, form.get('csrf'), form.get('value'));
       return res.type('html').send(handoffResultHtml({ assetBase: browserBaseFromRequest(req) }));
     } catch (err) {

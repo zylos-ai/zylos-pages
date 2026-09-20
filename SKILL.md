@@ -118,6 +118,12 @@ same-origin POSTs through a stripped proxy; set an absolute `publicBaseUrl` as
 the fallback for clients that omit it. Full protocol and cleanup guidance is
 in `docs/secure-handoff.md`.
 
+For the reverse one-time reveal flow, send `create_reveal` JSON (including the
+value) only on the same client's stdin, share only the returned `revealUrl`, and
+optionally wait with `await_viewed`. Preview GETs never load the value; the
+human's same-origin, Host-bound, CSRF-bearing POST consumes and displays it once.
+The viewed event never contains the value.
+
 ## Sharing
 
 Registering a page protects it with the Pages owner password. `share` mints

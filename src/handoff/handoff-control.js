@@ -36,7 +36,8 @@ async function removeStaleSocket(socketPath) {
 function safeError(err) {
   const allowed = new Set([
     'aborted', 'consumed', 'expired', 'invalid_label', 'invalid_ttl',
-    'not_found', 'revoked', 'unavailable', 'waiting',
+    'invalid_value', 'not_found', 'revoked', 'unavailable', 'value_too_large',
+    'viewed', 'waiting',
   ]);
   const code = allowed.has(err?.code) ? err.code : 'invalid_request';
   return { ok: false, error: code };
@@ -60,6 +61,14 @@ async function dispatch(request, socket, store, config, abortController) {
         submitUrl: `${publicBase(config)}/handoff/${created.id}`,
       };
     }
+    case 'create_reveal': {
+      const created = store.createReveal({ value: request.value, ttlMs: request.ttlMs, label: request.label });
+      return {
+        ok: true,
+        ...created,
+        revealUrl: `${publicBase(config)}/handoff/${created.id}`,
+      };
+    }
     case 'status':
       return { ok: true, ...store.status(id, manageToken) };
     case 'consume':
@@ -68,6 +77,11 @@ async function dispatch(request, socket, store, config, abortController) {
       return {
         ok: true,
         value: await store.awaitAndConsume(id, manageToken, { signal: abortController.signal }),
+      };
+    case 'await_viewed':
+      return {
+        ok: true,
+        event: await store.awaitViewed(id, manageToken, { signal: abortController.signal }),
       };
     case 'revoke':
       return { ok: true, revoked: store.revoke(id, manageToken) };
