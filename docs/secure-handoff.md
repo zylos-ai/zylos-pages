@@ -4,6 +4,11 @@ Secure handoff is a process-local, one-time channel for a human to deliver a
 short-lived sensitive value to an agent integration. It is deliberately not a
 credential store or a component-installation workflow.
 
+It also supports the reverse, one-time reveal flow: a trusted local integration
+deposits a value through the same local socket, and a human must explicitly
+click a same-origin POST form before the value is returned once in that HTTP
+response. A preview GET never loads or consumes the value.
+
 ## Lifecycle
 
 1. The trusted local integration sends a JSON create request on stdin to
@@ -21,6 +26,13 @@ credential store or a component-installation workflow.
    service runs `cleanup()` each minute; cleanup is safe to repeat and removes
    terminal sessions, making their public paths return 404.
 
+For a reverse reveal, send `create_reveal` with `value`, `ttlMs`, and `label` on
+stdin. Give the human only `revealUrl`. The integration may wait with
+`await_viewed`; its response is a secret-free event containing only the handoff
+ID, `viewed` state, and timestamp. The reveal POST clears the value before that
+event is delivered, so a disconnected waiter cannot make the value readable
+again.
+
 ## Security boundary
 
 - Values live only in the Pages process between submission and consumption.
@@ -35,9 +47,9 @@ credential store or a component-installation workflow.
   management token or submitted value in CLI arguments or environment
   variables, and do not allow the client's one-time stdout response to enter a
   routine log. The client emits only fixed error codes on stderr.
-- GET only renders an empty form. Submission is POST-only and requires both a
-  same-origin Origin/Referer check and a per-session CSRF token. Responses are
-  `no-store` with a `no-referrer` policy.
+- GET only renders an empty form. Submission is POST-only and requires a
+  same-origin Origin/Referer check, the Host bound by the preview GET, and a
+  per-session CSRF token. Responses are `no-store` with a `no-referrer` policy.
 - The default ceiling is 4 KiB per value and 8 POST attempts per IP/session per
   minute. Global Pages rate limiting remains an additional layer.
 - The API accepts only TTL and display-label data. There is no command,
@@ -60,6 +72,8 @@ The client accepts exactly one JSON object on stdin. Supported operations are:
 - `{"operation":"await","id":"…","manageToken":"…"}`
 - `{"operation":"consume","id":"…","manageToken":"…"}`
 - `{"operation":"revoke","id":"…","manageToken":"…"}`
+- `{"operation":"create_reveal","value":"…","ttlMs":300000,"label":"API token"}`
+- `{"operation":"await_viewed","id":"…","manageToken":"…"}`
 
 Do not paste those management requests into a shell command: that would put
 the token in shell history or arguments. A caller should spawn

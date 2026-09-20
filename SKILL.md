@@ -5,7 +5,9 @@ description: >
   Registered Markdown, HTML, and downloadable file pages for zylos. Use for styled
   documents or when a local file should be exposed as a safe attachment page.
   Agents register the source with the pages CLI and report the internal URL; files
-  are served only after registration.
+  are served only after registration. Also use when an agent and the human owner need
+  to hand off a sensitive value one-time and burn-after-read, in either direction
+  (agent→owner or owner→agent).
 type: capability
 
 lifecycle:
@@ -117,6 +119,12 @@ one-time await response out of routine output. Browser Fetch Metadata protects
 same-origin POSTs through a stripped proxy; set an absolute `publicBaseUrl` as
 the fallback for clients that omit it. Full protocol and cleanup guidance is
 in `docs/secure-handoff.md`.
+
+For the reverse one-time reveal flow, send `create_reveal` JSON (including the
+value) only on the same client's stdin, share only the returned `revealUrl`, and
+optionally wait with `await_viewed`. Preview GETs never load the value; the
+human's same-origin, Host-bound, CSRF-bearing POST consumes and displays it once.
+The viewed event never contains the value.
 
 ## Sharing
 

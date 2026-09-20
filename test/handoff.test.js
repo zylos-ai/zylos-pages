@@ -43,6 +43,39 @@ async function submit(origin, id, csrf, value, headers = {}) {
   });
 }
 
+async function reveal(origin, id, csrf, headers = {}) {
+  return fetch(`${origin}/handoff/${id}`, {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
+    body: new URLSearchParams({ csrf }),
+  });
+}
+
+async function rawReveal(origin, id, csrf, headers = {}) {
+  const url = new URL(`/handoff/${id}`, origin);
+  const body = new URLSearchParams({ csrf }).toString();
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: 'POST',
+      setHost: false,
+      headers: {
+        Origin: origin,
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body),
+        ...headers,
+      },
+    }, response => {
+      response.resume();
+      response.on('end', () => resolve(response));
+    });
+    request.on('error', reject);
+    request.end(body);
+  });
+}
+
 function startCli(dataDir, request) {
   const clientEnv = { ...process.env, PAGES_DATA_DIR: dataDir };
   const child = spawn(process.execPath, [handoffCli], {
@@ -158,6 +191,165 @@ test('separate client process creates, checks, awaits, consumes, and revokes thr
   }
 });
 
+test('local client deposits a reveal value and receives only a secret-free viewed event', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-reveal-'));
+  const socketPath = path.join(dataDir, 'handoff-control.sock');
+  const store = new HandoffStore();
+  const control = await startHandoffControlServer({
+    store,
+    socketPath,
+    config: { publicBaseUrl: 'https://agent.example/pages' },
+  });
+  try {
+    const secret = 'one-time <owner> value';
+    const creating = startCli(dataDir, {
+      operation: 'create_reveal', value: secret, label: '<Deployment key>', ttlMs: 60_000,
+    });
+    assert.equal(creating.child.spawnargs.includes(secret), false, 'value must not enter argv');
+    assert.equal(Object.values(creating.clientEnv).includes(secret), false, 'value must not enter env');
+    const createdResult = await creating.completed;
+    const created = { ...createdResult, json: JSON.parse(createdResult.stdout) };
+    assert.equal(created.code, 0);
+    assert.equal(created.stdout.includes(secret), false, 'create response must not echo the value');
+    assert.equal(created.stderr.includes(secret), false, 'create errors must not echo the value');
+    assert.equal(created.json.revealUrl, `https://agent.example/pages/handoff/${created.json.id}`);
+
+    const awaiting = startCli(dataDir, {
+      operation: 'await_viewed', id: created.json.id, manageToken: created.json.manageToken,
+    });
+    await withServer(store, async internalOrigin => {
+      const opened = await fetch(`${internalOrigin}/handoff/${created.json.id}`, {
+        headers: { 'X-Forwarded-Prefix': '/pages' },
+      });
+      const html = await opened.text();
+      assert.equal(opened.status, 200);
+      assert.match(opened.headers.get('cache-control'), /no-store/);
+      assert.match(html, /One-time reveal/);
+      assert.match(html, /&lt;Deployment key&gt;/);
+      assert.doesNotMatch(html, new RegExp(secret));
+      assert.equal(store.status(created.json.id, created.json.manageToken).state, 'ready');
+
+      const response = await reveal(internalOrigin, created.json.id, csrfFrom(html), {
+        Origin: 'https://agent.example',
+        'X-Forwarded-Prefix': '/pages',
+      });
+      const resultHtml = await response.text();
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('cache-control'), /no-store/);
+      assert.match(resultHtml, /one-time &lt;owner&gt; value/);
+      assert.equal((await form(internalOrigin, created.json.id)).response.status, 404);
+    }, { publicBaseUrl: 'https://agent.example/pages' });
+
+    const viewed = await awaiting.completed;
+    assert.equal(viewed.code, 0);
+    assert.equal(viewed.stdout.includes(secret), false, 'viewed event must not contain the value');
+    const event = JSON.parse(viewed.stdout).event;
+    assert.deepEqual(Object.keys(event).sort(), ['id', 'state', 'viewedAt']);
+    assert.equal(event.state, 'viewed');
+  } finally {
+    control.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('reveal is atomic and an aborted viewed-event receiver never restores the value', async () => {
+  const store = new HandoffStore();
+  const created = store.createReveal({ value: 'single-use' });
+  const csrf = store.formCsrfToken(created.id, 'pages.example');
+  const aborted = new AbortController();
+  const disconnected = store.awaitViewed(created.id, created.manageToken, { signal: aborted.signal });
+  aborted.abort();
+  await assert.rejects(disconnected, { code: 'aborted' });
+  const results = await Promise.allSettled([
+    Promise.resolve().then(() => store.reveal(created.id, csrf)),
+    Promise.resolve().then(() => store.reveal(created.id, csrf)),
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(store.status(created.id, created.manageToken).state, 'viewed');
+  assert.throws(() => store.reveal(created.id, csrf), { code: 'unavailable' });
+  assert.deepEqual(await store.awaitViewed(created.id, created.manageToken), {
+    id: created.id,
+    state: 'viewed',
+    viewedAt: store.status(created.id, created.manageToken).viewedAt,
+  });
+});
+
+test('the local control socket has no HTTP route', async () => {
+  const store = new HandoffStore();
+  await withServer(store, async origin => {
+    const response = await fetch(`${origin}/handoff-control.sock`);
+    assert.equal(response.status, 404);
+    assert.doesNotMatch(await response.text(), /manageToken|create_reveal|await_viewed/);
+  });
+});
+
+test('reveal POST rejects Origin, Host, and CSRF failures without consuming the value', async () => {
+  for (const scenario of [
+    { headers: { Origin: '' }, expected: 403 },
+    { headers: { Origin: '', 'Sec-Fetch-Site': 'same-origin' }, expected: 403 },
+    { headers: { Origin: 'https://evil.example' }, expected: 403 },
+    { csrf: 'wrong', expected: 403 },
+  ]) {
+    const store = new HandoffStore();
+    const created = store.createReveal({ value: 'still available' });
+    await withServer(store, async origin => {
+      const opened = await form(origin, created.id);
+      const response = await reveal(origin, created.id, scenario.csrf ?? csrfFrom(opened.html), scenario.headers);
+      assert.equal(response.status, scenario.expected);
+      assert.equal(store.status(created.id, created.manageToken).state, 'ready');
+    });
+  }
+
+
+  for (const scenario of [
+    { headers: { Host: 'other.example' }, expected: 403 },
+    { headers: {}, expected: 400 },
+  ]) {
+    const store = new HandoffStore();
+    const created = store.createReveal({ value: 'still available' });
+    await withServer(store, async origin => {
+      const opened = await form(origin, created.id);
+      const response = await rawReveal(origin, created.id, csrfFrom(opened.html), scenario.headers);
+      assert.equal(response.statusCode, scenario.expected);
+      assert.equal(store.status(created.id, created.manageToken).state, 'ready');
+    });
+  }
+});
+
+test('reveal rejects a concrete wrong Origin even when Fetch Metadata says same-origin', async () => {
+  const store = new HandoffStore();
+  const created = store.createReveal({ value: 'still available' });
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const response = await reveal(origin, created.id, csrfFrom(opened.html), {
+      Origin: 'https://evil.example',
+      'Sec-Fetch-Site': 'same-origin',
+    });
+    assert.equal(response.status, 403);
+    assert.equal(store.status(created.id, created.manageToken).state, 'ready');
+  });
+});
+
+test('reveal TTL boundaries, expiry, restart loss, and input validation fail closed', async () => {
+  let now = 10_000;
+  const store = new HandoffStore({ now: () => now });
+  const oneMinute = store.createReveal({ value: 'one', ttlMs: 60_000 });
+  const fifteenMinutes = store.createReveal({ value: 'fifteen', ttlMs: 15 * 60_000 });
+  assert.equal(store.status(oneMinute.id, oneMinute.manageToken).state, 'ready');
+  assert.equal(store.status(fifteenMinutes.id, fifteenMinutes.manageToken).state, 'ready');
+  assert.throws(() => store.createReveal({ value: 'short', ttlMs: 59_999 }), { code: 'invalid_ttl' });
+  assert.throws(() => store.createReveal({ value: 'long', ttlMs: 15 * 60_000 + 1 }), { code: 'invalid_ttl' });
+  assert.throws(() => store.createReveal({ value: '' }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({ value: 'x'.repeat(HANDOFF_MAX_VALUE_BYTES + 1) }), { code: 'value_too_large' });
+
+  now += 60_000;
+  assert.equal(store.status(oneMinute.id, oneMinute.manageToken).state, 'expired');
+  assert.throws(() => store.reveal(oneMinute.id, store.formCsrfToken(oneMinute.id)), { code: 'unavailable' });
+  const restarted = new HandoffStore();
+  assert.equal(restarted.publicView(fifteenMinutes.id), null);
+  assert.throws(() => restarted.status(fifteenMinutes.id, fifteenMinutes.manageToken), { code: 'not_found' });
+});
+
 test('configured public origin survives stripped proxy rewrites and rejects cross-origin or forwarded-host spoofing', async () => {
   const store = new HandoffStore();
   const config = { publicBaseUrl: 'https://agent.example/pages' };
@@ -184,8 +376,9 @@ test('configured public origin survives stripped proxy rewrites and rejects cros
   }, config);
 });
 
-test('browser Fetch Metadata enforces same-origin through an unconfigured host-rewriting proxy', async () => {
+test('configured public origin remains authoritative through a host-rewriting proxy', async () => {
   const store = new HandoffStore();
+  const config = { publicBaseUrl: 'https://public.example/pages' };
   await withServer(store, async internalOrigin => {
     const positive = store.create();
     const positiveForm = await form(internalOrigin, positive.id);
@@ -208,7 +401,7 @@ test('browser Fetch Metadata enforces same-origin through an unconfigured host-r
     });
     assert.equal(denied.status, 403);
     assert.equal(store.status(negative.id, negative.manageToken).state, 'waiting');
-  });
+  }, config);
 });
 
 test('Chrome same-origin navigation with opaque Origin submits once while other Fetch Metadata shapes fail closed', async () => {
@@ -281,10 +474,25 @@ test('POST rejects missing/cross-origin proof, wrong CSRF, media type, empty and
   }
 });
 
+test('submit rejects a concrete wrong Origin even when Fetch Metadata says same-origin', async () => {
+  const store = new HandoffStore();
+  const created = store.create();
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const response = await submit(origin, created.id, csrfFrom(opened.html), 'must not submit', {
+      Origin: 'https://evil.example',
+      'Sec-Fetch-Site': 'same-origin',
+    });
+    assert.equal(response.status, 403);
+    assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
+  });
+});
+
 test('raw request body limit rejects before retaining a value', async () => {
   const store = new HandoffStore();
   const created = store.create();
   await withServer(store, async origin => {
+    await form(origin, created.id);
     const response = await fetch(`${origin}/handoff/${created.id}`, {
       method: 'POST',
       headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -340,5 +548,5 @@ test('labels are display text only and cannot add execution or callback surfaces
   const store = new HandoffStore();
   const created = store.create({ label: 'Run /tmp/x; callback=https://evil.example' });
   const status = store.status(created.id, created.manageToken);
-  assert.deepEqual(Object.keys(status).sort(), ['consumedAt', 'createdAt', 'expiresAt', 'id', 'revokedAt', 'state', 'submittedAt']);
+  assert.deepEqual(Object.keys(status).sort(), ['consumedAt', 'createdAt', 'expiresAt', 'id', 'revokedAt', 'state', 'submittedAt', 'viewedAt']);
 });
