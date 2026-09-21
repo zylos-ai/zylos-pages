@@ -9,6 +9,7 @@ import express from 'express';
 import { HandoffStore, HANDOFF_MAX_VALUE_BYTES } from '../src/handoff/handoff-store.js';
 import { HANDOFF_BODY_LIMIT_BYTES, setupHandoffRoutes } from '../src/routes/handoff.js';
 import { startHandoffControlServer } from '../src/handoff/handoff-control.js';
+import { handoffRevealedHtml } from '../src/templates/handoffTemplate.js';
 
 const handoffCli = path.resolve('src/cli/secure-handoff.js');
 
@@ -549,4 +550,61 @@ test('labels are display text only and cannot add execution or callback surfaces
   const created = store.create({ label: 'Run /tmp/x; callback=https://evil.example' });
   const status = store.status(created.id, created.manageToken);
   assert.deepEqual(Object.keys(status).sort(), ['consumedAt', 'createdAt', 'expiresAt', 'id', 'revokedAt', 'state', 'submittedAt', 'viewedAt']);
+});
+
+test('revealed page carries an external, CSP-safe copy control and the width fix', () => {
+  const html = handoffRevealedHtml({ value: 'S3CR3T-<v>' });
+  // The value is HTML-escaped and shown.
+  assert.match(html, /S3CR3T-&lt;v&gt;/);
+  // A copy button is wired to the value box by id.
+  assert.match(html, /class="copy-btn"[^>]*data-copy-target="revealed-value"/);
+  // The copy logic loads from /_assets and is never inlined (CSP script-src 'self').
+  assert.match(html, /<script src="[^"]*\/_assets\/handoff\.js"[^>]*><\/script>/);
+  assert.doesNotMatch(html, /<script>[\s\S]*<\/script>/);
+  assert.doesNotMatch(html, /\son(click|load|input)=/i);
+  // The textarea now spans the card (the reported "偏左" fix) and the copy
+  // button style is present with enough specificity to beat `.login-card button`.
+  assert.match(html, /\.login-card textarea\s*\{[^}]*width:\s*100%/);
+  assert.match(html, /\.login-card \.copy-btn\s*\{/);
+});
+
+test('the reveal HTTP flow returns the value with the external copy control', async () => {
+  const store = new HandoffStore();
+  const created = store.createReveal({ value: 'move-me-please' });
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const response = await reveal(origin, created.id, csrfFrom(opened.html));
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /move-me-please/);
+    assert.match(html, /data-copy-target="revealed-value"/);
+    assert.match(html, /<script src="[^"]*\/_assets\/handoff\.js"/);
+  });
+});
+
+test('gone links render a branded 404 page that does not distinguish the cause', async () => {
+  const store = new HandoffStore();
+  const created = store.createReveal({ value: 'burned-after-read' });
+  await withServer(store, async origin => {
+    // Consume the one-time reveal.
+    const opened = await form(origin, created.id);
+    const consumed = await reveal(origin, created.id, csrfFrom(opened.html));
+    assert.equal(consumed.status, 200);
+
+    // The now-consumed link renders a branded 404 card (no longer bare text).
+    const gone = await form(origin, created.id);
+    assert.equal(gone.response.status, 404);
+    assert.match(gone.response.headers.get('content-type'), /text\/html/);
+    assert.match(gone.response.headers.get('cache-control'), /no-store/);
+    assert.match(gone.html, /Handoff unavailable/);
+    assert.match(gone.html, /class="login-card/);
+    // It must never leak the value or any management internals.
+    assert.doesNotMatch(gone.html, /burned-after-read|manageToken|create_reveal|await_viewed/);
+
+    // A link that never existed renders the byte-identical page — the response
+    // does not reveal whether a given link ever existed / expired / was used.
+    const never = await form(origin, 'a'.repeat(32));
+    assert.equal(never.response.status, 404);
+    assert.equal(never.html, gone.html);
+  });
 });
