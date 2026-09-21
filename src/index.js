@@ -29,6 +29,7 @@ import { setupPageApi } from './routes/page-api.js';
 import { setupHandoffRoutes } from './routes/handoff.js';
 import { handoffStore } from './handoff/handoff-store.js';
 import { startHandoffControlServer } from './handoff/handoff-control.js';
+import { warnIfPublicBaseUrlMissing } from './lib/public-base-url-guidance.js';
 import { adminRoute } from './routes/admin.js';
 import { pageRoute } from './routes/pages.js';
 import { logger } from './utils/logger.js';
@@ -56,6 +57,13 @@ if (!config.enabled) {
   console.log(`[pages] Component disabled in config, exiting.`);
   process.exit(0);
 }
+
+warnIfPublicBaseUrlMissing(config, (guidance) => {
+  logger.warn('secure handoff is enabled but publicBaseUrl is not configured', {
+    configKey: 'publicBaseUrl',
+    guidance,
+  });
+});
 
 let server = null;
 let cleanupTimer = null;

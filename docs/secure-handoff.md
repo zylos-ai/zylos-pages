@@ -85,8 +85,15 @@ one-time delivery channel.
 Modern browsers supply `Sec-Fetch-Site`, which Pages requires to be
 `same-origin`; this browser-controlled signal survives Host/protocol rewriting
 at a stripped proxy. Pages also requires an Origin/Referer and the unguessable
-per-session CSRF token. For clients without Fetch Metadata, configure an
-absolute `publicBaseUrl` such as `https://agent.example/pages`; Pages uses that
-local, operator-controlled origin as the fallback. It deliberately ignores
-forwarded host/protocol headers. Relative or absent configuration has a legacy
-fallback only for direct same-origin access to the local listener.
+per-session CSRF token.
+
+**Reverse-proxy deployment requires an absolute `publicBaseUrl`**, such as
+`https://agent.example/pages`, set in
+`~/zylos/components/pages/config.json`. Pages uses that local,
+operator-controlled origin when validating browser handoff requests. Install
+and upgrade hooks warn when the key is missing, and an enabled service repeats
+the warning at startup. An Agent must ask the owner for the externally
+reachable URL when it is unknown; it must not infer the value from forwarded
+host/protocol headers. Relative or absent configuration retains only the legacy
+fallback for direct same-origin access to the local listener and can make
+reverse-proxied handoff POSTs fail closed with `403`.

@@ -133,10 +133,12 @@ data before discarding the backup.
 Pages includes a process-local, one-time form for general human-to-agent
 delivery of short-lived sensitive values. It is zero-retention and fails closed
 on restart. Separate local clients reach the daemon over a `0600` Unix socket;
-no management endpoint is exposed through Caddy. Stripped-proxy deployments
-use browser Fetch Metadata for same-origin checks; set an absolute
-`publicBaseUrl` as the fallback for clients that omit it. See [the lifecycle
-and integration guidance](docs/secure-handoff.md).
+no management endpoint is exposed through Caddy. **When Pages is served behind
+a reverse proxy, `publicBaseUrl` is required** and must be the externally
+reachable absolute Pages base URL. Install and upgrade hooks warn when it is
+missing, and the service repeats that warning at startup. Agents must ask the
+owner for this URL rather than infer it from forwarded headers. See [the
+lifecycle and integration guidance](docs/secure-handoff.md).
 
 ## Configuration
 
@@ -167,6 +169,12 @@ Edit `~/zylos/components/pages/config.json`:
   }
 }
 ```
+
+For reverse-proxy deployments, replace the example `publicBaseUrl` with the
+real externally reachable Pages base URL before using secure handoff. Leaving
+it empty preserves the fail-closed trust boundary and can make browser handoff
+POSTs return `403`; it is not an instruction to trust forwarded host or
+protocol headers.
 
 The `state` ceilings and write-rate limits apply only to share-link visitors;
 authenticated owner writes are intentionally exempt.

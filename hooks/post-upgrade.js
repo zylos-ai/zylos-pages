@@ -9,14 +9,17 @@ import fs from 'fs';
 import path from 'path';
 
 import { ensureSharePasswordKeyring } from './ensure-share-password-keyring.js';
+import { warnIfPublicBaseUrlMissing } from '../src/lib/public-base-url-guidance.js';
 
 const HOME = process.env.HOME;
 const configPath = path.join(HOME, 'zylos/components/pages/config.json');
 
 console.log('[post-upgrade] Checking config migrations...');
 
+let finalConfig = null;
 if (fs.existsSync(configPath)) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  finalConfig = config;
   let migrated = false;
 
   // auth.enabled was an escape hatch around the owner authentication wall.
@@ -73,6 +76,11 @@ if (fs.existsSync(configPath)) {
     console.log('[post-upgrade] No migrations needed');
   }
 }
+
+warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {
+  console.warn('[post-upgrade] WARNING: secure handoff is enabled but publicBaseUrl is not configured.');
+  console.warn(`[post-upgrade] ${guidance}`);
+});
 
 // Migration: initialize share password keyring so protected shares work
 // out of the box after upgrading (runs after config migrations above so it

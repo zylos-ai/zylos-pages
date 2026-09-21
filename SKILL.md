@@ -115,10 +115,13 @@ Spawn the client with fixed argv and write create/status/await/consume/revoke
 JSON directly to stdin. It reaches the running Pages process through a `0600`
 Unix socket that is not routed by Caddy. Give the human only the returned
 `submitUrl`, retain the management token only in caller memory, and keep the
-one-time await response out of routine output. Browser Fetch Metadata protects
-same-origin POSTs through a stripped proxy; set an absolute `publicBaseUrl` as
-the fallback for clients that omit it. Full protocol and cleanup guidance is
-in `docs/secure-handoff.md`.
+one-time await response out of routine output. When Pages is behind a reverse
+proxy, `publicBaseUrl` is required: ask the owner for the externally reachable
+absolute Pages base URL and set it in
+`~/zylos/components/pages/config.json`. Never infer it from forwarded headers.
+Missing configuration is warned during install, upgrade, and service startup;
+the handoff trust check remains fail closed. Full protocol and cleanup guidance
+is in `docs/secure-handoff.md`.
 
 For the reverse one-time reveal flow, send `create_reveal` JSON (including the
 value) only on the same client's stdin, share only the returned `revealUrl`, and
