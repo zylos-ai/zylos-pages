@@ -11,6 +11,7 @@ import path from 'path';
 import crypto from 'crypto';
 
 import { ensureSharePasswordKeyring } from './ensure-share-password-keyring.js';
+import { warnIfPublicBaseUrlMissing } from '../src/lib/public-base-url-guidance.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/pages');
@@ -120,15 +121,18 @@ console.log('  - content dir: ' + CONTENT_DIR);
 
 // 3. Create default config if not exists
 const configPath = path.join(DATA_DIR, 'config.json');
+let finalConfig = null;
 if (!fs.existsSync(configPath)) {
   console.log('\nCreating default config.json...');
   fs.writeFileSync(configPath, JSON.stringify(INITIAL_CONFIG, null, 2));
+  finalConfig = INITIAL_CONFIG;
   console.log('  - config.json created');
   console.log(`\n  Owner password: ${generatedPassword}`);
 } else {
   // If config exists but has no auth section, add it
   try {
     const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    finalConfig = existing;
     let migrated = false;
     let generatedAuth = false;
     if (!existing.auth) {
@@ -165,6 +169,11 @@ if (!fs.existsSync(configPath)) {
     console.log('\nConfig already exists, skipping.');
   }
 }
+
+warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {
+  console.warn('\n[post-install] WARNING: secure handoff is enabled but publicBaseUrl is not configured.');
+  console.warn(`[post-install] ${guidance}`);
+});
 
 // 4. Initialize share password keyring so protected shares work out of the box
 console.log('\nChecking share password keyring...');
