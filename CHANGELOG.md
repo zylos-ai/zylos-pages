@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.1] - 2026-09-21
+
+### Fixed
+
+- **Secure-handoff reveal page UI polish (no security change).** (PR #156) The
+  value field now fills the card width instead of sitting left-aligned; a
+  copy-to-clipboard control sits at the field's right edge (external
+  `assets/handoff.js`, CSP `script-src 'self'`, progressive enhancement with a
+  legacy fallback and a "Copied" confirmation); and unavailable responses
+  (invalid, expired, already used, rate-limited) now render a branded card
+  instead of bare top-left text. Unavailable branches share one
+  non-distinguishing body while keeping their own status codes (404 / 409 /
+  429 + `Retry-After`); 403/413/415 continue to return their original plain
+  responses directly. same-origin, CSRF, host binding, rate limiting,
+  burn-after-read, and CSP are unchanged; +3 regression tests.
+
 ## [0.11.0] - 2026-09-03
 
 ### Added

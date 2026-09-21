@@ -1,6 +1,6 @@
 {
   "name": "zylos-pages",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Registered Markdown, HTML, and downloadable file pages for zylos",
   "type": "module",
   "main": "src/index.js",
