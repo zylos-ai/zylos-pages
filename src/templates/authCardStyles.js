@@ -69,6 +69,58 @@ export const AUTH_CARD_CSS = `
       border-color: var(--color-link);
       box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
     }
+    .login-card textarea {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      line-height: 1.5;
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      background: var(--color-bg);
+      color: var(--color-text);
+      box-sizing: border-box;
+      resize: vertical;
+      overflow-wrap: anywhere;
+    }
+    .login-card textarea:focus {
+      outline: none;
+      border-color: var(--color-link);
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
+    }
+    /* Value box with an inline copy control (used by the reveal page). */
+    .login-card .copy-input { position: relative; }
+    .login-card .copy-input textarea { padding-right: 46px; }
+    .login-card .copy-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: 32px;
+      height: 32px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      border: 1px solid var(--color-border);
+      border-radius: 7px;
+      background: var(--color-bg);
+      color: var(--color-text-secondary);
+      cursor: pointer;
+      transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    }
+    .login-card .copy-btn:hover { color: var(--color-text); border-color: var(--color-link); }
+    .login-card .copy-btn:focus-visible {
+      outline: none;
+      border-color: var(--color-link);
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
+    }
+    .login-card .copy-btn svg { width: 16px; height: 16px; display: block; }
+    .login-card .copy-btn .check { display: none; }
+    .login-card .copy-btn.copied {
+      color: var(--color-success, #1a7f37);
+      border-color: var(--color-success, #1a7f37);
+    }
+    .login-card .copy-btn.copied .clip { display: none; }
+    .login-card .copy-btn.copied .check { display: block; }
     .login-card .remember-row {
       display: flex;
       align-items: center;
