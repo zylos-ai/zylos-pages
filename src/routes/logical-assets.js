@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { resolveLogicalAsset } from '../pages/asset-resolver.js';
 import { verifyShareAssetSignature } from '../sharing/share-manager.js';
+import { verifyOwnerAssetSignature } from '../security/owner-asset-signature.js';
 import { generateEtag } from '../utils/etag.js';
 import { logger } from '../utils/logger.js';
 
@@ -18,16 +19,26 @@ export function setupLogicalAssetRoute(app, config) {
         allowConfiguredRoots: signedRequest || ownerDirectView,
       });
       if (signedRequest) {
-        const verification = verifyShareAssetSignature({
-          uri: pageUri,
-          realPath: filePath,
-          expiresAt: Number(req.query.exp),
-          sig: req.query.sig,
-        });
-        if (!verification.valid) {
+        const ownerSigned = req.query.access === 'owner';
+        const valid = ownerSigned
+          ? verifyOwnerAssetSignature({
+              uri: pageUri,
+              realPath: filePath,
+              expiresAt: Number(req.query.exp),
+              sig: req.query.sig,
+              config,
+            })
+          : verifyShareAssetSignature({
+              uri: pageUri,
+              realPath: filePath,
+              expiresAt: Number(req.query.exp),
+              sig: req.query.sig,
+            }).valid;
+        if (!valid) {
           return res.status(403).send('Invalid asset signature');
         }
-        res.locals.viewerType = 'share';
+        res.locals.viewerType = ownerSigned ? 'owner-resource' : 'share';
+        res.setHeader('Access-Control-Allow-Origin', '*');
       }
       const info = await stat(filePath);
       const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
@@ -38,7 +49,7 @@ export function setupLogicalAssetRoute(app, config) {
       const etag = generateEtag(content);
       res.setHeader('Content-Type', mimeType);
       res.setHeader('ETag', etag);
-      res.setHeader('Cache-Control', res.locals.viewerType === 'share' ? 'no-store' : 'public, max-age=3600');
+      res.setHeader('Cache-Control', signedRequest ? 'no-store' : 'public, max-age=3600');
       if (req.headers['if-none-match'] === etag) {
         logger.info('logical asset served', { pageUri, assetPath, status: 304 });
         return res.status(304).end();

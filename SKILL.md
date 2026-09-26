@@ -39,6 +39,15 @@ http_routes:
     type: reverse_proxy
     target: localhost:3462
     strip_prefix: /pages
+    cookie_allowlist:
+      exact:
+        - __Secure-zylos_pages_session
+        - __Secure-share_access
+      patterns:
+        - ^__Secure-share_access\.[a-f0-9]{32}$
+
+requires:
+  zylos_core: ">=0.8.2"
 
 dependencies: []
 ---

@@ -17,6 +17,17 @@ export const HTML_ARTIFACT_CSP = "default-src 'self'; " +
   "frame-ancestors 'self'; " +
   "base-uri 'self'";
 
+export const SANDBOXED_HTML_ARTIFACT_CSP = "sandbox allow-scripts; " +
+  "default-src 'self'; " +
+  "script-src 'self' 'unsafe-inline'; " +
+  "style-src 'self' 'unsafe-inline'; " +
+  "img-src 'self' data: https:; " +
+  "font-src 'self' data:; " +
+  "connect-src 'self'; " +
+  "object-src 'none'; " +
+  "frame-ancestors 'self'; " +
+  "base-uri 'self'";
+
 export function securityHeaders() {
   return (req, res, next) => {
     res.setHeader('Content-Security-Policy', DEFAULT_CSP);

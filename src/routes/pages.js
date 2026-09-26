@@ -4,13 +4,13 @@ import { getPage } from '../services/pageService.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
 import { attachmentPageTemplate, injectShareViewer, injectNavSidebar, htmlArtifactTemplate } from '../templates/pageTemplate.js';
-import { rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
+import { rewriteSignedOwnerAssetRefs, rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
 import { attachmentDescriptorMetadata, sendAttachmentDownload } from '../pages/attachment-page.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
-import { HTML_ARTIFACT_CSP } from '../security/headers.js';
+import { HTML_ARTIFACT_CSP, SANDBOXED_HTML_ARTIFACT_CSP } from '../security/headers.js';
 
 const ASSET_VERSION = Date.now();
 
@@ -69,6 +69,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
   }
 
   const isShareViewer = Boolean(shareContext) || res.locals.viewerType === 'share';
+  const sandboxEnabled = config.security?.htmlArtifactSandboxEnabled === true;
   const shareCanWriteAttachments = shareContext
     ? shareContext.canWriteAttachments === true
     : res.locals.shareCanWriteAttachments === true;
@@ -118,10 +119,17 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
     const elapsed = Math.round(performance.now() - start);
     const isHtmlArtifact = result.type === 'html';
 
-    // Raw mode serves the HTML artifact directly. Share viewers also receive
-    // the artifact directly because shared HTML is a complete page design.
-    if (isHtmlArtifact && (req.query.raw === '1' || isShareViewer)) {
-      res.setHeader('Content-Security-Policy', HTML_ARTIFACT_CSP);
+    // Enabled sandbox mode only exposes the executable document to an iframe
+    // navigation. Authorization is still enforced by the owner/share route.
+    const rawArtifact = req.query.raw === '1' || (isShareViewer && !sandboxEnabled);
+    if (isHtmlArtifact && rawArtifact) {
+      if (sandboxEnabled && req.headers['sec-fetch-dest'] !== 'iframe') {
+        res.setHeader('Cache-Control', 'no-store');
+        return res.status(403).send('HTML artifact raw view requires an iframe navigation');
+      }
+      res.setHeader('Content-Security-Policy', sandboxEnabled
+        ? SANDBOXED_HTML_ARTIFACT_CSP
+        : HTML_ARTIFACT_CSP);
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
       if (!isShareViewer) {
         const clientEtag = req.headers['if-none-match'];
@@ -145,6 +153,12 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
       injected = injected.replace(/src="([^"?]*_assets\/[^"?]+)"/g, `src="$1?v=${ASSET_VERSION}"`);
       if (isShareViewer) {
         injected = await finalizeShareHtml(injected, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
+      } else if (sandboxEnabled) {
+        injected = await rewriteSignedOwnerAssetRefs(injected, {
+          baseUrl: browserBase,
+          pageUri: displaySlug.startsWith('p/') ? displaySlug.slice(2) : displaySlug,
+          config,
+        });
       }
       return res.send(injected);
     }
@@ -168,8 +182,17 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
     if (isHtmlArtifact) {
       const titleMatch = result.html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
       const title = titleMatch ? titleMatch[1].replace(/\s+/g, ' ').trim() : slug;
-      const iframeSrc = browserPath(browserBase, `${displaySlug}?raw=1`);
-      let html = htmlArtifactTemplate({ title, baseUrl: browserBase, slug: displaySlug, iframeSrc });
+      const iframeRoute = isShareViewer && shareContext?.tokenId
+        ? `s/${shareContext.tokenId}?raw=1`
+        : `${displaySlug}?raw=1`;
+      const iframeSrc = browserPath(browserBase, iframeRoute);
+      let html = htmlArtifactTemplate({
+        title,
+        baseUrl: browserBase,
+        slug: displaySlug,
+        iframeSrc,
+        sandboxed: sandboxEnabled,
+      });
       if (isShareViewer) {
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });

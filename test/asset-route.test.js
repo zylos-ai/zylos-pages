@@ -361,6 +361,58 @@ test('authenticated /p view resolves out-of-directory assets within allowed root
   }
 });
 
+test('sandboxed owner and share artifacts use signed CORS assets without ambient auth cookies', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
+    config.security.htmlArtifactSandboxEnabled = true;
+    const pagePath = path.join(contentDir, 'sandbox-assets.html');
+    await writeFile(pagePath, `<!doctype html><head>
+      <script type="module" src="/module.js"></script>
+      <style>@font-face { font-family: Demo; src: url('/demo.woff2'); }</style>
+    </head><body><img src="/image.png"></body>`);
+    await writeFile(path.join(contentDir, 'module.js'), 'export const ok = true;');
+    await writeFile(path.join(contentDir, 'demo.woff2'), 'font');
+    await writeFile(path.join(contentDir, 'image.png'), 'image');
+    registerPage(config, 'sandbox-assets', pagePath, 'Sandbox assets');
+    const share = createShare('sandbox-assets', '24h');
+
+    await withServer(config, async ({ origin, fetch: ownerFetch }) => {
+      const ownerRaw = await ownerFetch(`${origin}/sandbox-assets?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(ownerRaw.status, 200);
+      const ownerBody = await ownerRaw.text();
+      for (const name of ['module.js', 'demo.woff2', 'image.png']) {
+        const assetUrl = signedAssetPath(ownerBody, name);
+        assert.match(assetUrl, /access=owner/);
+        const asset = await fetch(`${origin}${assetUrl}`);
+        assert.equal(asset.status, 200, name);
+        assert.equal(asset.headers.get('access-control-allow-origin'), '*');
+        assert.equal(asset.headers.get('cache-control'), 'no-store');
+      }
+
+      const shareShell = await fetch(`${origin}/s/${share.tokenId}`);
+      assert.equal(shareShell.status, 200);
+      assert.match(await shareShell.text(), new RegExp(`/s/${share.tokenId}\\?raw=1`));
+      const shareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(shareRaw.status, 200);
+      const shareBody = await shareRaw.text();
+      for (const name of ['module.js', 'demo.woff2', 'image.png']) {
+        const assetUrl = signedAssetPath(shareBody, name);
+        assert.doesNotMatch(assetUrl, /access=owner/);
+        const asset = await fetch(`${origin}${assetUrl}`);
+        assert.equal(asset.status, 200, name);
+        assert.equal(asset.headers.get('access-control-allow-origin'), '*');
+      }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('share page access renders in place and signs referenced assets', async () => {
   const contentDir = await makeContentDir();
   try {

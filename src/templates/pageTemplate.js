@@ -170,7 +170,7 @@ export function attachmentPageTemplate({ title, filename, sizeBytes, downloadUrl
  * This activates CSS rules that hide auth-only elements.
  * Called post-cache in the page route.
  */
-export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
+export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc, sandboxed = false }) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -212,7 +212,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc }) {
   <div class="nav-overlay" hidden></div>
 
   <div class="html-artifact-container">
-    <iframe class="html-artifact-frame" src="${escapeHtml(iframeSrc)}"></iframe>
+    <iframe class="html-artifact-frame" src="${escapeHtml(iframeSrc)}"${sandboxed ? ' sandbox="allow-scripts"' : ''}></iframe>
   </div>
 
   <!-- Share Modal (hidden for share viewers via CSS) -->
