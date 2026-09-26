@@ -148,7 +148,6 @@ export function watchConfig(onChange) {
   if (fs.existsSync(CONFIG_PATH)) {
     configWatcher = fs.watch(CONFIG_PATH, (eventType) => {
       if (eventType === 'change') {
-        console.log('[pages] Config file changed, reloading...');
         loadConfig();
         if (onChange) {
           onChange(config);

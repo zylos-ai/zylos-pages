@@ -521,7 +521,7 @@ test('share page access renders in place and signs referenced assets', async () 
   }
 });
 
-test('signed share assets allow page assets while isolating unsigned siblings', async () => {
+test('signed share assets are restricted to the shared page directory', async () => {
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir, { password: hashPassword('secret') });
@@ -543,18 +543,15 @@ test('signed share assets allow page assets while isolating unsigned siblings', 
       assert.equal(page.status, 200);
       const body = await page.text();
       const signedPath = signedAssetPath(body, 'diagram.png');
-      const sharedPath = signedAssetPath(body, 'logo.png');
+      const unsignedMatch = body.match(/["']([^"']*\/assets\/[^"']*path=\.\.%2Fshared%2Flogo\.png)["']/);
+      assert.ok(unsignedMatch, 'out-of-directory asset should remain unsigned');
+      assert.doesNotMatch(unsignedMatch[1], /[?&](?:exp|sig)=/);
 
       let res = await fetch(`${origin}${signedPath}`);
       assert.equal(res.status, 200);
 
-      res = await fetch(`${origin}${sharedPath}`);
-      assert.equal(res.status, 200);
-      assert.equal(await res.text(), 'logo');
-
-      const tamperedPath = sharedPath.replace('logo.png', 'secret.png');
-      res = await fetch(`${origin}${tamperedPath}`, { redirect: 'manual' });
-      assert.equal(res.status, 403);
+      res = await fetch(`${origin}${unsignedMatch[1]}`, { redirect: 'manual' });
+      expectLoginRedirect(res);
 
       res = await fetch(`${origin}/root.png`, { redirect: 'manual' });
       expectAssetDenied(res);
