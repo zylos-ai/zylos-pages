@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.12.0] - 2026-09-26
+
+### Security
+
+- **Sandboxed HTML artifacts now render behind trusted owner and share shells.**
+  Enabled instances serve HTML with an opaque-origin CSP sandbox and reject raw
+  top-level document loads, while signed asset URLs keep same-directory images,
+  styles, scripts, and fonts usable without ambient owner or share cookies.
+- **Signed asset access is confined to each page's source directory.** Owner and
+  share rendering now apply the same boundary, including traversal, symlink,
+  extension-mismatch, and unsigned sibling rejection.
+
+### Changed
+
+- **Sandbox activation is explicit and restart-bound.** Hooks require the Core
+  version that supports declarative Cookie filtering, preserve the per-instance
+  feature switch, and report that configuration changes require a restart.
+- **Compatibility tooling and guidance cover sandbox rollout.** Operators can
+  scan registered HTML artifacts, run focused smoke checks, and review known
+  HTML/CSP behavior before enabling an instance.
+
 ## [0.11.1] - 2026-09-21
 
 ### Fixed

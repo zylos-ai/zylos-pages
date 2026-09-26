@@ -72,8 +72,7 @@ let handoffControl = null;
 
 // Watch for config changes
 watchConfig((newConfig) => {
-  console.log(`[pages] Config reloaded`);
-  config = newConfig;
+  console.log('[pages] Config changed; restart Pages to apply configuration changes.');
   if (!newConfig.enabled) {
     console.log(`[pages] Component disabled, stopping...`);
     shutdown();

@@ -46,10 +46,11 @@ The file extension is stripped from the URL. A `.html` file and a `.md` file wit
 
 HTML files are rendered differently from Markdown:
 
-1. **Iframe isolation**: The HTML content loads inside an iframe. This gives the author full CSS control without conflicting with Pages' own styles.
-2. **CSP**: HTML artifacts have a separate Content-Security-Policy (`HTML_ARTIFACT_CSP`). Current runtime policy allows inline styles and inline scripts, but only loads scripts/styles/fonts from the same origin.
-3. **Raw mode**: Append `?raw=1` to serve the HTML directly without the iframe wrapper.
-4. **Sharing**: Shared HTML artifacts are served directly (no iframe) since they are complete page designs.
+1. **Iframe isolation**: With `security.htmlArtifactSandboxEnabled`, owner and share views use a trusted wrapper plus `sandbox="allow-scripts"` without `allow-same-origin`.
+2. **CSP**: The raw iframe document also carries a sandbox CSP. It may execute scripts but has an opaque origin and cannot use the owner's same-origin authority.
+3. **Raw mode**: `?raw=1` is an internal iframe target when sandboxing is enabled. Top-level requests are rejected unless the browser reports `Sec-Fetch-Dest: iframe`.
+4. **Assets**: The wrapper signs allowed subresources. Owner-signed resources stay inside the HTML file's directory; opaque-origin CORS is granted only for `Origin: null`.
+5. **Configuration**: Changes, including the sandbox switch, require a Pages service restart.
 
 ## Writing HTML Artifacts
 
@@ -86,9 +87,9 @@ HTML files are rendered differently from Markdown:
 
 Pages never lets another origin frame a document: ordinary responses send
 `frame-ancestors 'none'` + `X-Frame-Options: DENY`, and HTML artifacts served
-raw (`?raw=1`) or through a share link send `frame-ancestors 'self'` +
-`SAMEORIGIN` — any same-origin ancestor may frame them (in practice, Pages'
-own wrapper iframe); cross-origin framing is still refused.
+as the internal raw iframe document send `frame-ancestors 'self'` +
+`SAMEORIGIN`; the wrapper applies an opaque-origin sandbox. Cross-origin framing
+and top-level raw navigation are refused.
 Host clients that open clicked links in an embedded webview are a different
 origin, so an in-place cross-page link shows a refusal there, while the same
 URL works as a top-level navigation. Author cross-page anchors to open a new

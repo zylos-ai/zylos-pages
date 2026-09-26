@@ -12,6 +12,7 @@ import crypto from 'crypto';
 
 import { ensureSharePasswordKeyring } from './ensure-share-password-keyring.js';
 import { warnIfPublicBaseUrlMissing } from '../src/lib/public-base-url-guidance.js';
+import { warnIfCoreCookieAllowlistUnavailable } from '../src/lib/core-version.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/pages');
@@ -45,6 +46,7 @@ const INITIAL_CONFIG = {
   },
   security: {
     allowRawHtml: false,
+    htmlArtifactSandboxEnabled: false,
     maxFileSizeBytes: 1048576,
     maxAttachmentSizeBytes: 50 * 1024 * 1024,
     renderTimeoutMs: 5000,
@@ -152,9 +154,13 @@ if (!fs.existsSync(configPath)) {
     if (!existing.security || typeof existing.security !== 'object' || Array.isArray(existing.security)) {
       existing.security = { ...INITIAL_CONFIG.security };
       migrated = true;
-    } else if (!Object.prototype.hasOwnProperty.call(existing.security, 'maxAttachmentSizeBytes')) {
-      existing.security.maxAttachmentSizeBytes = INITIAL_CONFIG.security.maxAttachmentSizeBytes;
-      migrated = true;
+    } else {
+      for (const key of ['maxAttachmentSizeBytes', 'htmlArtifactSandboxEnabled']) {
+        if (!Object.prototype.hasOwnProperty.call(existing.security, key)) {
+          existing.security[key] = INITIAL_CONFIG.security[key];
+          migrated = true;
+        }
+      }
     }
     if (migrated) {
       fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
@@ -173,6 +179,9 @@ if (!fs.existsSync(configPath)) {
 warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {
   console.warn('\n[post-install] WARNING: secure handoff is enabled but publicBaseUrl is not configured.');
   console.warn(`[post-install] ${guidance}`);
+});
+warnIfCoreCookieAllowlistUnavailable(undefined, (message) => {
+  console.warn(`[post-install] WARNING: ${message}`);
 });
 
 // 4. Initialize share password keyring so protected shares work out of the box

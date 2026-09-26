@@ -36,6 +36,7 @@ export const DEFAULT_CONFIG = {
   },
   security: {
     allowRawHtml: false,
+    htmlArtifactSandboxEnabled: false,
     maxFileSizeBytes: 1048576,
     maxAttachmentSizeBytes: 50 * 1024 * 1024,
     renderTimeoutMs: 5000,
@@ -147,7 +148,6 @@ export function watchConfig(onChange) {
   if (fs.existsSync(CONFIG_PATH)) {
     configWatcher = fs.watch(CONFIG_PATH, (eventType) => {
       if (eventType === 'change') {
-        console.log('[pages] Config file changed, reloading...');
         loadConfig();
         if (onChange) {
           onChange(config);
