@@ -180,7 +180,7 @@ warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {
   console.warn('\n[post-install] WARNING: secure handoff is enabled but publicBaseUrl is not configured.');
   console.warn(`[post-install] ${guidance}`);
 });
-warnIfCoreCookieAllowlistUnavailable(HOME, (message) => {
+warnIfCoreCookieAllowlistUnavailable(undefined, (message) => {
   console.warn(`[post-install] WARNING: ${message}`);
 });
 

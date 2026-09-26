@@ -28,6 +28,8 @@ export const SANDBOXED_HTML_ARTIFACT_CSP = "sandbox allow-scripts; " +
   "frame-ancestors 'self'; " +
   "base-uri 'self'";
 
+export const SVG_ASSET_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
+
 export function securityHeaders() {
   return (req, res, next) => {
     res.setHeader('Content-Security-Policy', DEFAULT_CSP);

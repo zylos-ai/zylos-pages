@@ -198,7 +198,7 @@ async function signAssetReference(value, context) {
   try {
     const resolved = await resolveLogicalAsset(uri, assetPath, {
       config: context.config,
-      allowConfiguredRoots: true,
+      allowConfiguredRoots: context.viewer === 'share',
     });
     if (context.viewer === 'owner') {
       const exp = context.expiresAt;

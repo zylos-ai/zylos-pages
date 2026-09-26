@@ -21,6 +21,8 @@ const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi } = await import('../src/routes/state-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { securityHeaders } = await import('../src/security/headers.js');
+const { SVG_ASSET_CSP } = await import('../src/security/headers.js');
+const { createOwnerAssetSignature } = await import('../src/security/owner-asset-signature.js');
 const { SHARE_SCOPE_COOKIE_NAME, createShare, revokeShare } = await import('../src/sharing/share-manager.js');
 
 // The scope cookie has no issuer: shares moved to signed asset URLs in 0.7.0
@@ -169,6 +171,7 @@ test('logical asset route serves registered page assets with MIME, ETag, 304, an
     await writeFile(pagePath, '# Page\n');
     await writeFile(path.join(contentDir, 'image.jpg'), Buffer.from([0xff, 0xd8, 0xff]));
     await writeFile(path.join(contentDir, 'image.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    await writeFile(path.join(contentDir, 'active.svg'), '<svg xmlns="http://www.w3.org/2000/svg"><script>top.document.title="owned"</script></svg>');
     await writeFile(path.join(contentDir, 'style.css'), 'body { color: red; }\n');
     await writeFile(path.join(contentDir, 'doc.pdf'), Buffer.from('%PDF-1.4\n'));
     await writeFile(path.join(contentDir, 'large.jpg'), Buffer.alloc(1025));
@@ -193,6 +196,14 @@ test('logical asset route serves registered page assets with MIME, ETag, 304, an
 
       res = await fetch(`${origin}/assets/page?path=image.png`);
       assert.equal(res.headers.get('content-type'), 'image/png');
+
+      res = await fetch(`${origin}/assets/page?path=active.svg`);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-security-policy'), SVG_ASSET_CSP);
+      const svgEtag = res.headers.get('etag');
+      res = await fetch(`${origin}/assets/page?path=active.svg`, { headers: { 'If-None-Match': svgEtag } });
+      assert.equal(res.status, 304);
+      assert.equal(res.headers.get('content-security-policy'), SVG_ASSET_CSP);
 
       res = await fetch(`${origin}/assets/page?path=style.css`);
       assert.equal(res.headers.get('content-type'), 'text/css; charset=utf-8');
@@ -386,10 +397,14 @@ test('sandboxed owner and share artifacts use signed CORS assets without ambient
       for (const name of ['module.js', 'demo.woff2', 'image.png']) {
         const assetUrl = signedAssetPath(ownerBody, name);
         assert.match(assetUrl, /access=owner/);
-        const asset = await fetch(`${origin}${assetUrl}`);
+        const asset = await fetch(`${origin}${assetUrl}`, { headers: { Origin: 'null' } });
         assert.equal(asset.status, 200, name);
-        assert.equal(asset.headers.get('access-control-allow-origin'), '*');
+        assert.equal(asset.headers.get('access-control-allow-origin'), 'null');
+        assert.match(asset.headers.get('vary'), /Origin/);
         assert.equal(asset.headers.get('cache-control'), 'no-store');
+        const foreignOrigin = await fetch(`${origin}${assetUrl}`, { headers: { Origin: 'https://evil.example' } });
+        assert.equal(foreignOrigin.status, 200);
+        assert.equal(foreignOrigin.headers.get('access-control-allow-origin'), null);
       }
 
       const shareShell = await fetch(`${origin}/s/${share.tokenId}`);
@@ -403,10 +418,51 @@ test('sandboxed owner and share artifacts use signed CORS assets without ambient
       for (const name of ['module.js', 'demo.woff2', 'image.png']) {
         const assetUrl = signedAssetPath(shareBody, name);
         assert.doesNotMatch(assetUrl, /access=owner/);
-        const asset = await fetch(`${origin}${assetUrl}`);
+        const asset = await fetch(`${origin}${assetUrl}`, { headers: { Origin: 'null' } });
         assert.equal(asset.status, 200, name);
-        assert.equal(asset.headers.get('access-control-allow-origin'), '*');
+        assert.equal(asset.headers.get('access-control-allow-origin'), 'null');
       }
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('owner-signed sandbox assets cannot escape the page source directory', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const docsDir = path.join(contentDir, 'docs');
+    const sharedDir = path.join(contentDir, 'shared');
+    await mkdir(docsDir, { recursive: true });
+    await mkdir(sharedDir, { recursive: true });
+    const pagePath = path.join(docsDir, 'artifact.html');
+    const secretPath = path.join(sharedDir, 'secret.js');
+    await writeFile(pagePath, '<!doctype html><script src="../shared/secret.js"></script>');
+    await writeFile(secretPath, 'window.secret = true;');
+    const config = baseConfig(contentDir, { password: hashPassword('secret') });
+    config.security.htmlArtifactSandboxEnabled = true;
+    registerPage(config, 'docs/artifact', pagePath, 'Artifact');
+
+    await withServer(config, async ({ origin, fetch: ownerFetch }) => {
+      const raw = await ownerFetch(`${origin}/p/docs/artifact?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(raw.status, 200);
+      const rawBody = await raw.text();
+      assert.match(rawBody, /src="\/assets\/docs\/artifact\?path=\.\.%2Fshared%2Fsecret\.js"/);
+      assert.doesNotMatch(rawBody, /(?:exp|sig|access=owner)=/);
+
+      const expiresAt = Date.now() + 60_000;
+      const sig = createOwnerAssetSignature({
+        uri: 'docs/artifact', realPath: secretPath, expiresAt, config,
+      });
+      const bypass = new URL(`${origin}/assets/docs/artifact`);
+      bypass.searchParams.set('path', '../shared/secret.js');
+      bypass.searchParams.set('exp', String(expiresAt));
+      bypass.searchParams.set('sig', sig);
+      bypass.searchParams.set('access', 'owner');
+      const rejected = await fetch(bypass);
+      assert.equal(rejected.status, 400);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

@@ -4,6 +4,13 @@ import { verifyShareAssetSignature } from '../sharing/share-manager.js';
 import { verifyOwnerAssetSignature } from '../security/owner-asset-signature.js';
 import { generateEtag } from '../utils/etag.js';
 import { logger } from '../utils/logger.js';
+import { SVG_ASSET_CSP } from '../security/headers.js';
+
+function allowOpaqueSandboxOrigin(req, res) {
+  if (req.headers.origin !== 'null') return;
+  res.setHeader('Access-Control-Allow-Origin', 'null');
+  res.append('Vary', 'Origin');
+}
 
 export function setupLogicalAssetRoute(app, config) {
   app.get('/assets/:uri(*)', async (req, res, next) => {
@@ -14,12 +21,12 @@ export function setupLogicalAssetRoute(app, config) {
     try {
       const signedRequest = typeof req.query.exp === 'string' && typeof req.query.sig === 'string';
       const ownerDirectView = res.locals.authenticated === true;
+      const ownerSigned = signedRequest && req.query.access === 'owner';
       const { filePath, mimeType } = await resolveLogicalAsset(pageUri, assetPath, {
         config,
-        allowConfiguredRoots: signedRequest || ownerDirectView,
+        allowConfiguredRoots: ownerDirectView || (signedRequest && !ownerSigned),
       });
       if (signedRequest) {
-        const ownerSigned = req.query.access === 'owner';
         const valid = ownerSigned
           ? verifyOwnerAssetSignature({
               uri: pageUri,
@@ -38,7 +45,7 @@ export function setupLogicalAssetRoute(app, config) {
           return res.status(403).send('Invalid asset signature');
         }
         res.locals.viewerType = ownerSigned ? 'owner-resource' : 'share';
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        allowOpaqueSandboxOrigin(req, res);
       }
       const info = await stat(filePath);
       const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
@@ -48,6 +55,9 @@ export function setupLogicalAssetRoute(app, config) {
       const content = await readFile(filePath);
       const etag = generateEtag(content);
       res.setHeader('Content-Type', mimeType);
+      if (mimeType === 'image/svg+xml') {
+        res.setHeader('Content-Security-Policy', SVG_ASSET_CSP);
+      }
       res.setHeader('ETag', etag);
       res.setHeader('Cache-Control', signedRequest ? 'no-store' : 'public, max-age=3600');
       if (req.headers['if-none-match'] === etag) {
