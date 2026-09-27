@@ -23,7 +23,12 @@ const { setupAuth, hashPassword } = await import('../src/security/auth.js');
 const { securityHeaders } = await import('../src/security/headers.js');
 const { SVG_ASSET_CSP } = await import('../src/security/headers.js');
 const { createOwnerAssetSignature } = await import('../src/security/owner-asset-signature.js');
-const { SHARE_SCOPE_COOKIE_NAME, createShare, revokeShare } = await import('../src/sharing/share-manager.js');
+const {
+  SHARE_SCOPE_COOKIE_NAME,
+  createShare,
+  createShareAssetSignature,
+  revokeShare,
+} = await import('../src/sharing/share-manager.js');
 
 // The scope cookie has no issuer: shares moved to signed asset URLs in 0.7.0
 // (#73) and the minting/verifying code was deleted. Anything a browser still
@@ -531,14 +536,15 @@ test('signed share assets are restricted to the shared page directory', async ()
     const pagePath = path.join(contentDir, 'docs', 'guide.html');
     await writeFile(pagePath, '<!doctype html><img src="diagram.png"><img src="../shared/logo.png">');
     await writeFile(path.join(contentDir, 'docs', 'diagram.png'), 'diagram');
-    await writeFile(path.join(contentDir, 'shared', 'logo.png'), 'logo');
+    const sharedLogoPath = path.join(contentDir, 'shared', 'logo.png');
+    await writeFile(sharedLogoPath, 'logo');
     await writeFile(path.join(contentDir, 'shared', 'secret.png'), 'secret');
     await writeFile(path.join(contentDir, 'root.png'), 'root');
     await writeFile(path.join(contentDir, 'other', 'secret.png'), 'secret');
     registerPage(config, 'docs/guide', pagePath, 'Guide');
     const share = createShare('docs/guide', '24h');
 
-    await withServer(config, async ({ origin }) => {
+    await withServer(config, async ({ origin, fetch: ownerFetch }) => {
       const page = await fetch(`${origin}/s/${share.tokenId}`);
       assert.equal(page.status, 200);
       const body = await page.text();
@@ -552,6 +558,23 @@ test('signed share assets are restricted to the shared page directory', async ()
 
       res = await fetch(`${origin}${unsignedMatch[1]}`, { redirect: 'manual' });
       expectLoginRedirect(res);
+
+      const expiresAt = Date.now() + 60_000;
+      const legacySig = createShareAssetSignature({
+        uri: 'docs/guide',
+        realPath: sharedLogoPath,
+        expiresAt,
+        tokenId: share.tokenId,
+      });
+      const legacySignedPath = new URL(`${origin}/assets/docs/guide`);
+      legacySignedPath.searchParams.set('path', '../shared/logo.png');
+      legacySignedPath.searchParams.set('exp', String(expiresAt));
+      legacySignedPath.searchParams.set('sig', legacySig);
+
+      res = await fetch(legacySignedPath);
+      assert.equal(res.status, 400, 'pre-upgrade cross-directory share signature must fail closed');
+      res = await ownerFetch(legacySignedPath);
+      assert.equal(res.status, 400, 'owner authentication must not revive a cross-directory share signature');
 
       res = await fetch(`${origin}/root.png`, { redirect: 'manual' });
       expectAssetDenied(res);

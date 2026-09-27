@@ -12,7 +12,6 @@ import crypto from 'crypto';
 
 import { ensureSharePasswordKeyring } from './ensure-share-password-keyring.js';
 import { warnIfPublicBaseUrlMissing } from '../src/lib/public-base-url-guidance.js';
-import { warnIfCoreCookieAllowlistUnavailable } from '../src/lib/core-version.js';
 
 const HOME = process.env.HOME;
 const DATA_DIR = path.join(HOME, 'zylos/components/pages');
@@ -179,9 +178,6 @@ if (!fs.existsSync(configPath)) {
 warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {
   console.warn('\n[post-install] WARNING: secure handoff is enabled but publicBaseUrl is not configured.');
   console.warn(`[post-install] ${guidance}`);
-});
-warnIfCoreCookieAllowlistUnavailable(undefined, (message) => {
-  console.warn(`[post-install] WARNING: ${message}`);
 });
 
 // 4. Initialize share password keyring so protected shares work out of the box

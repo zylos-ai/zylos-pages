@@ -24,7 +24,7 @@ export function setupLogicalAssetRoute(app, config) {
       const ownerSigned = signedRequest && req.query.access === 'owner';
       const { filePath, mimeType } = await resolveLogicalAsset(pageUri, assetPath, {
         config,
-        allowConfiguredRoots: ownerDirectView || (signedRequest && !ownerSigned),
+        allowConfiguredRoots: ownerDirectView && !signedRequest,
       });
       if (signedRequest) {
         const valid = ownerSigned

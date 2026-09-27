@@ -17,6 +17,7 @@ import { initCache } from './cache/pageCache.js';
 import { startWatcher, stopWatcher } from './services/watchService.js';
 import { securityHeaders } from './security/headers.js';
 import { setupAuth } from './security/auth.js';
+import { setupCookieBoundary } from './security/cookie-boundary.js';
 import { createRateLimiter } from './security/rateLimit.js';
 import { setupShareApi } from './routes/share-api.js';
 import { setupRawApi } from './routes/raw-api.js';
@@ -93,6 +94,10 @@ async function main() {
   // Create Express app
   const app = express();
   app.set('trust proxy', config.proxy?.trust ?? 'loopback');
+
+  // Keep foreign component cookies out of every Pages route, including the
+  // public static and handoff routes registered before owner authentication.
+  setupCookieBoundary(app);
 
   // Security headers
   app.use(securityHeaders());

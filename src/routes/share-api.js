@@ -34,6 +34,7 @@ import { generateSharePassword } from '../sharing/share-password-crypto.js';
 import { AUTH_CARD_CSS } from '../templates/authCardStyles.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { sendAttachmentDownload } from '../pages/attachment-page.js';
+import { pagesCookieHeader } from '../security/cookie-boundary.js';
 
 /**
  * CSRF validation via Origin/Referer headers (same approach as logout).
@@ -159,7 +160,7 @@ function applyShareCookieDecision(req, res, decision, share, browserBase) {
       decision.share.expiresAt,
       cookiePath,
       decision.share.credentialVersion,
-      req.headers.cookie,
+      pagesCookieHeader(req),
     );
     if (rotated) appendSetCookies(res, rotated.headers);
     return;
@@ -438,7 +439,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
           share.expiresAt,
           cookiePathFromBase(browserBase),
           share.credentialVersion,
-          req.headers.cookie,
+          pagesCookieHeader(req),
         );
         if (!accessCookie) return sendApiError(res, 404, 'share_not_found', 'Share not found');
         appendSetCookies(res, accessCookie.headers);
@@ -477,7 +478,7 @@ export function setupShareApi(app, sharingConfig, config = {}) {
         decision.verified.expiresAt,
         cookiePathFromBase(browserBase),
         decision.verified.credentialVersion,
-        req.headers.cookie,
+        pagesCookieHeader(req),
       );
       if (!accessCookie) {
         return sendReadFailure(req, res, { status: 401, code: 'invalid_password' }, 'html', share.tokenId);

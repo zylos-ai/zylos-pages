@@ -11,15 +11,19 @@
 - **Signed asset access is confined to each page's source directory.** Owner and
   share rendering now apply the same boundary, including traversal, symlink,
   extension-mismatch, and unsigned sibling rejection.
+- **Pages consumes only its own authentication cookies.** The backend retains
+  only the Pages owner session and recognized share-access cookies in private
+  request state, then removes the incoming Cookie header before route handling
+  so unrelated component cookies cannot enter logs or downstream requests.
 
 ### Changed
 
-- **Sandbox activation is explicit and restart-bound.** Hooks require the Core
-  version that supports declarative Cookie filtering, preserve the per-instance
-  feature switch, and report that configuration changes require a restart.
-- **Compatibility tooling and guidance cover sandbox rollout.** Operators can
-  scan registered HTML artifacts, run focused smoke checks, and review known
-  HTML/CSP behavior before enabling an instance.
+- **Sandbox activation is explicit and restart-bound.** Install and upgrade
+  hooks preserve the per-instance feature switch and report that configuration
+  changes require a restart; Pages 0.12.0 has no minimum Core version.
+- **Compatibility guidance covers sandbox rollout.** Operators can review known
+  HTML/CSP behavior before enabling an instance; page scanning and focused smoke
+  tooling remain follow-up work rather than shipped 0.12.0 commands.
 
 ## [0.11.1] - 2026-09-21
 
