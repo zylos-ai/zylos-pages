@@ -4,6 +4,7 @@ import path from 'node:path';
 import { addColumnIfMissing, getPagesDb } from '../db/pages-db.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
+import { normalizePageSecurity, parseStoredCapabilities } from '../security/page-capabilities.js';
 
 const RENDERABLE_PAGE_EXTENSIONS = new Map([
   ['.md', 'markdown'],
@@ -70,6 +71,9 @@ const LOGICAL_PAGES_COLUMNS = `
       page_type TEXT NOT NULL CHECK (page_type IN ('markdown', 'html', 'attachment')),
       source_root_name TEXT,
       access_mode TEXT NOT NULL DEFAULT 'private' CHECK (access_mode IN ('private', 'shared')),
+      capabilities_json TEXT NOT NULL DEFAULT '[]',
+      outbound_denied INTEGER NOT NULL DEFAULT 0,
+      scripts_enabled INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
 `;
@@ -82,8 +86,8 @@ function migrateLogicalPagesToPageId() {
   const migrate = db.transaction(() => {
     db.exec(`CREATE TABLE logical_pages_next (${LOGICAL_PAGES_COLUMNS})`);
     const insert = db.prepare(`
-      INSERT INTO logical_pages_next (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO logical_pages_next (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, capabilities_json, outbound_denied, scripts_enabled, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, 1, ?, ?)
     `);
     const rows = db.prepare('SELECT * FROM logical_pages').all();
     for (const row of rows) {
@@ -120,6 +124,13 @@ function ensureAccessLogPageIdColumn() {
   }
 }
 
+function ensurePageSecurityColumns() {
+  const columns = new Set(db.prepare('PRAGMA table_info(logical_pages)').all().map(column => column.name));
+  if (!columns.has('capabilities_json')) db.exec("ALTER TABLE logical_pages ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'");
+  if (!columns.has('outbound_denied')) db.exec('ALTER TABLE logical_pages ADD COLUMN outbound_denied INTEGER NOT NULL DEFAULT 0');
+  if (!columns.has('scripts_enabled')) db.exec('ALTER TABLE logical_pages ADD COLUMN scripts_enabled INTEGER NOT NULL DEFAULT 1');
+}
+
 export function initPageStore() {
   if (initialized) return;
   db = getPagesDb();
@@ -140,6 +151,7 @@ export function initPageStore() {
     CREATE INDEX IF NOT EXISTS idx_access_logs_page ON access_logs(page_uri, created_at DESC);
   `);
   ensurePageTypeColumn();
+  ensurePageSecurityColumns();
   ensureAccessLogPageIdColumn();
   initialized = true;
 }
@@ -212,7 +224,16 @@ export function validateSourcePath(sourcePath, config, options = {}) {
   throw new SourceValidationError('source_outside_allowed_root', 'source is outside the configured allowed root');
 }
 
-export function registerLogicalPage({ uri, title, sourcePath, component, accessMode = 'private' }, config) {
+export function registerLogicalPage({
+  uri,
+  title,
+  sourcePath,
+  component,
+  accessMode = 'private',
+  capabilities = [],
+  outboundDenied = false,
+  scriptsEnabled = true,
+}, config) {
   initPageStore();
   const normalizedUri = normalizeSlug(uri);
   if (!normalizedUri) {
@@ -226,10 +247,11 @@ export function registerLogicalPage({ uri, title, sourcePath, component, accessM
   }
 
   const validated = validateSourcePath(sourcePath, config, { component });
+  const security = normalizePageSecurity({ capabilities, outboundDenied, scriptsEnabled });
   const current = nowMs();
   db.prepare(`
-    INSERT INTO logical_pages (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, created_at, updated_at)
-    VALUES (@pageId, @uri, @title, @sourcePath, @sourceExt, @pageType, @sourceRootName, @accessMode, @createdAt, @updatedAt)
+    INSERT INTO logical_pages (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, capabilities_json, outbound_denied, scripts_enabled, created_at, updated_at)
+    VALUES (@pageId, @uri, @title, @sourcePath, @sourceExt, @pageType, @sourceRootName, @accessMode, @capabilitiesJson, @outboundDenied, @scriptsEnabled, @createdAt, @updatedAt)
     ON CONFLICT(uri) DO UPDATE SET
       title = excluded.title,
       source_path = excluded.source_path,
@@ -237,6 +259,9 @@ export function registerLogicalPage({ uri, title, sourcePath, component, accessM
       page_type = excluded.page_type,
       source_root_name = excluded.source_root_name,
       access_mode = excluded.access_mode,
+      capabilities_json = excluded.capabilities_json,
+      outbound_denied = excluded.outbound_denied,
+      scripts_enabled = excluded.scripts_enabled,
       updated_at = excluded.updated_at
   `).run({
     pageId: crypto.randomUUID(),
@@ -247,6 +272,9 @@ export function registerLogicalPage({ uri, title, sourcePath, component, accessM
     pageType: validated.pageType,
     sourceRootName: validated.sourceRootName,
     accessMode,
+    capabilitiesJson: JSON.stringify(security.capabilities),
+    outboundDenied: security.outboundDenied ? 1 : 0,
+    scriptsEnabled: security.scriptsEnabled ? 1 : 0,
     createdAt: current,
     updatedAt: current,
   });
@@ -267,6 +295,9 @@ function mapPageRecord(record) {
     type,
     sourceRootName: record.source_root_name,
     accessMode: record.access_mode,
+    capabilities: parseStoredCapabilities(record.capabilities_json),
+    outboundDenied: record.outbound_denied === 1,
+    scriptsEnabled: record.scripts_enabled !== 0,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };
@@ -379,7 +410,7 @@ function validatedUpdateUri(rawUri) {
 
 // Move (uri) and/or rename (title) a page. Source files never move — only the
 // logical uri and title change; the page_id stays stable.
-export function updateLogicalPage(pageId, { uri, title } = {}) {
+export function updateLogicalPage(pageId, { uri, title, capabilities, outboundDenied, scriptsEnabled } = {}) {
   initPageStore();
   const existing = getLogicalPageById(pageId);
   if (!existing) {
@@ -405,12 +436,21 @@ export function updateLogicalPage(pageId, { uri, title } = {}) {
     nextTitle = title.trim();
   }
 
-  if (uri === undefined && title === undefined) {
-    throw Object.assign(new Error('nothing to update: provide uri and/or title'), { statusCode: 400, code: 'invalid_update' });
+  if (uri === undefined && title === undefined && capabilities === undefined && outboundDenied === undefined && scriptsEnabled === undefined) {
+    throw Object.assign(new Error('nothing to update'), { statusCode: 400, code: 'invalid_update' });
   }
 
-  db.prepare('UPDATE logical_pages SET uri = ?, title = ?, updated_at = ? WHERE page_id = ?')
-    .run(nextUri, nextTitle, nowMs(), pageId);
+  const security = normalizePageSecurity({
+    capabilities: capabilities === undefined ? existing.capabilities : capabilities,
+    outboundDenied: outboundDenied === undefined ? existing.outboundDenied : outboundDenied,
+    scriptsEnabled: scriptsEnabled === undefined ? existing.scriptsEnabled : scriptsEnabled,
+  });
+  db.prepare(`
+    UPDATE logical_pages
+    SET uri = ?, title = ?, capabilities_json = ?, outbound_denied = ?, scripts_enabled = ?, updated_at = ?
+    WHERE page_id = ?
+  `).run(nextUri, nextTitle, JSON.stringify(security.capabilities), security.outboundDenied ? 1 : 0,
+    security.scriptsEnabled ? 1 : 0, nowMs(), pageId);
   logger.info('logical page updated', { pageId, uri: nextUri, previousUri: existing.uri, title: nextTitle });
   return getLogicalPageById(pageId);
 }

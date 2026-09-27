@@ -108,6 +108,52 @@ test('PATCH moves uri and the old uri stops resolving', async () => {
   }
 });
 
+test('PATCH exposes capability policy and enforces read capability outbound denial', async () => {
+  const { server, origin, contentDir, config } = await makeServer();
+  try {
+    const page = registerPage(config, contentDir, 'policy/page', 'Policy');
+    const response = await patchPage(origin, page.pageId, {
+      capabilities: ['state.read', 'attachment.write'],
+      outbound_denied: false,
+      scripts_enabled: false,
+    });
+    assert.equal(response.status, 200);
+    const updated = (await response.json()).page;
+    assert.deepEqual(updated.capabilities, ['attachment.write', 'state.read']);
+    assert.equal(updated.outboundDenied, true);
+    assert.equal(updated.scriptsEnabled, false);
+
+    const listed = await fetch(`${origin}/api/pages`);
+    const visible = (await listed.json()).pages.find(candidate => candidate.pageId === page.pageId);
+    assert.deepEqual(visible.capabilities, updated.capabilities);
+    assert.equal(visible.outboundDenied, true);
+    assert.equal(visible.scriptsEnabled, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('re-registering without security declarations resets to closed defaults', async () => {
+  const { server, contentDir, config } = await makeServer();
+  try {
+    const sourcePath = path.join(contentDir, 'reregister.html');
+    fs.writeFileSync(sourcePath, '<!doctype html><title>Re-register</title>');
+    const first = registerLogicalPage({
+      uri: 'reregister', title: 'First', sourcePath, component: 'content',
+      capabilities: ['state.read'], outboundDenied: true, scriptsEnabled: false,
+    }, config);
+    assert.deepEqual(first.capabilities, ['state.read']);
+    const second = registerLogicalPage({
+      uri: 'reregister', title: 'Second', sourcePath, component: 'content',
+    }, config);
+    assert.deepEqual(second.capabilities, []);
+    assert.equal(second.outboundDenied, false);
+    assert.equal(second.scriptsEnabled, true);
+  } finally {
+    server.close();
+  }
+});
+
 test('PATCH returns 404 for unknown pageId', async () => {
   const { server, origin } = await makeServer();
   try {

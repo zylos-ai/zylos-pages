@@ -371,6 +371,54 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
   }
 });
 
+test('capability bridge is injected only from the trusted shell and read policy denies egress', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir);
+    config.security.htmlArtifactSandboxEnabled = true;
+    const bridgePath = path.join(contentDir, 'bridge-policy.html');
+    const scriptlessPath = path.join(contentDir, 'scriptless.html');
+    await writeFile(bridgePath, '<!doctype html><title>Bridge Policy</title><h1>Bridge</h1>');
+    await writeFile(scriptlessPath, '<!doctype html><title>Scriptless</title><script>window.bad=true</script>');
+    const bridgePage = registerLogicalPage({
+      uri: 'bridge-policy', title: 'Bridge Policy', sourcePath: bridgePath, component: 'content',
+      capabilities: ['state.read'],
+    }, config);
+    registerLogicalPage({
+      uri: 'scriptless', title: 'Scriptless', sourcePath: scriptlessPath, component: 'content',
+      capabilities: ['state.read'], scriptsEnabled: false,
+    }, config);
+
+    await withServer(config, async ({ origin, fetch }) => {
+      let response = await fetch(`${origin}/bridge-policy`);
+      const shell = await response.text();
+      assert.match(shell, new RegExp(`data-bridge-endpoint="/api/bridge/${bridgePage.pageId}"`));
+      assert.match(shell, /_assets\/bridge\.js/);
+      assert.match(shell, /sandbox="allow-scripts"/);
+
+      response = await fetch(`${origin}/bridge-policy?raw=1`, { headers: { 'Sec-Fetch-Dest': 'iframe' } });
+      const csp = response.headers.get('content-security-policy');
+      assert.match(csp, /connect-src 'none'/);
+      assert.match(csp, /img-src 'self' data:/);
+      assert.match(csp, /form-action 'none'/);
+      assert.match(csp, /navigate-to 'none'/);
+      assert.match(csp, /frame-src 'none'/);
+      assert.doesNotMatch(csp, /https:/);
+      assert.match(await response.text(), /_assets\/bridge-client\.js/);
+
+      response = await fetch(`${origin}/scriptless`);
+      const scriptlessShell = await response.text();
+      assert.match(scriptlessShell, /sandbox=""/);
+      assert.doesNotMatch(scriptlessShell, /data-bridge-endpoint|_assets\/bridge\.js/);
+      response = await fetch(`${origin}/scriptless?raw=1`, { headers: { 'Sec-Fetch-Dest': 'iframe' } });
+      assert.match(response.headers.get('content-security-policy'), /sandbox;.*script-src 'none'/);
+      assert.doesNotMatch(await response.text(), /bridge-client/);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
 test('html pages require auth when no valid share token is present', async () => {
   const contentDir = await makeContentDir();
   try {

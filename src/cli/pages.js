@@ -46,7 +46,9 @@ function printUsage() {
   console.log(`pages agent CLI
 
 Usage:
-  node pages.js register --source <path> --uri <uri> [--title <title>] [--component <name>] [--json]
+  node pages.js register --source <path> --uri <uri> [--title <title>] [--component <name>]
+                         [--capabilities state.read,state.write,attachment.read,attachment.write]
+                         [--deny-outbound] [--no-scripts] [--json]
   node pages.js list [--q <query>] [--json]
   node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--writable] [--password|--password-stdin] [--json]
                                                        # --writable also lets link holders upload/delete this page's photos
@@ -84,7 +86,7 @@ Examples:
 
 // Flags that stand alone. Everything else consumes the next argv entry, so a
 // value-less flag not listed here fails with "missing value for --x".
-const BOOLEAN_FLAGS = new Set(['json', 'all', 'writable', 'password', 'password-stdin']);
+const BOOLEAN_FLAGS = new Set(['json', 'all', 'writable', 'password', 'password-stdin', 'deny-outbound', 'no-scripts']);
 
 function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -121,7 +123,7 @@ function output(result, json) {
 function humanize(result) {
   if (!result.ok) return `error: ${result.error}`;
   if (result.command === 'list') {
-    return result.entries.map(entry => `${entry.uri} [${entry.type}, ${entry.accessMode}] -> ${entry.sourcePath}`).join('\n') || 'no pages registered';
+    return result.entries.map(entry => `${entry.uri} [${entry.type}, ${entry.accessMode}; capabilities=${entry.capabilities.join(',') || 'none'}; outbound=${entry.outboundDenied ? 'denied' : 'allowed'}; scripts=${entry.scriptsEnabled ? 'enabled' : 'disabled'}] -> ${entry.sourcePath}`).join('\n') || 'no pages registered';
   }
   if (result.command === 'share') {
     return [
@@ -331,6 +333,9 @@ function commandRegister(args) {
     sourcePath: args.source,
     component: args.component,
     accessMode: args.accessMode || args['access-mode'] || 'private',
+    capabilities: args.capabilities ? args.capabilities.split(',').map(value => value.trim()).filter(Boolean) : [],
+    outboundDenied: args['deny-outbound'] === true,
+    scriptsEnabled: args['no-scripts'] !== true,
   }, config);
   output({
     ok: true,
@@ -342,6 +347,9 @@ function commandRegister(args) {
     sourceRootName: page.sourceRootName,
     type: page.type,
     accessMode: page.accessMode,
+    capabilities: page.capabilities,
+    outboundDenied: page.outboundDenied,
+    scriptsEnabled: page.scriptsEnabled,
   }, args.json);
 }
 
@@ -359,6 +367,9 @@ function commandList(args) {
       sourceRootName: entry.sourceRootName,
       type: entry.type,
       accessMode: entry.accessMode,
+      capabilities: entry.capabilities,
+      outboundDenied: entry.outboundDenied,
+      scriptsEnabled: entry.scriptsEnabled,
       url: getPageUrl(entry.uri),
       updatedAt: entry.updatedAt,
     }));

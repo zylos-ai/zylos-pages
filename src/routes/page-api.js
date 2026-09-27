@@ -73,12 +73,23 @@ export function setupPageApi(app, config) {
 
     try {
       const body = await parseJsonBody(req);
+      const outboundDenied = body.outbound_denied ?? body.outboundDenied ?? false;
+      const scriptsEnabled = body.scripts_enabled ?? body.scriptsEnabled ?? true;
+      if (body.capabilities !== undefined && !Array.isArray(body.capabilities)) {
+        return res.status(400).json({ error: 'capabilities must be an array' });
+      }
+      if (typeof outboundDenied !== 'boolean' || typeof scriptsEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'page security flags must be booleans' });
+      }
       const page = registerLogicalPage({
         uri: body.uri,
         title: body.title,
         sourcePath: body.source_path || body.sourcePath,
         component: body.component,
         accessMode: body.access_mode || body.accessMode || 'private',
+        capabilities: body.capabilities ?? [],
+        outboundDenied,
+        scriptsEnabled,
       }, config);
       res.status(201).json({
         ok: true,
@@ -108,7 +119,24 @@ export function setupPageApi(app, config) {
       if (body.title !== undefined && typeof body.title !== 'string') {
         return res.status(400).json({ error: 'title must be a string' });
       }
-      const page = updateLogicalPage(req.params.pageId, { uri: body.uri, title: body.title });
+      if (body.capabilities !== undefined && !Array.isArray(body.capabilities)) {
+        return res.status(400).json({ error: 'capabilities must be an array' });
+      }
+      const outboundDenied = body.outbound_denied ?? body.outboundDenied;
+      const scriptsEnabled = body.scripts_enabled ?? body.scriptsEnabled;
+      if (outboundDenied !== undefined && typeof outboundDenied !== 'boolean') {
+        return res.status(400).json({ error: 'outbound_denied must be a boolean' });
+      }
+      if (scriptsEnabled !== undefined && typeof scriptsEnabled !== 'boolean') {
+        return res.status(400).json({ error: 'scripts_enabled must be a boolean' });
+      }
+      const page = updateLogicalPage(req.params.pageId, {
+        uri: body.uri,
+        title: body.title,
+        capabilities: body.capabilities,
+        outboundDenied,
+        scriptsEnabled,
+      });
       res.json({
         ok: true,
         page: {

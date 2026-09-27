@@ -21,6 +21,7 @@ import { OWNER_SESSION_COOKIE_NAME, pagesCookieHeader, setupCookieBoundary } fro
 import { isAssetExtension } from '../utils/mime.js';
 import { AUTH_CARD_CSS } from '../templates/authCardStyles.js';
 import path from 'node:path';
+import { getLogicalPageById } from '../pages/page-store.js';
 
 const SCRYPT_KEYLEN = 64;
 // __Secure- (not __Host-) so the Path can be bound to the instance's mount
@@ -286,6 +287,10 @@ function isAssetPath(requestPath) {
 
 function isAttachmentApi(req) {
   return req.path.startsWith('/api/attachments/');
+}
+
+function isBridgeApi(req) {
+  return req.path.startsWith('/api/bridge/');
 }
 
 function artifactFromApiPath(requestPath) {
@@ -589,8 +594,9 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       clearSelectedShareAccessCookies(res, result.clearCookieNames, cookiePathFromBase(browserBase));
     }
 
-    if (req.path.startsWith('/api/state/') || isAttachmentApi(req)) {
-      const artifact = artifactFromApiPath(req.path);
+    if (req.path.startsWith('/api/state/') || isAttachmentApi(req) || isBridgeApi(req)) {
+      let artifact = artifactFromApiPath(req.path);
+      if (isBridgeApi(req)) artifact = getLogicalPageById(artifact)?.uri;
       const cookieHeader = pagesCookieHeader(req);
       let result = { valid: false };
       try {
