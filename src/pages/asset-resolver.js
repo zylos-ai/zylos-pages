@@ -7,6 +7,10 @@ import {
   createShareAssetSignature,
   shareAssetExpiresAt,
 } from '../sharing/share-manager.js';
+import {
+  createOwnerAssetSignature,
+  ownerAssetExpiresAt,
+} from '../security/owner-asset-signature.js';
 
 export class AssetResolutionError extends Error {
   constructor(statusCode, message) {
@@ -76,6 +80,11 @@ export function logicalAssetPath(baseUrl, pageUri, relativePath) {
 function signedLogicalAssetPath(baseUrl, pageUri, relativePath, { exp, sig }) {
   const cleanBase = baseUrl || '';
   return `${cleanBase}/assets/${encodeURI(normalizeSlug(pageUri))}?${new URLSearchParams({ path: relativePath, exp: String(exp), sig }).toString()}`;
+}
+
+function signedOwnerAssetPath(baseUrl, pageUri, relativePath, { exp, sig }) {
+  const cleanBase = baseUrl || '';
+  return `${cleanBase}/assets/${encodeURI(normalizeSlug(pageUri))}?${new URLSearchParams({ path: relativePath, exp: String(exp), sig, access: 'owner' }).toString()}`;
 }
 
 export function rewriteRelativeAssetRefs(html, { baseUrl = '', pageUri }) {
@@ -180,16 +189,26 @@ async function signAssetReference(value, context) {
     uri = existing.uri;
     assetPath = existing.assetPath;
   } else {
-    if (value.startsWith('/')) return value;
-    const { pathPart } = splitUrlSuffix(value);
+    const rootRelative = value.startsWith('/') ? value.slice(1) : value;
+    const { pathPart } = splitUrlSuffix(rootRelative);
     if (!isAssetExtension(path.extname(pathPart).toLowerCase())) return value;
+    assetPath = rootRelative;
   }
 
   try {
     const resolved = await resolveLogicalAsset(uri, assetPath, {
       config: context.config,
-      allowConfiguredRoots: true,
     });
+    if (context.viewer === 'owner') {
+      const exp = context.expiresAt;
+      const sig = createOwnerAssetSignature({
+        uri: context.pageUri,
+        realPath: resolved.filePath,
+        expiresAt: exp,
+        config: context.config,
+      });
+      return signedOwnerAssetPath(context.baseUrl, context.pageUri, assetPath, { exp, sig });
+    }
     const exp = shareAssetExpiresAt(context.share.expiresAt);
     const sig = createShareAssetSignature({
       uri: context.pageUri,
@@ -228,7 +247,23 @@ async function replaceAsync(input, regex, replacer) {
 
 export async function rewriteSignedShareAssetRefs(html, { baseUrl = '', pageUri, config, share }) {
   if (!html || !pageUri || !share?.tokenId) return html;
-  const context = { baseUrl, pageUri: normalizeSlug(pageUri), config, share };
+  const context = { baseUrl, pageUri: normalizeSlug(pageUri), config, share, viewer: 'share' };
+  return rewriteSignedAssetRefs(html, context);
+}
+
+export async function rewriteSignedOwnerAssetRefs(html, { baseUrl = '', pageUri, config }) {
+  if (!html || !pageUri) return html;
+  const context = {
+    baseUrl,
+    pageUri: normalizeSlug(pageUri),
+    config,
+    viewer: 'owner',
+    expiresAt: ownerAssetExpiresAt(),
+  };
+  return rewriteSignedAssetRefs(html, context);
+}
+
+async function rewriteSignedAssetRefs(html, context) {
   let output = await replaceAsync(
     html,
     /\b(src|href)=("([^"]*)"|'([^']*)')/gi,

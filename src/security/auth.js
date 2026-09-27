@@ -17,6 +17,7 @@ import {
   verifyShareAccessCookies,
 } from '../sharing/share-manager.js';
 import { browserBaseFromRequest, browserPath, browserRoot, cookiePathFromBase, isPathWithinBase } from '../lib/browser-base.js';
+import { OWNER_SESSION_COOKIE_NAME, pagesCookieHeader, setupCookieBoundary } from './cookie-boundary.js';
 import { isAssetExtension } from '../utils/mime.js';
 import { AUTH_CARD_CSS } from '../templates/authCardStyles.js';
 import path from 'node:path';
@@ -25,7 +26,7 @@ const SCRYPT_KEYLEN = 64;
 // __Secure- (not __Host-) so the Path can be bound to the instance's mount
 // prefix — __Host- mandates Path=/, which makes sessions collide between
 // multiple pages instances on one host (issue #104).
-const COOKIE_NAME = '__Secure-zylos_pages_session';
+const COOKIE_NAME = OWNER_SESSION_COOKIE_NAME;
 const LEGACY_COOKIE_NAME = '__Host-zylos_pages_session';
 const SESSION_ABSOLUTE_MS = 86_400_000;      // 24 hours
 const SESSION_IDLE_MS = 3_600_000;            // 60 minutes
@@ -177,7 +178,7 @@ function parseCookies(header) {
 }
 
 function getSessionCookie(req) {
-  const cookies = parseCookies(req.headers.cookie);
+  const cookies = parseCookies(pagesCookieHeader(req));
   return cookies[COOKIE_NAME] || null;
 }
 
@@ -392,6 +393,7 @@ function loginPageHtml(baseUrl, error, next) {
  * /pages before proxying; direct localhost access uses root-relative URLs.
  */
 export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
+  setupCookieBoundary(app);
   migratePasswordIfNeeded(authConfig);
 
   const authPasswordConfigured = typeof authConfig.password === 'string' && authConfig.password.length > 0;
@@ -466,7 +468,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     const token = createSession(remember);
     const cookiePath = cookiePathFromBase(browserBase);
     setSessionCookie(res, token, remember, cookiePath);
-    clearShareAccessCookies(res, req.headers.cookie, cookiePath);
+    clearShareAccessCookies(res, pagesCookieHeader(req), cookiePath);
     clearShareScopeCookie(res, cookiePath);
     clearLegacyHostCookies(res);
 
@@ -508,7 +510,7 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
     const browserBase = browserBaseFromRequest(req);
     const cookiePath = cookiePathFromBase(browserBase);
     clearSessionCookie(res, cookiePath);
-    clearShareAccessCookies(res, req.headers.cookie, cookiePath);
+    clearShareAccessCookies(res, pagesCookieHeader(req), cookiePath);
     clearShareScopeCookie(res, cookiePath);
     clearLegacyHostCookies(res);
     res.redirect(302, `${browserPath(browserBase, 'login')}?next=${encodeURIComponent(browserRoot(browserBase))}`);
@@ -574,11 +576,12 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
         && !isAssetPath(req.path)
         && req.path !== '/') {
       const slug = req.path.slice(1);
-      const result = verifyShareAccessCookies(req.headers.cookie, slug);
+      const cookieHeader = pagesCookieHeader(req);
+      const result = verifyShareAccessCookies(cookieHeader, slug);
       if (result.valid) {
         acceptShareViewer(res, result, {
           cookiePath: cookiePathFromBase(browserBase),
-          cookieHeader: req.headers.cookie,
+          cookieHeader,
           refreshAccessCookie: result.legacy === true,
         });
         return next();
@@ -588,14 +591,15 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
 
     if (req.path.startsWith('/api/state/') || isAttachmentApi(req)) {
       const artifact = artifactFromApiPath(req.path);
+      const cookieHeader = pagesCookieHeader(req);
       let result = { valid: false };
       try {
-        if (artifact) result = verifyShareAccessCookies(req.headers.cookie, artifact);
+        if (artifact) result = verifyShareAccessCookies(cookieHeader, artifact);
       } catch { /* malformed encoding — treat as invalid */ }
       if (result.valid) {
         acceptShareViewer(res, result, {
           cookiePath: cookiePathFromBase(browserBase),
-          cookieHeader: req.headers.cookie,
+          cookieHeader,
           refreshAccessCookie: result.legacy === true,
         });
         return next();

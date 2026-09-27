@@ -4,6 +4,7 @@ import {
   verifyShareAccessCookiesForToken,
 } from '../sharing/share-manager.js';
 import { SharePasswordRateLimiter } from './share-password-rate-limit.js';
+import { pagesCookieHeader } from './cookie-boundary.js';
 
 export const SHARE_PASSWORD_HEADER = 'x-zylos-share-password';
 // Canonical spelling for user-facing surfaces (unlock page hint, 401
@@ -56,7 +57,7 @@ export function createShareAuthorization({
       return { authorized: true, proof: 'unprotected', share };
     }
 
-    const session = verifyShareAccessCookiesForToken(req.headers.cookie, share.tokenId);
+    const session = verifyShareAccessCookiesForToken(pagesCookieHeader(req), share.tokenId);
     if (session.valid) {
       return {
         authorized: true,

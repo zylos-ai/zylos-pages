@@ -154,6 +154,7 @@ Edit `~/zylos/components/pages/config.json`:
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },
   "security": {
     "allowRawHtml": false,
+    "htmlArtifactSandboxEnabled": false,
     "maxFileSizeBytes": 1048576,
     "maxAttachmentSizeBytes": 52428800
   },
@@ -169,6 +170,10 @@ Edit `~/zylos/components/pages/config.json`:
   }
 }
 ```
+
+Configuration changes require a Pages service restart. In particular, enable
+`security.htmlArtifactSandboxEnabled` before restart to serve owner and share
+HTML artifacts through opaque-origin sandboxed iframes.
 
 For reverse-proxy deployments, replace the example `publicBaseUrl` with the
 real externally reachable Pages base URL before using secure handoff. Leaving

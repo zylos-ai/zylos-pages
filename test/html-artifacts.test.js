@@ -17,7 +17,12 @@ const { pageRoute } = await import('../src/routes/pages.js');
 const { setupRawApi } = await import('../src/routes/raw-api.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupAuth, hashPassword } = await import('../src/security/auth.js');
-const { DEFAULT_CSP, HTML_ARTIFACT_CSP, securityHeaders } = await import('../src/security/headers.js');
+const {
+  DEFAULT_CSP,
+  HTML_ARTIFACT_CSP,
+  SANDBOXED_HTML_ARTIFACT_CSP,
+  securityHeaders,
+} = await import('../src/security/headers.js');
 const { notFoundTemplate, errorTemplate } = await import('../src/templates/errorTemplate.js');
 const { resolvePageDescriptor, resolveSafePath } = await import('../src/security/pathGuard.js');
 const { createShare } = await import('../src/sharing/share-manager.js');
@@ -278,6 +283,72 @@ test('shared html artifacts render directly while shared markdown keeps page hea
       assert.match(markdownBody, /Shared Markdown/);
       assert.match(markdownBody, /page-header/);
       assert.match(markdownBody, /theme-toggle/);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw navigation', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir);
+    config.security.htmlArtifactSandboxEnabled = true;
+    const artifactPath = path.join(contentDir, 'sandboxed.html');
+    await writeFile(artifactPath, '<!doctype html><title>Sandboxed</title><script>window.ok=true</script>');
+    registerPage(config, 'sandboxed', artifactPath, 'Sandboxed');
+    const share = createShare('sandboxed', '24h');
+
+    await withServer(config, async ({ origin, fetch: ownerFetch }) => {
+      const ownerShell = await ownerFetch(`${origin}/sandboxed`);
+      assert.equal(ownerShell.status, 200);
+      const ownerShellBody = await ownerShell.text();
+      assert.match(ownerShellBody, /sandbox="allow-scripts"/);
+      assert.doesNotMatch(ownerShellBody, /allow-same-origin/);
+      assert.match(ownerShellBody, /sandboxed\?raw=1/);
+
+      for (const headers of [{}, { 'Sec-Fetch-Dest': 'document' }]) {
+        const rejected = await ownerFetch(`${origin}/sandboxed?raw=1`, { headers });
+        assert.equal(rejected.status, 403);
+        assert.equal(rejected.headers.get('cache-control'), 'no-store');
+      }
+
+      const ownerRaw = await ownerFetch(`${origin}/sandboxed?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(ownerRaw.status, 200);
+      assert.equal(ownerRaw.headers.get('content-security-policy'), SANDBOXED_HTML_ARTIFACT_CSP);
+      assert.match(SANDBOXED_HTML_ARTIFACT_CSP, /^sandbox allow-scripts;/);
+      assert.doesNotMatch(SANDBOXED_HTML_ARTIFACT_CSP, /allow-same-origin/);
+      assert.match(SANDBOXED_HTML_ARTIFACT_CSP, /frame-ancestors 'self'/);
+
+      const unauthenticatedRaw = await fetch(`${origin}/sandboxed?raw=1`, {
+        redirect: 'manual',
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(unauthenticatedRaw.status, 302);
+      assert.match(unauthenticatedRaw.headers.get('location'), /^\/login\?/);
+
+      const shareShell = await fetch(`${origin}/s/${share.tokenId}`);
+      assert.equal(shareShell.status, 200);
+      assert.equal(shareShell.headers.get('content-security-policy'), DEFAULT_CSP);
+      const shareShellBody = await shareShell.text();
+      assert.match(shareShellBody, /sandbox="allow-scripts"/);
+      assert.match(shareShellBody, new RegExp(`/s/${share.tokenId}\\?raw=1`));
+      assert.doesNotMatch(shareShellBody, /<script>window\.ok=true<\/script>/);
+
+      const rejectedShareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`);
+      assert.equal(rejectedShareRaw.status, 403);
+      const shareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(shareRaw.status, 200);
+      assert.equal(shareRaw.headers.get('content-security-policy'), SANDBOXED_HTML_ARTIFACT_CSP);
+
+      const invalidShareRaw = await fetch(`${origin}/s/${'0'.repeat(32)}?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'iframe' },
+      });
+      assert.equal(invalidShareRaw.status, 404);
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

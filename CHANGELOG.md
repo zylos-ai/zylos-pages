@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.12.0] - Unreleased
+
+### Security
+
+- **Sandboxed HTML artifacts now render behind trusted owner and share shells.**
+  Enabled instances serve HTML with an opaque-origin CSP sandbox and reject raw
+  top-level document loads, while signed asset URLs keep same-directory images,
+  styles, scripts, and fonts usable without ambient owner or share cookies.
+- **Signed asset access is confined to each page's source directory.** Owner and
+  share rendering now apply the same boundary, including traversal, symlink,
+  extension-mismatch, and unsigned sibling rejection.
+- **Pages consumes only its own authentication cookies.** The backend retains
+  only the Pages owner session and recognized share-access cookies in private
+  request state, then removes the incoming Cookie header before route handling
+  so unrelated component cookies cannot enter logs or downstream requests.
+
+### Changed
+
+- **Sandbox activation is explicit and restart-bound.** Install and upgrade
+  hooks preserve the per-instance feature switch; the running service logs that
+  configuration changes require a restart, and the README documents the same
+  requirement. Pages 0.12.0 has no minimum Core version.
+- **Compatibility guidance covers sandbox rollout.** Operators can review known
+  HTML/CSP behavior before enabling an instance; page scanning and focused smoke
+  tooling remain follow-up work rather than shipped 0.12.0 commands.
+
 ## [0.11.1] - 2026-09-21
 
 ### Fixed

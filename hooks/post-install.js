@@ -45,6 +45,7 @@ const INITIAL_CONFIG = {
   },
   security: {
     allowRawHtml: false,
+    htmlArtifactSandboxEnabled: false,
     maxFileSizeBytes: 1048576,
     maxAttachmentSizeBytes: 50 * 1024 * 1024,
     renderTimeoutMs: 5000,
@@ -152,9 +153,13 @@ if (!fs.existsSync(configPath)) {
     if (!existing.security || typeof existing.security !== 'object' || Array.isArray(existing.security)) {
       existing.security = { ...INITIAL_CONFIG.security };
       migrated = true;
-    } else if (!Object.prototype.hasOwnProperty.call(existing.security, 'maxAttachmentSizeBytes')) {
-      existing.security.maxAttachmentSizeBytes = INITIAL_CONFIG.security.maxAttachmentSizeBytes;
-      migrated = true;
+    } else {
+      for (const key of ['maxAttachmentSizeBytes', 'htmlArtifactSandboxEnabled']) {
+        if (!Object.prototype.hasOwnProperty.call(existing.security, key)) {
+          existing.security[key] = INITIAL_CONFIG.security[key];
+          migrated = true;
+        }
+      }
     }
     if (migrated) {
       fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));

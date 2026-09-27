@@ -35,6 +35,7 @@ if (fs.existsSync(configPath)) {
   if (!config.security || typeof config.security !== 'object' || Array.isArray(config.security)) {
     config.security = {
       allowRawHtml: false,
+      htmlArtifactSandboxEnabled: false,
       maxFileSizeBytes: 1048576,
       maxAttachmentSizeBytes: 50 * 1024 * 1024,
       renderTimeoutMs: 5000,
@@ -43,6 +44,10 @@ if (fs.existsSync(configPath)) {
   }
   if (!Object.prototype.hasOwnProperty.call(config.security, 'maxAttachmentSizeBytes')) {
     config.security.maxAttachmentSizeBytes = 50 * 1024 * 1024;
+    migrated = true;
+  }
+  if (!Object.prototype.hasOwnProperty.call(config.security, 'htmlArtifactSandboxEnabled')) {
+    config.security.htmlArtifactSandboxEnabled = false;
     migrated = true;
   }
 

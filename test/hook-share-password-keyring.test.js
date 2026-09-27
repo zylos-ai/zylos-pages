@@ -242,11 +242,12 @@ test('post-upgrade removes every legacy auth.enabled value and preserves owner c
   }
 });
 
-test('post-upgrade adds the attachment-page ceiling only when absent and is idempotent', () => {
+test('post-upgrade adds security defaults only when absent and is idempotent', () => {
   const hook = path.join(repoRoot, 'hooks/post-upgrade.js');
   for (const configured of [undefined, 123456]) {
     const security = { allowRawHtml: true, maxFileSizeBytes: 77, renderTimeoutMs: 88 };
     if (configured !== undefined) security.maxAttachmentSizeBytes = configured;
+    if (configured !== undefined) security.htmlArtifactSandboxEnabled = true;
     const home = makeHome({
       auth: { password: 'scrypt:known-salt:known-hash' },
       security,
@@ -257,6 +258,7 @@ test('post-upgrade adds the attachment-page ceiling only when absent and is idem
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
     const once = readConfig(home);
     assert.equal(once.security.maxAttachmentSizeBytes, configured ?? 50 * 1024 * 1024);
+    assert.equal(once.security.htmlArtifactSandboxEnabled, configured === undefined ? false : true);
     assert.equal(once.security.maxFileSizeBytes, 77);
     assert.deepEqual(once.unrelated, { keep: true });
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
@@ -264,11 +266,12 @@ test('post-upgrade adds the attachment-page ceiling only when absent and is idem
   }
 });
 
-test('post-install adds the attachment-page ceiling to an existing config without overwriting it', () => {
+test('post-install adds security defaults to an existing config without overwriting them', () => {
   const hook = path.join(repoRoot, 'hooks/post-install.js');
   for (const configured of [undefined, 654321]) {
     const security = { allowRawHtml: true, maxFileSizeBytes: 91, renderTimeoutMs: 92 };
     if (configured !== undefined) security.maxAttachmentSizeBytes = configured;
+    if (configured !== undefined) security.htmlArtifactSandboxEnabled = true;
     const home = makeHome({
       auth: { password: 'scrypt:known-salt:known-hash' },
       security,
@@ -281,6 +284,7 @@ test('post-install adds the attachment-page ceiling to an existing config withou
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
     const once = readConfig(home);
     assert.equal(once.security.maxAttachmentSizeBytes, configured ?? 50 * 1024 * 1024);
+    assert.equal(once.security.htmlArtifactSandboxEnabled, configured === undefined ? false : true);
     assert.equal(once.security.maxFileSizeBytes, 91);
     assert.deepEqual(once.unrelated, { keep: 'yes' });
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
