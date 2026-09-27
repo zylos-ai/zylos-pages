@@ -86,6 +86,9 @@ test('post-install on an empty HOME seeds and registers the welcome page', () =>
   const contentDir = path.join(home, 'zylos/http/public/pages');
   assert.ok(fs.existsSync(path.join(contentDir, 'welcome.md')), 'welcome.md should be created');
   assert.match(install.stdout, /welcome\.md registered at \/pages\/p\/welcome/);
+  const config = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'));
+  assert.equal(Object.hasOwn(config.security, 'htmlArtifactSandboxEnabled'), false);
+  assert.equal(Object.hasOwn(config.security, 'htmlArtifactSandboxDisabled'), false);
 
   const list = spawnSync(process.execPath, [pagesCliPath, 'list', '--json'], {
     cwd: repoRoot,

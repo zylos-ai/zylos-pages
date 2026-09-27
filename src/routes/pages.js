@@ -180,7 +180,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
       }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: 'html-raw' });
-      const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};</script>`;
+      const baseTag = `<script>window.__PAGES_BASE=${JSON.stringify(browserBase)};window.__PAGES_VIEWER=${JSON.stringify(isShareViewer ? 'share' : 'auth')};window.__PAGES_SHARE_EDITABLE=${shareCanWriteAttachments ? 'true' : 'false'};</script>`;
       let injected = result.html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
       if (injected === result.html) injected = baseTag + result.html;
       const viewerAttr = isShareViewer ? ` data-viewer="share"` : '';

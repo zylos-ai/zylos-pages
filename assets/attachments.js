@@ -49,13 +49,15 @@
   }
 
   function isShareView() {
-    return document.documentElement.dataset.viewer === 'share'
+    return window.__PAGES_VIEWER === 'share'
+      || document.documentElement.dataset.viewer === 'share'
       || document.body.dataset.viewer === 'share';
   }
 
   function canEditAttachments() {
     if (!isShareView()) return true;
-    return document.documentElement.dataset.shareEditable === 'true';
+    return document.documentElement.dataset.shareEditable === 'true'
+      || window.__PAGES_SHARE_EDITABLE === true;
   }
 
   function attachmentUrl(fileUrl) {

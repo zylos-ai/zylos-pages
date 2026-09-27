@@ -21,6 +21,7 @@ if (fs.existsSync(configPath)) {
   const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
   finalConfig = config;
   let migrated = false;
+  let removedLegacySandboxKey = false;
 
   // auth.enabled was an escape hatch around the owner authentication wall.
   // Remove the legacy key by presence (including false) while preserving the
@@ -48,6 +49,7 @@ if (fs.existsSync(configPath)) {
   if (Object.prototype.hasOwnProperty.call(config.security, 'htmlArtifactSandboxEnabled')) {
     delete config.security.htmlArtifactSandboxEnabled;
     migrated = true;
+    removedLegacySandboxKey = true;
   }
 
   // Migration: add rateLimit section if missing
@@ -80,12 +82,16 @@ if (fs.existsSync(configPath)) {
     console.log('[post-upgrade] No migrations needed');
   }
 
-  console.log([
-    '[post-upgrade] HTML artifact sandbox is enabled by default in 0.14.0.',
-    '[post-upgrade] Review older HTML pages that use localStorage, absolute /assets/... paths, legacy attachment widgets, confirm/alert dialogs, or JavaScript-built relative asset URLs.',
-    '[post-upgrade] JavaScript-built relative URLs are not signed; place the URL in literal HTML (for example a <template><img src="...">) and read the signed value from JavaScript.',
-    '[post-upgrade] To disable and roll back, set security.htmlArtifactSandboxDisabled=true and restart zylos-pages.',
-  ].join('\n'));
+  if (config.security.htmlArtifactSandboxDisabled === true) {
+    console.log('[post-upgrade] HTML artifact sandbox is currently disabled (security.htmlArtifactSandboxDisabled=true).');
+  } else if (removedLegacySandboxKey) {
+    console.log([
+      '[post-upgrade] HTML artifact sandbox is enabled by default in 0.14.0.',
+      '[post-upgrade] Review older HTML pages that use localStorage, absolute /assets/... paths, legacy attachment widgets, confirm/alert dialogs, or JavaScript-built relative asset URLs.',
+      '[post-upgrade] JavaScript-built relative URLs are not signed; place the URL in literal HTML (for example a <template><img src="...">) and read the signed value from JavaScript.',
+      '[post-upgrade] To disable and roll back, set security.htmlArtifactSandboxDisabled=true and restart zylos-pages.',
+    ].join('\n'));
+  }
 }
 
 warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {

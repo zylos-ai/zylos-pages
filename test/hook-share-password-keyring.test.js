@@ -245,37 +245,52 @@ test('post-upgrade removes every legacy auth.enabled value and preserves owner c
 test('post-upgrade removes the legacy sandbox key, preserves explicit opt-out, and is idempotent', () => {
   const hook = path.join(repoRoot, 'hooks/post-upgrade.js');
   for (const legacyEnabled of [undefined, false, true]) {
-    const security = { allowRawHtml: true, maxFileSizeBytes: 77, renderTimeoutMs: 88 };
-    if (legacyEnabled !== undefined) security.htmlArtifactSandboxEnabled = legacyEnabled;
-    const home = makeHome({
-      auth: { password: 'scrypt:known-salt:known-hash' },
-      security,
-      sharing: { enabled: true },
-      unrelated: { keep: true },
-    });
-    const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
-    const stdout = execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
-    const once = readConfig(home);
-    assert.equal(once.security.maxAttachmentSizeBytes, 50 * 1024 * 1024);
-    assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxEnabled'), false);
-    assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxDisabled'), false);
-    assert.equal(once.security.maxFileSizeBytes, 77);
-    assert.deepEqual(once.unrelated, { keep: true });
-    assert.match(stdout, /HTML artifact sandbox is enabled by default in 0\.14\.0/);
-    assert.match(stdout, /htmlArtifactSandboxDisabled=true/);
-    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
-    assert.deepEqual(readConfig(home), once, `repeat upgrade should be idempotent for legacy=${legacyEnabled}`);
+    for (const configuredAttachmentSize of [undefined, 123456]) {
+      const security = { allowRawHtml: true, maxFileSizeBytes: 77, renderTimeoutMs: 88 };
+      if (legacyEnabled !== undefined) security.htmlArtifactSandboxEnabled = legacyEnabled;
+      if (configuredAttachmentSize !== undefined) security.maxAttachmentSizeBytes = configuredAttachmentSize;
+      const home = makeHome({
+        auth: { password: 'scrypt:known-salt:known-hash' },
+        security,
+        sharing: { enabled: true },
+        unrelated: { keep: true },
+      });
+      const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
+      const stdout = execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+      const once = readConfig(home);
+      assert.equal(once.security.maxAttachmentSizeBytes, configuredAttachmentSize ?? 50 * 1024 * 1024);
+      assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxEnabled'), false);
+      assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxDisabled'), false);
+      assert.equal(once.security.maxFileSizeBytes, 77);
+      assert.deepEqual(once.unrelated, { keep: true });
+      if (legacyEnabled === undefined) {
+        assert.doesNotMatch(stdout, /HTML artifact sandbox is enabled by default in 0\.14\.0/);
+      } else {
+        assert.match(stdout, /HTML artifact sandbox is enabled by default in 0\.14\.0/);
+        assert.match(stdout, /htmlArtifactSandboxDisabled=true/);
+      }
+      const repeatStdout = execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+      assert.deepEqual(readConfig(home), once, `repeat upgrade should be idempotent for legacy=${legacyEnabled}, attachmentSize=${configuredAttachmentSize}`);
+      assert.doesNotMatch(repeatStdout, /HTML artifact sandbox is enabled by default in 0\.14\.0/);
+    }
   }
 
   const disabledHome = makeHome({
-    security: { htmlArtifactSandboxDisabled: true },
+    security: {
+      htmlArtifactSandboxEnabled: false,
+      htmlArtifactSandboxDisabled: true,
+    },
     sharing: { enabled: true },
   });
   const disabledEnv = { ...process.env, HOME: disabledHome, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
-  execFileSync(process.execPath, [hook], { env: disabledEnv, encoding: 'utf8' });
+  const disabledStdout = execFileSync(process.execPath, [hook], { env: disabledEnv, encoding: 'utf8' });
+  assert.equal(Object.hasOwn(readConfig(disabledHome).security, 'htmlArtifactSandboxEnabled'), false);
   assert.equal(readConfig(disabledHome).security.htmlArtifactSandboxDisabled, true);
-  execFileSync(process.execPath, [hook], { env: disabledEnv, encoding: 'utf8' });
+  assert.match(disabledStdout, /sandbox is currently disabled \(security\.htmlArtifactSandboxDisabled=true\)/);
+  assert.doesNotMatch(disabledStdout, /sandbox is enabled by default in 0\.14\.0/);
+  const disabledRepeatStdout = execFileSync(process.execPath, [hook], { env: disabledEnv, encoding: 'utf8' });
   assert.equal(readConfig(disabledHome).security.htmlArtifactSandboxDisabled, true);
+  assert.match(disabledRepeatStdout, /sandbox is currently disabled \(security\.htmlArtifactSandboxDisabled=true\)/);
 });
 
 test('post-install never writes the sandbox opt-out to existing config', () => {
