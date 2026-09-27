@@ -18,6 +18,9 @@
 
 ### Changed
 
+- **Older browsers get bilingual sandbox compatibility guidance.** When a raw
+  HTML request omits `Sec-Fetch-Dest`, the fail-closed 403 explains how to
+  proceed instead of appearing blank.
 - **Sandbox activation is explicit and restart-bound.** Install and upgrade
   hooks preserve the per-instance feature switch; the running service logs that
   configuration changes require a restart, and the README documents the same
