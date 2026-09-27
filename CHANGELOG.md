@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.13.0] - 2026-09-27
+
+### Security
+
+- **HTML page capabilities are narrow, opt-in, and page-scoped.** Read
+  capabilities force the outbound-denied CSP, but WebRTC, preconnect, and DNS
+  remain browser-level residual egress channels that CSP cannot fully block.
+  Read capabilities must be granted only to trusted pages; the registration
+  CLI prints a non-interactive warning when one is granted.
+
 ## [0.12.0] - 2026-09-27
 
 ### Security
@@ -15,11 +25,6 @@
   only the Pages owner session and recognized share-access cookies in private
   request state, then removes the incoming Cookie header before route handling
   so unrelated component cookies cannot enter logs or downstream requests.
-- **HTML page capabilities are narrow, opt-in, and page-scoped.** Read
-  capabilities force the outbound-denied CSP, but WebRTC, preconnect, and DNS
-  remain browser-level residual egress channels that CSP cannot fully block.
-  Read capabilities must be granted only to trusted pages; the registration
-  CLI prints a non-interactive warning when one is granted.
 
 ### Changed
 
