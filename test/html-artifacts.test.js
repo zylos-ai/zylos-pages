@@ -307,11 +307,22 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
       assert.doesNotMatch(ownerShellBody, /allow-same-origin/);
       assert.match(ownerShellBody, /sandboxed\?raw=1/);
 
-      for (const headers of [{}, { 'Sec-Fetch-Dest': 'document' }]) {
-        const rejected = await ownerFetch(`${origin}/sandboxed?raw=1`, { headers });
-        assert.equal(rejected.status, 403);
-        assert.equal(rejected.headers.get('cache-control'), 'no-store');
-      }
+      const missingDest = await ownerFetch(`${origin}/sandboxed?raw=1`);
+      assert.equal(missingDest.status, 403);
+      assert.equal(missingDest.headers.get('cache-control'), 'no-store');
+      assert.equal(missingDest.headers.get('content-security-policy'), SANDBOXED_HTML_ARTIFACT_CSP);
+      assert.equal(missingDest.headers.get('x-frame-options'), 'SAMEORIGIN');
+      assert.match(missingDest.headers.get('content-type'), /^text\/html/);
+      const missingDestBody = await missingDest.text();
+      assert.match(missingDestBody, /当前浏览器无法安全显示此页面/);
+      assert.match(missingDestBody, /This browser cannot display the page securely/);
+
+      const topLevelRaw = await ownerFetch(`${origin}/sandboxed?raw=1`, {
+        headers: { 'Sec-Fetch-Dest': 'document' },
+      });
+      assert.equal(topLevelRaw.status, 403);
+      assert.equal(topLevelRaw.headers.get('cache-control'), 'no-store');
+      assert.doesNotMatch(await topLevelRaw.text(), /This browser cannot display the page securely/);
 
       const ownerRaw = await ownerFetch(`${origin}/sandboxed?raw=1`, {
         headers: { 'Sec-Fetch-Dest': 'iframe' },
@@ -339,6 +350,11 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
 
       const rejectedShareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`);
       assert.equal(rejectedShareRaw.status, 403);
+      assert.equal(rejectedShareRaw.headers.get('content-security-policy'), SANDBOXED_HTML_ARTIFACT_CSP);
+      assert.equal(rejectedShareRaw.headers.get('x-frame-options'), 'SAMEORIGIN');
+      const rejectedShareBody = await rejectedShareRaw.text();
+      assert.match(rejectedShareBody, /当前浏览器无法安全显示此页面/);
+      assert.match(rejectedShareBody, /This browser cannot display the page securely/);
       const shareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`, {
         headers: { 'Sec-Fetch-Dest': 'iframe' },
       });

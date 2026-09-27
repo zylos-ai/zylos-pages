@@ -271,6 +271,55 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc, sandboxe
 </html>`;
 }
 
+export function htmlArtifactBrowserCompatibilityTemplate() {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>无法安全显示页面 / Unable to display page securely</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+      box-sizing: border-box;
+      background: Canvas;
+      color: CanvasText;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(560px, 100%); }
+    .status {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      margin-bottom: 20px;
+      border: 1px solid #d97706;
+      border-radius: 50%;
+      color: #b45309;
+      font-size: 22px;
+      font-weight: 700;
+    }
+    h1 { margin: 0 0 14px; font-size: 24px; line-height: 1.3; }
+    p { margin: 8px 0; color: GrayText; font-size: 16px; line-height: 1.65; }
+  </style>
+</head>
+<body>
+  <main role="alert">
+    <div class="status" aria-hidden="true">!</div>
+    <h1>当前浏览器无法安全显示此页面</h1>
+    <p>请升级系统或浏览器，或使用其他浏览器打开。</p>
+    <p lang="en">This browser cannot display the page securely. Please update your system or browser, or open the page in another browser.</p>
+  </main>
+</body>
+</html>`;
+}
+
 export function injectShareViewer(html, options = {}) {
   const editable = options.canWriteAttachments === true;
   const viewerScript = `<script>window.__PAGES_VIEWER="share";window.__PAGES_SHARE_EDITABLE=${editable ? 'true' : 'false'};</script>`;

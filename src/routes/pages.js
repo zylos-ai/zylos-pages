@@ -3,7 +3,13 @@
 import { getPage } from '../services/pageService.js';
 import { normalizeSlug } from '../utils/slug.js';
 import { notFoundTemplate, errorTemplate } from '../templates/errorTemplate.js';
-import { attachmentPageTemplate, injectShareViewer, injectNavSidebar, htmlArtifactTemplate } from '../templates/pageTemplate.js';
+import {
+  attachmentPageTemplate,
+  htmlArtifactBrowserCompatibilityTemplate,
+  htmlArtifactTemplate,
+  injectNavSidebar,
+  injectShareViewer,
+} from '../templates/pageTemplate.js';
 import { rewriteSignedOwnerAssetRefs, rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
 import { attachmentDescriptorMetadata, sendAttachmentDownload } from '../pages/attachment-page.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
@@ -125,6 +131,12 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
     if (isHtmlArtifact && rawArtifact) {
       if (sandboxEnabled && req.headers['sec-fetch-dest'] !== 'iframe') {
         res.setHeader('Cache-Control', 'no-store');
+        if (req.headers['sec-fetch-dest'] === undefined) {
+          res.setHeader('Content-Security-Policy', SANDBOXED_HTML_ARTIFACT_CSP);
+          res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          return res.status(403).send(htmlArtifactBrowserCompatibilityTemplate());
+        }
         return res.status(403).send('HTML artifact raw view requires an iframe navigation');
       }
       res.setHeader('Content-Security-Policy', sandboxEnabled
