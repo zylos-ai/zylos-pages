@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.12.0] - 2026-09-26
+## [0.12.0] - Unreleased
 
 ### Security
 
@@ -19,8 +19,9 @@
 ### Changed
 
 - **Sandbox activation is explicit and restart-bound.** Install and upgrade
-  hooks preserve the per-instance feature switch and report that configuration
-  changes require a restart; Pages 0.12.0 has no minimum Core version.
+  hooks preserve the per-instance feature switch; the running service logs that
+  configuration changes require a restart, and the README documents the same
+  requirement. Pages 0.12.0 has no minimum Core version.
 - **Compatibility guidance covers sandbox rollout.** Operators can review known
   HTML/CSP behavior before enabling an instance; page scanning and focused smoke
   tooling remain follow-up work rather than shipped 0.12.0 commands.

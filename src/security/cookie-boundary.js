@@ -49,7 +49,9 @@ export function setupCookieBoundary(app) {
 
   app.use((req, _res, next) => {
     pagesCookieHeaders.set(req, filterPagesCookieHeader(req.headers.cookie));
+    const headersDistinct = req.headersDistinct;
     delete req.headers.cookie;
+    delete headersDistinct.cookie;
     req.rawHeaders = removeRawCookieHeaders(req.rawHeaders);
     next();
   });

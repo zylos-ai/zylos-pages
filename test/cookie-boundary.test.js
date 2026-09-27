@@ -35,7 +35,7 @@ test('cookie boundary preserves recognized duplicates for fail-closed validation
   );
 });
 
-test('cookie boundary removes Cookie from normal and raw request headers', async () => {
+test('cookie boundary removes Cookie from normal, raw, and distinct request headers', async () => {
   const app = express();
   setupCookieBoundary(app);
   setupCookieBoundary(app);
@@ -44,6 +44,7 @@ test('cookie boundary removes Cookie from normal and raw request headers', async
       cookieHeader: req.headers.cookie ?? null,
       rawCookieHeader: req.rawHeaders.some((value, index) =>
         index % 2 === 0 && String(value).toLowerCase() === 'cookie'),
+      distinctCookieHeader: req.headersDistinct.cookie ?? null,
       pagesCookieHeader: pagesCookieHeader(req),
     });
   });
@@ -61,6 +62,7 @@ test('cookie boundary removes Cookie from normal and raw request headers', async
     assert.deepEqual(await response.json(), {
       cookieHeader: null,
       rawCookieHeader: false,
+      distinctCookieHeader: null,
       pagesCookieHeader: '__Secure-zylos_pages_session=owner-secret',
     });
   } finally {
