@@ -294,6 +294,12 @@ Writing a file alone is not enough: unregistered files under the content
 directory are not served (the request 404s after login). This changed in
 v0.9.0 — registration is the gate for every page.
 
+HTML capabilities default to none. Grant `state.read` or `attachment.read`
+only to trusted HTML pages: Pages applies its outbound-denied CSP, but browsers
+do not provide complete controls for WebRTC, preconnect, or DNS side channels.
+The registration CLI emits a non-interactive warning when either read
+capability is granted.
+
 ## References
 
 | Document | When to read |

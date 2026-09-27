@@ -52,6 +52,16 @@ HTML files are rendered differently from Markdown:
 4. **Assets**: The wrapper signs allowed subresources. Owner-signed resources stay inside the HTML file's directory; opaque-origin CORS is granted only for `Origin: null`.
 5. **Configuration**: Changes, including the sandbox switch, require a Pages service restart.
 
+### Capability trust boundary
+
+HTML page capabilities default to none. Read capabilities (`state.read` and
+`attachment.read`) also force the outbound-denied CSP so ordinary network,
+image, form, frame, worker, and object channels fail closed. That policy cannot
+fully suppress browser-level WebRTC, preconnect, or DNS side channels. Grant
+read capabilities only to pages whose HTML and scripts are trusted. The CLI
+prints a warning when a registration grants either read capability; it does
+not ask for interactive confirmation.
+
 ## Writing HTML Artifacts
 
 ### Minimal structure

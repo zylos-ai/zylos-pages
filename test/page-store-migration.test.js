@@ -83,6 +83,9 @@ test('initPageStore migrates uri-keyed logical_pages to page_id and is idempoten
     assert.equal(q3.source_root_name, 'reports');
     assert.equal(q3.page_type, 'markdown');
     assert.equal(q3.access_mode, 'private');
+    assert.equal(q3.capabilities_json, '[]');
+    assert.equal(q3.outbound_denied, 0);
+    assert.equal(q3.scripts_enabled, 1);
     assert.equal(q3.created_at, 1000);
     assert.equal(q3.updated_at, 2000);
     assert.equal(top.access_mode, 'shared');

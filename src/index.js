@@ -27,6 +27,7 @@ import { cleanupShares } from './sharing/share-manager.js';
 import { setupAssetRoute } from './routes/asset.js';
 import { setupLogicalAssetRoute } from './routes/logical-assets.js';
 import { setupPageApi } from './routes/page-api.js';
+import { setupBridgeApi } from './routes/bridge-api.js';
 import { setupHandoffRoutes } from './routes/handoff.js';
 import { handoffStore } from './handoff/handoff-store.js';
 import { startHandoffControlServer } from './handoff/handoff-control.js';
@@ -134,6 +135,7 @@ async function main() {
   setupRawApi(app, config);
   setupStateApi(app, config);
   setupAttachmentApi(app, config);
+  setupBridgeApi(app, config);
   setupPageApi(app, config);
 
   // Routes

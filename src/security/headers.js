@@ -28,6 +28,21 @@ export const SANDBOXED_HTML_ARTIFACT_CSP = "sandbox allow-scripts; " +
   "frame-ancestors 'self'; " +
   "base-uri 'self'";
 
+export function sandboxedHtmlArtifactCsp({ scriptsEnabled = true, outboundDenied = false } = {}) {
+  const sandbox = scriptsEnabled ? 'sandbox allow-scripts' : 'sandbox';
+  const script = scriptsEnabled ? "script-src 'self' 'unsafe-inline'" : "script-src 'none'";
+  if (!outboundDenied) {
+    return `${sandbox}; default-src 'self'; ${script}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'`;
+  }
+  return `${sandbox}; default-src 'none'; ${script}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; font-src 'self' data:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'`;
+}
+
+export function htmlArtifactShellCsp(frameUrl) {
+  const parsed = new URL(frameUrl);
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new TypeError('frame URL must use HTTP(S)');
+  return `${DEFAULT_CSP}; frame-src ${parsed.origin}${parsed.pathname}`;
+}
+
 export const SVG_ASSET_CSP = "sandbox; default-src 'none'; style-src 'unsafe-inline'";
 
 export function securityHeaders() {

@@ -66,8 +66,8 @@ export const DEFAULT_CONFIG = {
   },
   attachments: {
     maxFileSizeBytes: 5 * 1024 * 1024,
-    // Both of the following bound share-link writers only; a logged-in owner is
-    // not rationed. See src/routes/attachment-api.js.
+    // Bridge writes from both owner and share viewers use these per-page
+    // storage ceilings. The legacy attachment API applies them to shares too.
     maxPerItem: 50,
     maxArtifactBytes: 100 * 1024 * 1024,
     shareWriteRateLimit: {
@@ -77,9 +77,9 @@ export const DEFAULT_CONFIG = {
     },
   },
   state: {
-    // Share visitors are bounded independently from the authenticated owner.
-    // 1 MiB is deliberately reachable below 50 x 64 KiB values, unlike the
-    // attachment ceiling, so both limits protect a real state shape.
+    // Bridge writes from both owner and share viewers use these per-page
+    // ceilings. 1 MiB is reachable below 50 x 64 KiB values, so both limits
+    // protect a real state shape.
     maxKeysPerPage: 50,
     maxPageBytes: 1024 * 1024,
     shareWriteRateLimit: {

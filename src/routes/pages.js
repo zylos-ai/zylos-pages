@@ -16,7 +16,14 @@ import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
-import { HTML_ARTIFACT_CSP, SANDBOXED_HTML_ARTIFACT_CSP } from '../security/headers.js';
+import {
+  HTML_ARTIFACT_CSP,
+  SANDBOXED_HTML_ARTIFACT_CSP,
+  htmlArtifactShellCsp,
+  sandboxedHtmlArtifactCsp,
+} from '../security/headers.js';
+import { getLogicalPage } from '../pages/page-store.js';
+import { bridgePolicy } from '../security/page-capabilities.js';
 
 const ASSET_VERSION = Date.now();
 
@@ -31,6 +38,18 @@ function injectBaseHref(html, baseHref) {
   const baseTag = `<base href="${baseHref}">`;
   const injected = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
   return injected === html ? `${baseTag}${html}` : injected;
+}
+
+function browserVisibleFrameUrl(req, config, iframeSrc) {
+  if (config.publicBaseUrl) {
+    const configured = new URL(config.publicBaseUrl);
+    const configuredBase = configured.pathname.replace(/\/+$/, '');
+    const relativePath = configuredBase && iframeSrc.startsWith(`${configuredBase}/`)
+      ? iframeSrc.slice(configuredBase.length + 1)
+      : iframeSrc.replace(/^\/+/, '');
+    return new URL(relativePath, `${configured.href.replace(/\/+$/, '')}/`).href;
+  }
+  return new URL(iframeSrc, `${req.protocol}://${req.get('host')}`).href;
 }
 
 async function finalizeShareHtml(html, { config, browserBase, displaySlug, share }) {
@@ -124,6 +143,11 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
     const result = await getPage(displaySlug, config, browserBase);
     const elapsed = Math.round(performance.now() - start);
     const isHtmlArtifact = result.type === 'html';
+    const logicalPage = isHtmlArtifact ? getLogicalPage(slug) : null;
+    const policy = logicalPage ? bridgePolicy(logicalPage) : { enabled: false };
+    const artifactCsp = sandboxEnabled && logicalPage
+      ? sandboxedHtmlArtifactCsp({ scriptsEnabled: logicalPage.scriptsEnabled, outboundDenied: logicalPage.outboundDenied })
+      : SANDBOXED_HTML_ARTIFACT_CSP;
 
     // Enabled sandbox mode only exposes the executable document to an iframe
     // navigation. Authorization is still enforced by the owner/share route.
@@ -132,7 +156,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
       if (sandboxEnabled && req.headers['sec-fetch-dest'] !== 'iframe') {
         res.setHeader('Cache-Control', 'no-store');
         if (req.headers['sec-fetch-dest'] === undefined) {
-          res.setHeader('Content-Security-Policy', SANDBOXED_HTML_ARTIFACT_CSP);
+          res.setHeader('Content-Security-Policy', artifactCsp);
           res.setHeader('X-Frame-Options', 'SAMEORIGIN');
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           return res.status(403).send(htmlArtifactBrowserCompatibilityTemplate());
@@ -140,7 +164,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         return res.status(403).send('HTML artifact raw view requires an iframe navigation');
       }
       res.setHeader('Content-Security-Policy', sandboxEnabled
-        ? SANDBOXED_HTML_ARTIFACT_CSP
+        ? artifactCsp
         : HTML_ARTIFACT_CSP);
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
       if (!isShareViewer) {
@@ -163,6 +187,11 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
       const editableAttr = shareCanWriteAttachments ? ` data-share-editable="true"` : '';
       injected = injected.replace(/<html([^>]*)>/i, `<html$1${viewerAttr}${editableAttr}>`);
       injected = injected.replace(/src="([^"?]*_assets\/[^"?]+)"/g, `src="$1?v=${ASSET_VERSION}"`);
+      if (sandboxEnabled && policy.enabled) {
+        const bridgeClient = `<script src="${browserPath(browserBase, '_assets/bridge-client.js')}?v=${ASSET_VERSION}"></script>`;
+        const withClient = injected.replace(/<head([^>]*)>/i, `<head$1>${bridgeClient}`);
+        injected = withClient === injected ? bridgeClient + injected : withClient;
+      }
       if (isShareViewer) {
         injected = await finalizeShareHtml(injected, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
       } else if (sandboxEnabled) {
@@ -198,12 +227,21 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         ? `s/${shareContext.tokenId}?raw=1`
         : `${displaySlug}?raw=1`;
       const iframeSrc = browserPath(browserBase, iframeRoute);
+      if (sandboxEnabled && policy.enabled) {
+        res.setHeader('Content-Security-Policy', htmlArtifactShellCsp(
+          browserVisibleFrameUrl(req, config, iframeSrc),
+        ));
+      }
       let html = htmlArtifactTemplate({
         title,
         baseUrl: browserBase,
         slug: displaySlug,
         iframeSrc,
         sandboxed: sandboxEnabled,
+        scriptsEnabled: logicalPage?.scriptsEnabled !== false,
+        bridgeEndpoint: sandboxEnabled && policy.enabled
+          ? browserPath(browserBase, `api/bridge/${logicalPage.pageId}`)
+          : null,
       });
       if (isShareViewer) {
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });

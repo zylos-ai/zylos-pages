@@ -246,9 +246,8 @@ export function setStateValue(pageId, key, value) {
   }
 }
 
-// The share ceiling and write are one BEGIN IMMEDIATE transaction. Concurrent
-// share writers therefore serialize before reading totals; owner writes use
-// setStateValue() and intentionally bypass these governance ceilings.
+// The ceiling and write are one BEGIN IMMEDIATE transaction. Concurrent bridge
+// writers therefore serialize before reading totals, regardless of viewer type.
 export function setStateValueWithinQuota(pageId, key, value, limits) {
   ensureInitialized();
   try {

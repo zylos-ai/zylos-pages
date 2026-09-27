@@ -175,6 +175,13 @@ Configuration changes require a Pages service restart. In particular, enable
 `security.htmlArtifactSandboxEnabled` before restart to serve owner and share
 HTML artifacts through opaque-origin sandboxed iframes.
 
+HTML page capabilities are opt-in and default to none. A page with
+`state.read` or `attachment.read` is forced into the outbound-denied CSP, but
+browser controls cannot fully cover WebRTC, preconnect, or DNS side channels.
+Grant read capabilities only to HTML pages whose source and scripts you trust.
+The registration CLI prints this warning whenever a read capability is
+granted; it does not prompt interactively.
+
 For reverse-proxy deployments, replace the example `publicBaseUrl` with the
 real externally reachable Pages base URL before using secure handoff. Leaving
 it empty preserves the fail-closed trust boundary and can make browser handoff
