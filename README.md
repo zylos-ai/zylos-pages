@@ -154,7 +154,6 @@ Edit `~/zylos/components/pages/config.json`:
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },
   "security": {
     "allowRawHtml": false,
-    "htmlArtifactSandboxEnabled": false,
     "maxFileSizeBytes": 1048576,
     "maxAttachmentSizeBytes": 52428800
   },
@@ -171,9 +170,12 @@ Edit `~/zylos/components/pages/config.json`:
 }
 ```
 
-Configuration changes require a Pages service restart. In particular, enable
-`security.htmlArtifactSandboxEnabled` before restart to serve owner and share
-HTML artifacts through opaque-origin sandboxed iframes.
+Configuration changes require a Pages service restart. Owner and share HTML
+artifacts use opaque-origin sandboxed iframes by default. To opt out temporarily,
+set `security.htmlArtifactSandboxDisabled` to `true` and restart Pages; remove the
+key or set it to `false` to enable the sandbox again. Upgrading to 0.14.0 removes
+the ambiguous legacy `htmlArtifactSandboxEnabled` key, so operators who need the
+rollback must set the new opt-out explicitly.
 
 HTML page capabilities are opt-in and default to none. A page with
 `state.read` or `attachment.read` is forced into the outbound-denied CSP, but

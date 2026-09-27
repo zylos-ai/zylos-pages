@@ -242,12 +242,11 @@ test('post-upgrade removes every legacy auth.enabled value and preserves owner c
   }
 });
 
-test('post-upgrade adds security defaults only when absent and is idempotent', () => {
+test('post-upgrade removes the legacy sandbox key, preserves explicit opt-out, and is idempotent', () => {
   const hook = path.join(repoRoot, 'hooks/post-upgrade.js');
-  for (const configured of [undefined, 123456]) {
+  for (const legacyEnabled of [undefined, false, true]) {
     const security = { allowRawHtml: true, maxFileSizeBytes: 77, renderTimeoutMs: 88 };
-    if (configured !== undefined) security.maxAttachmentSizeBytes = configured;
-    if (configured !== undefined) security.htmlArtifactSandboxEnabled = true;
+    if (legacyEnabled !== undefined) security.htmlArtifactSandboxEnabled = legacyEnabled;
     const home = makeHome({
       auth: { password: 'scrypt:known-salt:known-hash' },
       security,
@@ -255,23 +254,35 @@ test('post-upgrade adds security defaults only when absent and is idempotent', (
       unrelated: { keep: true },
     });
     const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
-    execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
+    const stdout = execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
     const once = readConfig(home);
-    assert.equal(once.security.maxAttachmentSizeBytes, configured ?? 50 * 1024 * 1024);
-    assert.equal(once.security.htmlArtifactSandboxEnabled, configured === undefined ? false : true);
+    assert.equal(once.security.maxAttachmentSizeBytes, 50 * 1024 * 1024);
+    assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxEnabled'), false);
+    assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxDisabled'), false);
     assert.equal(once.security.maxFileSizeBytes, 77);
     assert.deepEqual(once.unrelated, { keep: true });
+    assert.match(stdout, /HTML artifact sandbox is enabled by default in 0\.14\.0/);
+    assert.match(stdout, /htmlArtifactSandboxDisabled=true/);
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
-    assert.deepEqual(readConfig(home), once);
+    assert.deepEqual(readConfig(home), once, `repeat upgrade should be idempotent for legacy=${legacyEnabled}`);
   }
+
+  const disabledHome = makeHome({
+    security: { htmlArtifactSandboxDisabled: true },
+    sharing: { enabled: true },
+  });
+  const disabledEnv = { ...process.env, HOME: disabledHome, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
+  execFileSync(process.execPath, [hook], { env: disabledEnv, encoding: 'utf8' });
+  assert.equal(readConfig(disabledHome).security.htmlArtifactSandboxDisabled, true);
+  execFileSync(process.execPath, [hook], { env: disabledEnv, encoding: 'utf8' });
+  assert.equal(readConfig(disabledHome).security.htmlArtifactSandboxDisabled, true);
 });
 
-test('post-install adds security defaults to an existing config without overwriting them', () => {
+test('post-install never writes the sandbox opt-out to existing config', () => {
   const hook = path.join(repoRoot, 'hooks/post-install.js');
-  for (const configured of [undefined, 654321]) {
+  for (const disabled of [undefined, true]) {
     const security = { allowRawHtml: true, maxFileSizeBytes: 91, renderTimeoutMs: 92 };
-    if (configured !== undefined) security.maxAttachmentSizeBytes = configured;
-    if (configured !== undefined) security.htmlArtifactSandboxEnabled = true;
+    if (disabled !== undefined) security.htmlArtifactSandboxDisabled = disabled;
     const home = makeHome({
       auth: { password: 'scrypt:known-salt:known-hash' },
       security,
@@ -283,8 +294,10 @@ test('post-install adds security defaults to an existing config without overwrit
     const env = { ...process.env, HOME: home, PAGES_SHARE_PASSWORD_KEY_FILE: '' };
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
     const once = readConfig(home);
-    assert.equal(once.security.maxAttachmentSizeBytes, configured ?? 50 * 1024 * 1024);
-    assert.equal(once.security.htmlArtifactSandboxEnabled, configured === undefined ? false : true);
+    assert.equal(once.security.maxAttachmentSizeBytes, 50 * 1024 * 1024);
+    assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxEnabled'), false);
+    assert.equal(Object.hasOwn(once.security, 'htmlArtifactSandboxDisabled'), disabled !== undefined);
+    assert.equal(once.security.htmlArtifactSandboxDisabled, disabled);
     assert.equal(once.security.maxFileSizeBytes, 91);
     assert.deepEqual(once.unrelated, { keep: 'yes' });
     execFileSync(process.execPath, [hook], { env, encoding: 'utf8' });
@@ -300,6 +313,9 @@ test('post-install hook initializes the keyring end to end', () => {
     encoding: 'utf8',
   });
   assert.match(stdout, /keyring initialized/);
+  const config = readConfig(home);
+  assert.equal(Object.hasOwn(config.security, 'htmlArtifactSandboxEnabled'), false);
+  assert.equal(Object.hasOwn(config.security, 'htmlArtifactSandboxDisabled'), false);
   const keyFile = defaultSharePasswordKeyFile(home);
   assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
   assert.equal(readConfig(home).sharing.passwordKeyFile, keyFile);

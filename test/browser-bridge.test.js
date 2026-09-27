@@ -36,7 +36,7 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
   const config = {
     contentDir,
     publicBaseUrl: null,
-    security: { htmlArtifactSandboxEnabled: true, allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
+    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, renderTimeoutMs: 5000 },
     toc: { minHeadings: 3 },
     theme: { codeTheme: 'github-dark' },
     auth: { password: hashPassword('secret') },

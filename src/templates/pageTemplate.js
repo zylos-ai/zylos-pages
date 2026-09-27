@@ -323,11 +323,8 @@ export function htmlArtifactBrowserCompatibilityTemplate() {
 
 export function injectShareViewer(html, options = {}) {
   const editable = options.canWriteAttachments === true;
-  const viewerScript = `<script>window.__PAGES_VIEWER="share";window.__PAGES_SHARE_EDITABLE=${editable ? 'true' : 'false'};</script>`;
   const editableAttr = editable ? ' data-share-editable="true"' : '';
-  let injected = html.replace('<html lang="en">', `<html lang="en" data-viewer="share"${editableAttr}>`);
-  injected = injected.replace(/<head([^>]*)>/i, `<head$1>${viewerScript}`);
-  return injected !== html ? injected : viewerScript + html;
+  return html.replace(/<html([^>]*)>/i, `<html$1 data-viewer="share"${editableAttr}>`);
 }
 
 /**

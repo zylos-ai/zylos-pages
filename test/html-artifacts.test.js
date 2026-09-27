@@ -37,6 +37,7 @@ function baseConfig(contentDir) {
     contentDir,
     security: {
       allowRawHtml: false,
+      htmlArtifactSandboxDisabled: true,
       maxFileSizeBytes: 1048576,
       renderTimeoutMs: 5000,
     },
@@ -114,6 +115,7 @@ test('resolvePageDescriptor serves registered logical pages only', async () => {
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir);
+    delete config.security.htmlArtifactSandboxDisabled;
     const htmlPath = path.join(contentDir, 'html-only.html');
     const markdownPath = path.join(contentDir, 'markdown-only.md');
     const barePath = path.join(contentDir, 'bare.md');
@@ -293,7 +295,7 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir);
-    config.security.htmlArtifactSandboxEnabled = true;
+    delete config.security.htmlArtifactSandboxDisabled;
     const artifactPath = path.join(contentDir, 'sandboxed.html');
     await writeFile(artifactPath, '<!doctype html><title>Sandboxed</title><script>window.ok=true</script>');
     registerPage(config, 'sandboxed', artifactPath, 'Sandboxed');
@@ -375,7 +377,7 @@ test('capability bridge is injected only from the trusted shell and read policy 
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir);
-    config.security.htmlArtifactSandboxEnabled = true;
+    delete config.security.htmlArtifactSandboxDisabled;
     const bridgePath = path.join(contentDir, 'bridge-policy.html');
     const scriptlessPath = path.join(contentDir, 'scriptless.html');
     await writeFile(bridgePath, '<!doctype html><title>Bridge Policy</title><h1>Bridge</h1>');

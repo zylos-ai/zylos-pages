@@ -45,6 +45,7 @@ function baseConfig(contentDir, auth = { password: hashPassword('secret') }) {
     contentDir,
     security: {
       allowRawHtml: false,
+      htmlArtifactSandboxDisabled: true,
       maxFileSizeBytes: 1024,
       renderTimeoutMs: 5000,
     },
@@ -130,7 +131,8 @@ function cookieHeader(setCookieHeader) {
 }
 
 function signedAssetPath(html, assetName) {
-  const match = html.match(new RegExp(`["']([^"']*/assets/[^"']*path=[^"']*${assetName}[^"']*)["']`));
+  const escapedName = assetName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = html.match(new RegExp(`(/assets/[^"'()\\s]*path=[^"'()\\s]*${escapedName}[^"'()\\s]*)`));
   assert.ok(match, `signed asset URL for ${assetName} should be present`);
   return match[1].replace(/&amp;/g, '&');
 }
@@ -276,6 +278,7 @@ test('asset route follows auth wall, session auth, and method boundaries', async
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir, { password: hashPassword('secret') });
+    delete config.security.htmlArtifactSandboxDisabled;
     const pagePath = path.join(contentDir, 'private.md');
     await writeFile(pagePath, '# Private\n');
     await writeFile(path.join(contentDir, 'private.jpg'), 'private');
@@ -381,15 +384,35 @@ test('sandboxed owner and share artifacts use signed CORS assets without ambient
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir, { password: hashPassword('secret') });
-    config.security.htmlArtifactSandboxEnabled = true;
+    delete config.security.htmlArtifactSandboxDisabled;
     const pagePath = path.join(contentDir, 'sandbox-assets.html');
+    const scriptBody = `const data = reader.readAsDataURL(file);
+const locationUrl = new URL(location.href);
+const objectUrl = URL.createObjectURL(blob);`;
+    const ordinaryText = 'Ordinary text: readAsDataURL(file), new URL(location.href), URL.createObjectURL(blob), URL(text.png)';
     await writeFile(pagePath, `<!doctype html><head>
       <script type="module" src="/module.js"></script>
-      <style>@font-face { font-family: Demo; src: url('/demo.woff2'); }</style>
-    </head><body><img src="/image.png"></body>`);
+      <script>${scriptBody}</script>
+      <style>
+        @font-face { font-family: Demo; src: url('/demo.woff2'); }
+        .plain { background: url(image.png); }
+        .quoted { background: url("quoted.png"); }
+        .upper { background: URL(upper.png); }
+        .reject { content: readAsDataURL(file); }
+      </style>
+    </head><body>
+      <p>${ordinaryText}</p>
+      <div style='background-image: url(inline.png)'></div>
+      <div data-style="url(metadata.png)"></div>
+      <template id="runtime-image"><img src="template.png"></template>
+      <img src="/image.png">
+    </body>`);
     await writeFile(path.join(contentDir, 'module.js'), 'export const ok = true;');
     await writeFile(path.join(contentDir, 'demo.woff2'), 'font');
     await writeFile(path.join(contentDir, 'image.png'), 'image');
+    for (const name of ['quoted.png', 'upper.png', 'inline.png', 'template.png']) {
+      await writeFile(path.join(contentDir, name), name);
+    }
     registerPage(config, 'sandbox-assets', pagePath, 'Sandbox assets');
     const share = createShare('sandbox-assets', '24h');
 
@@ -399,7 +422,13 @@ test('sandboxed owner and share artifacts use signed CORS assets without ambient
       });
       assert.equal(ownerRaw.status, 200);
       const ownerBody = await ownerRaw.text();
-      for (const name of ['module.js', 'demo.woff2', 'image.png']) {
+      assert.match(ownerBody, new RegExp(scriptBody.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.ok(ownerBody.includes(ordinaryText));
+      assert.match(ownerBody, /readAsDataURL\(file\)/);
+      assert.match(ownerBody, /data-style="url\(metadata\.png\)"/);
+      assert.match(ownerBody, /URL\([^)]*upper\.png[^)]*access=owner[^)]*\)/);
+      assert.doesNotMatch(ownerBody, /url\([^)]*upper\.png/);
+      for (const name of ['module.js', 'demo.woff2', 'image.png', 'quoted.png', 'upper.png', 'inline.png', 'template.png']) {
         const assetUrl = signedAssetPath(ownerBody, name);
         assert.match(assetUrl, /access=owner/);
         const asset = await fetch(`${origin}${assetUrl}`, { headers: { Origin: 'null' } });
@@ -420,7 +449,12 @@ test('sandboxed owner and share artifacts use signed CORS assets without ambient
       });
       assert.equal(shareRaw.status, 200);
       const shareBody = await shareRaw.text();
-      for (const name of ['module.js', 'demo.woff2', 'image.png']) {
+      assert.match(shareBody, new RegExp(scriptBody.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.ok(shareBody.includes(ordinaryText));
+      assert.match(shareBody, /data-style="url\(metadata\.png\)"/);
+      assert.match(shareBody, /URL\([^)]*upper\.png[^)]*\)/);
+      assert.doesNotMatch(shareBody, /url\([^)]*upper\.png/);
+      for (const name of ['module.js', 'demo.woff2', 'image.png', 'quoted.png', 'upper.png', 'inline.png', 'template.png']) {
         const assetUrl = signedAssetPath(shareBody, name);
         assert.doesNotMatch(assetUrl, /access=owner/);
         const asset = await fetch(`${origin}${assetUrl}`, { headers: { Origin: 'null' } });
@@ -445,7 +479,6 @@ test('owner-signed sandbox assets cannot escape the page source directory', asyn
     await writeFile(pagePath, '<!doctype html><script src="../shared/secret.js"></script>');
     await writeFile(secretPath, 'window.secret = true;');
     const config = baseConfig(contentDir, { password: hashPassword('secret') });
-    config.security.htmlArtifactSandboxEnabled = true;
     registerPage(config, 'docs/artifact', pagePath, 'Artifact');
 
     await withServer(config, async ({ origin, fetch: ownerFetch }) => {

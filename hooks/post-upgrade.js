@@ -35,7 +35,6 @@ if (fs.existsSync(configPath)) {
   if (!config.security || typeof config.security !== 'object' || Array.isArray(config.security)) {
     config.security = {
       allowRawHtml: false,
-      htmlArtifactSandboxEnabled: false,
       maxFileSizeBytes: 1048576,
       maxAttachmentSizeBytes: 50 * 1024 * 1024,
       renderTimeoutMs: 5000,
@@ -46,8 +45,8 @@ if (fs.existsSync(configPath)) {
     config.security.maxAttachmentSizeBytes = 50 * 1024 * 1024;
     migrated = true;
   }
-  if (!Object.prototype.hasOwnProperty.call(config.security, 'htmlArtifactSandboxEnabled')) {
-    config.security.htmlArtifactSandboxEnabled = false;
+  if (Object.prototype.hasOwnProperty.call(config.security, 'htmlArtifactSandboxEnabled')) {
+    delete config.security.htmlArtifactSandboxEnabled;
     migrated = true;
   }
 
@@ -80,6 +79,13 @@ if (fs.existsSync(configPath)) {
   } else {
     console.log('[post-upgrade] No migrations needed');
   }
+
+  console.log([
+    '[post-upgrade] HTML artifact sandbox is enabled by default in 0.14.0.',
+    '[post-upgrade] Review older HTML pages that use localStorage, absolute /assets/... paths, legacy attachment widgets, confirm/alert dialogs, or JavaScript-built relative asset URLs.',
+    '[post-upgrade] JavaScript-built relative URLs are not signed; place the URL in literal HTML (for example a <template><img src="...">) and read the signed value from JavaScript.',
+    '[post-upgrade] To disable and roll back, set security.htmlArtifactSandboxDisabled=true and restart zylos-pages.',
+  ].join('\n'));
 }
 
 warnIfPublicBaseUrlMissing(finalConfig, (guidance) => {
