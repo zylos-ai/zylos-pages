@@ -73,12 +73,13 @@ export function setupPageApi(app, config) {
 
     try {
       const body = await parseJsonBody(req);
-      const outboundDenied = body.outbound_denied ?? body.outboundDenied ?? false;
-      const scriptsEnabled = body.scripts_enabled ?? body.scriptsEnabled ?? true;
+      const outboundDenied = body.outbound_denied ?? body.outboundDenied;
+      const scriptsEnabled = body.scripts_enabled ?? body.scriptsEnabled;
       if (body.capabilities !== undefined && !Array.isArray(body.capabilities)) {
         return res.status(400).json({ error: 'capabilities must be an array' });
       }
-      if (typeof outboundDenied !== 'boolean' || typeof scriptsEnabled !== 'boolean') {
+      if ((outboundDenied !== undefined && typeof outboundDenied !== 'boolean')
+          || (scriptsEnabled !== undefined && typeof scriptsEnabled !== 'boolean')) {
         return res.status(400).json({ error: 'page security flags must be booleans' });
       }
       const page = registerLogicalPage({
@@ -87,7 +88,7 @@ export function setupPageApi(app, config) {
         sourcePath: body.source_path || body.sourcePath,
         component: body.component,
         accessMode: body.access_mode || body.accessMode || 'private',
-        capabilities: body.capabilities ?? [],
+        capabilities: body.capabilities,
         outboundDenied,
         scriptsEnabled,
       }, config);

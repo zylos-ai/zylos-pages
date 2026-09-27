@@ -4,14 +4,12 @@ import {
   getArtifactState,
   getStateValue,
   initStateStore,
-  setStateValue,
   setStateValueWithinQuota,
 } from '../state/state-store.js';
 import {
   deleteAttachmentMetadata,
   getAttachment,
   initAttachmentStore,
-  insertAttachment,
   insertAttachmentWithinQuota,
   listAttachments,
 } from '../attachments/attachment-store.js';
@@ -126,8 +124,21 @@ function requireShareBinding(req, res, page, capability, config) {
 }
 
 function validateKey(input) {
-  assertValidItemKey(input.key);
+  try {
+    assertValidItemKey(input.key);
+  } catch {
+    throw bridgeError('invalid_request', 'invalid state or attachment key');
+  }
   return input.key;
+}
+
+function validateAttachmentId(attachmentId) {
+  try {
+    assertValidAttachmentId(attachmentId);
+  } catch {
+    throw bridgeError('invalid_request', 'invalid attachment id');
+  }
+  return attachmentId;
 }
 
 function attachmentLimits(config) {
@@ -156,7 +167,7 @@ function attachmentView(page, record) {
   };
 }
 
-async function putAttachment(page, input, config, rationed) {
+async function putAttachment(page, input, config) {
   exactObject(input, ['key', 'filename', 'mimeType', 'dataBase64']);
   const key = validateKey(input);
   if (typeof input.filename !== 'string' || typeof input.mimeType !== 'string' || typeof input.dataBase64 !== 'string') {
@@ -192,9 +203,7 @@ async function putAttachment(page, input, config, rationed) {
       sizeBytes: data.length,
       createdAt: Date.now(),
     };
-    const admitted = rationed
-      ? insertAttachmentWithinQuota(record, attachmentLimits(config))
-      : (insertAttachment(record), { ok: true });
+    const admitted = insertAttachmentWithinQuota(record, attachmentLimits(config));
     if (!admitted.ok) throw bridgeError('quota_exceeded', 'attachment quota exceeded', 409);
     return attachmentView(page, record);
   } catch (err) {
@@ -222,12 +231,8 @@ async function execute(page, operation, input, config, res) {
       if (serialized === undefined || Buffer.byteLength(serialized) > VALUE_LIMIT_BYTES) {
         throw bridgeError('value_too_large', 'state value exceeds size limit', 413);
       }
-      if (res.locals.viewerType === 'share') {
-        const admitted = setStateValueWithinQuota(page.pageId, key, input.value, stateLimits(config));
-        if (!admitted.ok) throw bridgeError('quota_exceeded', 'state quota exceeded', 409);
-      } else {
-        setStateValue(page.pageId, key, input.value);
-      }
+      const admitted = setStateValueWithinQuota(page.pageId, key, input.value, stateLimits(config));
+      if (!admitted.ok) throw bridgeError('quota_exceeded', 'state quota exceeded', 409);
       return { stored: true };
     }
     case 'state.delete':
@@ -238,20 +243,20 @@ async function execute(page, operation, input, config, res) {
       return { attachments: listAttachments(page.pageId, validateKey(input)).map(record => attachmentView(page, record)) };
     case 'attachment.get': {
       exactObject(input, ['attachmentId']);
-      assertValidAttachmentId(input.attachmentId);
-      const record = getAttachment(page.pageId, input.attachmentId);
+      const attachmentId = validateAttachmentId(input.attachmentId);
+      const record = getAttachment(page.pageId, attachmentId);
       if (!record) throw bridgeError('not_found', 'attachment not found', 404);
       const data = await fs.readFile(resolveFinalPath(page.pageId, record.storedFilename));
       return { attachment: attachmentView(page, record), dataBase64: data.toString('base64') };
     }
     case 'attachment.put':
-      return { attachment: await putAttachment(page, input, config, res.locals.viewerType === 'share') };
+      return { attachment: await putAttachment(page, input, config) };
     case 'attachment.delete': {
       exactObject(input, ['attachmentId']);
-      assertValidAttachmentId(input.attachmentId);
-      const record = getAttachment(page.pageId, input.attachmentId);
+      const attachmentId = validateAttachmentId(input.attachmentId);
+      const record = getAttachment(page.pageId, attachmentId);
       if (!record) throw bridgeError('not_found', 'attachment not found', 404);
-      if (!deleteAttachmentMetadata(page.pageId, input.attachmentId)) throw bridgeError('not_found', 'attachment not found', 404);
+      if (!deleteAttachmentMetadata(page.pageId, attachmentId)) throw bridgeError('not_found', 'attachment not found', 404);
       await unlinkIfExists(resolveFinalPath(page.pageId, record.storedFilename));
       return { deleted: true };
     }
@@ -269,6 +274,9 @@ export function setupBridgeApi(app, config = {}) {
     let capability = null;
     try {
       requireSameOrigin(req);
+      if (config.security?.htmlArtifactSandboxEnabled !== true) {
+        throw bridgeError('bridge_disabled', 'bridge requires the HTML artifact sandbox', 403);
+      }
       page = getLogicalPageById(req.params.pageId);
       if (!page || page.type !== 'html') throw bridgeError('not_found', 'page not found', 404);
       const policy = bridgePolicy(page);

@@ -212,7 +212,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc, sandboxe
   <div class="nav-overlay" hidden></div>
 
   <div class="html-artifact-container">
-    <iframe class="html-artifact-frame" src="${escapeHtml(iframeSrc)}"${sandboxed ? ` sandbox="${scriptsEnabled ? 'allow-scripts' : ''}"` : ''}${bridgeEndpoint ? ` data-bridge-endpoint="${escapeHtml(bridgeEndpoint)}"` : ''}></iframe>
+    <iframe class="html-artifact-frame"${bridgeEndpoint ? ` data-bridge-src="${escapeHtml(iframeSrc)}" data-bridge-endpoint="${escapeHtml(bridgeEndpoint)}"` : ` src="${escapeHtml(iframeSrc)}"`}${sandboxed ? ` sandbox="${scriptsEnabled ? 'allow-scripts' : ''}"` : ''}></iframe>
   </div>
 
   <!-- Share Modal (hidden for share viewers via CSS) -->

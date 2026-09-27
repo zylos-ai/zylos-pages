@@ -224,16 +224,14 @@ export function validateSourcePath(sourcePath, config, options = {}) {
   throw new SourceValidationError('source_outside_allowed_root', 'source is outside the configured allowed root');
 }
 
-export function registerLogicalPage({
-  uri,
-  title,
-  sourcePath,
-  component,
-  accessMode = 'private',
-  capabilities = [],
-  outboundDenied = false,
-  scriptsEnabled = true,
-}, config) {
+export function registerLogicalPage(input, config) {
+  const {
+    uri,
+    title,
+    sourcePath,
+    component,
+    accessMode = 'private',
+  } = input;
   initPageStore();
   const normalizedUri = normalizeSlug(uri);
   if (!normalizedUri) {
@@ -247,7 +245,12 @@ export function registerLogicalPage({
   }
 
   const validated = validateSourcePath(sourcePath, config, { component });
-  const security = normalizePageSecurity({ capabilities, outboundDenied, scriptsEnabled });
+  const existing = getLogicalPage(normalizedUri);
+  const security = normalizePageSecurity({
+    capabilities: input.capabilities === undefined ? (existing?.capabilities ?? []) : input.capabilities,
+    outboundDenied: input.outboundDenied === undefined ? (existing?.outboundDenied ?? false) : input.outboundDenied,
+    scriptsEnabled: input.scriptsEnabled === undefined ? (existing?.scriptsEnabled ?? true) : input.scriptsEnabled,
+  });
   const current = nowMs();
   db.prepare(`
     INSERT INTO logical_pages (page_id, uri, title, source_path, source_ext, page_type, source_root_name, access_mode, capabilities_json, outbound_denied, scripts_enabled, created_at, updated_at)

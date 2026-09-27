@@ -3,11 +3,16 @@
   if (!iframe) return;
 
   const endpoint = iframe.dataset.bridgeEndpoint;
+  const expectedSrc = iframe.dataset.bridgeSrc;
+  if (!expectedSrc) return;
   const maxPending = 16;
   const maxConcurrent = 4;
   let generation = 0;
   let port = null;
   let active = 0;
+  let initialLoadComplete = false;
+  let provisioned = false;
+  let revoked = false;
   const queue = [];
 
   const closePort = () => {
@@ -40,12 +45,18 @@
   };
 
   iframe.addEventListener('load', () => {
+    if (!initialLoadComplete) {
+      initialLoadComplete = true;
+      iframe.contentWindow.postMessage({ type: 'zylos-pages:bridge-probe' }, '*');
+      return;
+    }
+    revoked = true;
     closePort();
-    iframe.contentWindow.postMessage({ type: 'zylos-pages:bridge-probe' }, '*');
   });
   window.addEventListener('message', event => {
     if (event.source !== iframe.contentWindow || event.data?.type !== 'zylos-pages:bridge-ready') return;
-    closePort();
+    if (!initialLoadComplete || provisioned || revoked) return;
+    provisioned = true;
     const channel = new MessageChannel();
     const currentGeneration = generation;
     port = channel.port1;
@@ -68,4 +79,5 @@
     port.start();
     iframe.contentWindow.postMessage({ type: 'zylos-pages:bridge-port' }, '*', [channel.port2]);
   });
+  iframe.src = expectedSrc;
 })();

@@ -16,7 +16,12 @@ import { resolvePageDescriptor } from '../security/pathGuard.js';
 import { scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
-import { HTML_ARTIFACT_CSP, SANDBOXED_HTML_ARTIFACT_CSP, sandboxedHtmlArtifactCsp } from '../security/headers.js';
+import {
+  HTML_ARTIFACT_CSP,
+  SANDBOXED_HTML_ARTIFACT_CSP,
+  htmlArtifactShellCsp,
+  sandboxedHtmlArtifactCsp,
+} from '../security/headers.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { bridgePolicy } from '../security/page-capabilities.js';
 
@@ -33,6 +38,18 @@ function injectBaseHref(html, baseHref) {
   const baseTag = `<base href="${baseHref}">`;
   const injected = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
   return injected === html ? `${baseTag}${html}` : injected;
+}
+
+function browserVisibleFrameUrl(req, config, iframeSrc) {
+  if (config.publicBaseUrl) {
+    const configured = new URL(config.publicBaseUrl);
+    const configuredBase = configured.pathname.replace(/\/+$/, '');
+    const relativePath = configuredBase && iframeSrc.startsWith(`${configuredBase}/`)
+      ? iframeSrc.slice(configuredBase.length + 1)
+      : iframeSrc.replace(/^\/+/, '');
+    return new URL(relativePath, `${configured.href.replace(/\/+$/, '')}/`).href;
+  }
+  return new URL(iframeSrc, `${req.protocol}://${req.get('host')}`).href;
 }
 
 async function finalizeShareHtml(html, { config, browserBase, displaySlug, share }) {
@@ -210,6 +227,11 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         ? `s/${shareContext.tokenId}?raw=1`
         : `${displaySlug}?raw=1`;
       const iframeSrc = browserPath(browserBase, iframeRoute);
+      if (sandboxEnabled && policy.enabled) {
+        res.setHeader('Content-Security-Policy', htmlArtifactShellCsp(
+          browserVisibleFrameUrl(req, config, iframeSrc),
+        ));
+      }
       let html = htmlArtifactTemplate({
         title,
         baseUrl: browserBase,

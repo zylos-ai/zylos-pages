@@ -393,16 +393,27 @@ test('capability bridge is injected only from the trusted shell and read policy 
       let response = await fetch(`${origin}/bridge-policy`);
       const shell = await response.text();
       assert.match(shell, new RegExp(`data-bridge-endpoint="/api/bridge/${bridgePage.pageId}"`));
+      assert.match(shell, /data-bridge-src="\/bridge-policy\?raw=1"/);
+      assert.doesNotMatch(shell, /<iframe[^>]*\ssrc=/);
       assert.match(shell, /_assets\/bridge\.js/);
       assert.match(shell, /sandbox="allow-scripts"/);
+      assert.match(response.headers.get('content-security-policy'), /frame-src http:\/\/127\.0\.0\.1:\d+\/bridge-policy/);
+
+      config.publicBaseUrl = 'https://pages.example.test/pages';
+      response = await fetch(`${origin}/bridge-policy`);
+      assert.match(
+        response.headers.get('content-security-policy'),
+        /frame-src https:\/\/pages\.example\.test\/pages\/bridge-policy/,
+      );
+      config.publicBaseUrl = null;
 
       response = await fetch(`${origin}/bridge-policy?raw=1`, { headers: { 'Sec-Fetch-Dest': 'iframe' } });
       const csp = response.headers.get('content-security-policy');
       assert.match(csp, /connect-src 'none'/);
       assert.match(csp, /img-src 'self' data:/);
       assert.match(csp, /form-action 'none'/);
-      assert.match(csp, /navigate-to 'none'/);
       assert.match(csp, /frame-src 'none'/);
+      assert.doesNotMatch(csp, /navigate-to|prefetch-src/);
       assert.doesNotMatch(csp, /https:/);
       assert.match(await response.text(), /_assets\/bridge-client\.js/);
 

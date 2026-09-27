@@ -133,7 +133,7 @@ test('PATCH exposes capability policy and enforces read capability outbound deni
   }
 });
 
-test('re-registering without security declarations resets to closed defaults', async () => {
+test('re-registering without security declarations preserves the explicit policy', async () => {
   const { server, contentDir, config } = await makeServer();
   try {
     const sourcePath = path.join(contentDir, 'reregister.html');
@@ -146,9 +146,9 @@ test('re-registering without security declarations resets to closed defaults', a
     const second = registerLogicalPage({
       uri: 'reregister', title: 'Second', sourcePath, component: 'content',
     }, config);
-    assert.deepEqual(second.capabilities, []);
-    assert.equal(second.outboundDenied, false);
-    assert.equal(second.scriptsEnabled, true);
+    assert.deepEqual(second.capabilities, ['state.read']);
+    assert.equal(second.outboundDenied, true);
+    assert.equal(second.scriptsEnabled, false);
   } finally {
     server.close();
   }

@@ -34,6 +34,9 @@ import {
 } from '../sharing/share-password-keyring.js';
 import { normalizeSlug } from '../utils/slug.js';
 
+const READ_CAPABILITIES = new Set(['state.read', 'attachment.read']);
+const READ_CAPABILITY_WARNING = '[pages] warning: read-capable HTML pages can still use browser channels that CSP cannot fully block, including WebRTC, preconnect, and DNS. Grant read capabilities only to trusted pages.';
+
 class CliError extends Error {
   constructor(code, message) {
     super(message);
@@ -327,16 +330,22 @@ function commandRegister(args) {
   const config = getConfig();
   requireExternalFilesEnabled(config);
   const uri = normalizeUri(args.uri || args.slug);
+  const requestedCapabilities = args.capabilities === undefined
+    ? undefined
+    : args.capabilities.split(',').map(value => value.trim()).filter(Boolean);
   const page = registerLogicalPage({
     uri,
     title: args.title || uri,
     sourcePath: args.source,
     component: args.component,
     accessMode: args.accessMode || args['access-mode'] || 'private',
-    capabilities: args.capabilities ? args.capabilities.split(',').map(value => value.trim()).filter(Boolean) : [],
-    outboundDenied: args['deny-outbound'] === true,
-    scriptsEnabled: args['no-scripts'] !== true,
+    capabilities: requestedCapabilities,
+    outboundDenied: args['deny-outbound'] === undefined ? undefined : true,
+    scriptsEnabled: args['no-scripts'] === undefined ? undefined : false,
   }, config);
+  if (requestedCapabilities?.some(capability => READ_CAPABILITIES.has(capability))) {
+    process.stderr.write(`${READ_CAPABILITY_WARNING}\n`);
+  }
   output({
     ok: true,
     command: 'register',

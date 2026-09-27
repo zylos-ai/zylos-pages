@@ -143,6 +143,38 @@ test('owner bridge operations are page-bound, schema-checked, and cover state an
   });
 });
 
+test('owner bridge writes obey per-page state and attachment quotas', async () => {
+  await withServer(async ({ origin, config, page, ownerCookie }) => {
+    const existingKeys = getPagesDb().prepare('SELECT COUNT(*) AS n FROM artifact_state WHERE page_id = ?').get(page.pageId).n;
+    config.state.maxKeysPerPage = existingKeys + 1;
+    let response = await bridge(origin, page.pageId, ownerCookie, 'state.set', { key: 'owner-quota-a', value: 1 });
+    assert.equal(response.status, 200);
+    response = await bridge(origin, page.pageId, ownerCookie, 'state.set', { key: 'owner-quota-b', value: 2 });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, 'quota_exceeded');
+
+    config.attachments.maxPerItem = 1;
+    response = await bridge(origin, page.pageId, ownerCookie, 'attachment.put', {
+      key: 'owner-quota', filename: 'first.jpg', mimeType: 'image/jpeg', dataBase64: JPEG.toString('base64'),
+    });
+    assert.equal(response.status, 200);
+    response = await bridge(origin, page.pageId, ownerCookie, 'attachment.put', {
+      key: 'owner-quota', filename: 'second.jpg', mimeType: 'image/jpeg', dataBase64: JPEG.toString('base64'),
+    });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error.code, 'quota_exceeded');
+  });
+});
+
+test('bridge rejects every operation when the HTML sandbox is disabled', async () => {
+  await withServer(async ({ origin, config, page, ownerCookie }) => {
+    config.security.htmlArtifactSandboxEnabled = false;
+    const response = await bridge(origin, page.pageId, ownerCookie, 'state.get', { key: 'x' });
+    assert.equal(response.status, 403);
+    assert.equal((await response.json()).error.code, 'bridge_disabled');
+  });
+});
+
 test('bridge rejects missing origin, undeclared operations, read-only share writes, and revoked shares', async () => {
   await withServer(async ({ origin, page, ownerCookie }) => {
     let response = await fetch(`${origin}/api/bridge/${page.pageId}`, {
@@ -154,6 +186,14 @@ test('bridge rejects missing origin, undeclared operations, read-only share writ
     response = await bridge(origin, page.pageId, ownerCookie, 'page.share', {});
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error.code, 'unsupported_operation');
+
+    response = await bridge(origin, page.pageId, ownerCookie, 'state.get', { key: 'not valid' });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, 'invalid_request');
+
+    response = await bridge(origin, page.pageId, ownerCookie, 'attachment.get', { attachmentId: 'not-an-id' });
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, 'invalid_request');
 
     const share = createShare('bridge', '24h');
     const opened = await fetch(`${origin}/s/${share.tokenId}`, { redirect: 'manual' });

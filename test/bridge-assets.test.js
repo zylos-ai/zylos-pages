@@ -34,7 +34,7 @@ async function flush() {
   await new Promise(resolve => setImmediate(resolve));
 }
 
-test('trusted shell bridge enforces pending limits and reconnects after iframe load', async () => {
+test('trusted shell bridge provisions once, preserves concurrency accounting, and revokes on navigation', async () => {
   const source = await readFile(new URL('../assets/bridge.js', import.meta.url), 'utf8');
   const windowListeners = new Map();
   const iframeListeners = new Map();
@@ -45,7 +45,7 @@ test('trusted shell bridge enforces pending limits and reconnects after iframe l
     },
   };
   const iframe = {
-    dataset: { bridgeEndpoint: '/api/bridge/page-id' },
+    dataset: { bridgeEndpoint: '/api/bridge/page-id', bridgeSrc: '/p/expected?raw=1' },
     contentWindow: childWindow,
     addEventListener(type, listener) { iframeListeners.set(type, listener); },
   };
@@ -63,12 +63,15 @@ test('trusted shell bridge enforces pending limits and reconnects after iframe l
     },
   };
   vm.runInNewContext(source, context);
+  assert.equal(iframe.src, '/p/expected?raw=1');
 
   const announceReady = () => windowListeners.get('message')({
     source: childWindow,
     data: { type: 'zylos-pages:bridge-ready' },
   });
+  iframeListeners.get('load')();
   announceReady();
+  const originalPort = childPort;
   const responses = [];
   childPort.onmessage = ({ data }) => responses.push(data);
   for (let index = 0; index < 17; index += 1) {
@@ -78,25 +81,22 @@ test('trusted shell bridge enforces pending limits and reconnects after iframe l
   assert.equal(calls.length, 4);
   assert.equal(responses.length, 1);
   assert.equal(responses[0].error.code, 'too_many_pending');
+  announceReady();
+  assert.equal(childPort, originalPort, 'repeated ready must not replace the live port or reset active calls');
+  assert.equal(calls.length, 4);
   releaseFetch();
   await flush();
   assert.equal(calls.length, 16);
   assert.equal(responses.length, 17);
 
-  let probe = null;
-  childWindow.postMessage = message => { probe = message; };
+  const expiredPort = childPort;
   iframeListeners.get('load')();
-  assert.equal(probe.type, 'zylos-pages:bridge-probe');
+  assert.equal(expiredPort.peer.closed, true);
   childWindow.postMessage = (message, _target, ports = []) => {
     if (message.type === 'zylos-pages:bridge-port') childPort = ports[0];
   };
   announceReady();
-  const reconnected = [];
-  childPort.onmessage = ({ data }) => reconnected.push(data);
-  childPort.postMessage({ id: 'reload', operation: 'state.get', input: { key: 'reload' } });
-  await flush();
-  assert.equal(reconnected.length, 1);
-  assert.equal(reconnected[0].id, 'reload');
+  assert.equal(childPort, expiredPort, 'a navigated document must never receive a replacement port');
 });
 
 test('sandbox bridge client re-announces readiness when the trusted shell probes', async () => {
