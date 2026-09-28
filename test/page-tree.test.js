@@ -151,13 +151,13 @@ test('admin chrome uses inline SVG theme icons', () => {
 test('injectShareViewer marks share pages and exposes attachment edit flag', () => {
   const readOnly = injectShareViewer('<html lang="en"><head></head><body></body></html>');
   assert.match(readOnly, /<html lang="en" data-viewer="share">/);
-  assert.match(readOnly, /window\.__PAGES_VIEWER="share"/);
-  assert.match(readOnly, /window\.__PAGES_SHARE_EDITABLE=false/);
+  assert.doesNotMatch(readOnly, /<script|__PAGES_VIEWER|__PAGES_SHARE_EDITABLE/);
 
   const editable = injectShareViewer('<html lang="en"><head></head><body></body></html>', {
     canWriteAttachments: true,
   });
-  assert.match(editable, /window\.__PAGES_SHARE_EDITABLE=true/);
+  assert.match(editable, /<html lang="en" data-viewer="share" data-share-editable="true">/);
+  assert.doesNotMatch(editable, /<script|__PAGES_VIEWER|__PAGES_SHARE_EDITABLE/);
 });
 
 test('pageTemplate renders nested and top-level breadcrumbs with escaped folder segments', () => {

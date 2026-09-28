@@ -247,8 +247,8 @@ photo, logical-asset, render, or page-cache paths.
 
 Pages never lets another origin frame a document. Ordinary responses carry
 `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`;
-When `security.htmlArtifactSandboxEnabled` is enabled before a required Pages
-restart, owner and share HTML artifacts use a trusted wrapper and an
+Unless `security.htmlArtifactSandboxDisabled` is explicitly `true` before a
+required Pages restart, owner and share HTML artifacts use a trusted wrapper and an
 opaque-origin `sandbox="allow-scripts"` iframe. Its internal `?raw=1` document
 requires an iframe navigation and carries sandbox CSP plus `frame-ancestors
 'self'`; signed owner resources cannot leave the artifact's directory. Some

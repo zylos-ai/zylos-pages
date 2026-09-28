@@ -45,7 +45,6 @@ const INITIAL_CONFIG = {
   },
   security: {
     allowRawHtml: false,
-    htmlArtifactSandboxEnabled: false,
     maxFileSizeBytes: 1048576,
     maxAttachmentSizeBytes: 50 * 1024 * 1024,
     renderTimeoutMs: 5000,
@@ -154,7 +153,7 @@ if (!fs.existsSync(configPath)) {
       existing.security = { ...INITIAL_CONFIG.security };
       migrated = true;
     } else {
-      for (const key of ['maxAttachmentSizeBytes', 'htmlArtifactSandboxEnabled']) {
+      for (const key of ['maxAttachmentSizeBytes']) {
         if (!Object.prototype.hasOwnProperty.call(existing.security, key)) {
           existing.security[key] = INITIAL_CONFIG.security[key];
           migrated = true;

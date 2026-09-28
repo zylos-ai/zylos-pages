@@ -46,11 +46,40 @@ The file extension is stripped from the URL. A `.html` file and a `.md` file wit
 
 HTML files are rendered differently from Markdown:
 
-1. **Iframe isolation**: With `security.htmlArtifactSandboxEnabled`, owner and share views use a trusted wrapper plus `sandbox="allow-scripts"` without `allow-same-origin`.
+1. **Iframe isolation**: Unless `security.htmlArtifactSandboxDisabled` is explicitly `true`, owner and share views use a trusted wrapper plus `sandbox="allow-scripts"` without `allow-same-origin`.
 2. **CSP**: The raw iframe document also carries a sandbox CSP. It may execute scripts but has an opaque origin and cannot use the owner's same-origin authority.
 3. **Raw mode**: `?raw=1` is an internal iframe target when sandboxing is enabled. Top-level requests are rejected unless the browser reports `Sec-Fetch-Dest: iframe`.
 4. **Assets**: The wrapper signs allowed subresources. Owner-signed resources stay inside the HTML file's directory; opaque-origin CORS is granted only for `Origin: null`.
 5. **Configuration**: Changes, including the sandbox switch, require a Pages service restart.
+
+### Migrating runtime-generated asset URLs
+
+Pages signs relative asset URLs that appear literally in the HTML source as
+`src`, `href`, `srcset`, or CSS `url(...)`. A relative path assembled only at
+JavaScript runtime cannot be signed by the server. In the sandboxed iframe the
+document has an opaque origin and sends no owner/share cookie, so fetching that
+unsigned path returns `403`.
+
+Put the path in inert literal HTML so Pages can sign it, then read the rewritten
+value from JavaScript:
+
+```html
+<template id="photo-url"><img src="images/photo.jpg" alt=""></template>
+<script>
+  const signedUrl = document
+    .getElementById('photo-url')
+    .content.querySelector('img')
+    .src;
+  const image = new Image();
+  image.src = signedUrl;
+  document.body.append(image);
+</script>
+```
+
+This applies to owner and share rendering. Other common migration issues are
+`localStorage`, absolute `/assets/...` paths, legacy attachment widgets, and
+`confirm`/`alert` dialogs. To roll back while updating a page, set
+`security.htmlArtifactSandboxDisabled` to `true` and restart Pages.
 
 ### Capability trust boundary
 

@@ -56,8 +56,8 @@
 
   function canEditAttachments() {
     if (!isShareView()) return true;
-    return window.__PAGES_SHARE_EDITABLE === true
-      || document.documentElement.dataset.shareEditable === 'true';
+    return document.documentElement.dataset.shareEditable === 'true'
+      || window.__PAGES_SHARE_EDITABLE === true;
   }
 
   function attachmentUrl(fileUrl) {

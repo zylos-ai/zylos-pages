@@ -37,7 +37,7 @@ async function withServer(fn) {
   const contentDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-bridge-content-'));
   const config = {
     contentDir,
-    security: { htmlArtifactSandboxEnabled: true, maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
+    security: { maxFileSizeBytes: 1024 * 1024, renderTimeoutMs: 5000 },
     auth: { password: hashPassword('secret') },
     sharing: { enabled: true },
     externalFiles: { allowedSources: { content: contentDir } },
@@ -168,7 +168,7 @@ test('owner bridge writes obey per-page state and attachment quotas', async () =
 
 test('bridge rejects every operation when the HTML sandbox is disabled', async () => {
   await withServer(async ({ origin, config, page, ownerCookie }) => {
-    config.security.htmlArtifactSandboxEnabled = false;
+    config.security.htmlArtifactSandboxDisabled = true;
     const response = await bridge(origin, page.pageId, ownerCookie, 'state.get', { key: 'x' });
     assert.equal(response.status, 403);
     assert.equal((await response.json()).error.code, 'bridge_disabled');

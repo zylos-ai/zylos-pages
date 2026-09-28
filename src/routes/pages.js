@@ -94,7 +94,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
   }
 
   const isShareViewer = Boolean(shareContext) || res.locals.viewerType === 'share';
-  const sandboxEnabled = config.security?.htmlArtifactSandboxEnabled === true;
+  const sandboxEnabled = config.security?.htmlArtifactSandboxDisabled !== true;
   const shareCanWriteAttachments = shareContext
     ? shareContext.canWriteAttachments === true
     : res.locals.shareCanWriteAttachments === true;

@@ -282,10 +282,35 @@ async function rewriteSignedAssetRefs(html, context) {
       return `srcset=${quoted[0]}${rewritten}${quoted[0]}`;
     }
   );
+  const rewriteCssUrls = (css) => replaceAsync(
+    css,
+    /\b(url)\((["']?)([^"')]+)\2\)/gi,
+    async (_full, functionName, quote, value) => (
+      `${functionName}(${quote}${await signAssetReference(value.trim(), context)}${quote})`
+    )
+  );
   output = await replaceAsync(
     output,
-    /url\((["']?)([^"')]+)\1\)/gi,
-    async (_full, quote, value) => `url(${quote}${await signAssetReference(value.trim(), context)}${quote})`
+    /<!--[\s\S]*?-->|<script\b[^>]*>[\s\S]*?<\/script\s*>|<style\b[^>]*>[\s\S]*?<\/style\s*>|<[^>]+>/gi,
+    async (segment) => {
+      if (/^<style\b/i.test(segment)) {
+        const match = segment.match(/^(<style\b[^>]*>)([\s\S]*)(<\/style\s*>)$/i);
+        if (!match) return segment;
+        return `${match[1]}${await rewriteCssUrls(match[2])}${match[3]}`;
+      }
+      if (!/^<script\b/i.test(segment) && !/^<!--/.test(segment)) {
+        return replaceAsync(
+          segment,
+          /(\sstyle\s*=\s*)("([^"]*)"|'([^']*)')/gi,
+          async (_full, prefix, quoted, doubleValue, singleValue) => {
+            const value = doubleValue ?? singleValue ?? '';
+            const rewritten = await rewriteCssUrls(value);
+            return `${prefix}${quoted[0]}${rewritten}${quoted[0]}`;
+          }
+        );
+      }
+      return segment;
+    }
   );
   return output;
 }

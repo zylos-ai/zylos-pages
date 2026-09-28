@@ -1,5 +1,34 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- **HTML artifact sandboxing is now the default for installs and upgrades.**
+  The configuration is an explicit opt-out:
+  `security.htmlArtifactSandboxDisabled: true` disables isolation. The 0.14.0
+  upgrade removes the ambiguous legacy `htmlArtifactSandboxEnabled` key and
+  prints compatibility and rollback guidance; later upgrades preserve the new
+  opt-out setting.
+
+### Fixed
+
+- **Signed CSS asset rewriting no longer corrupts page JavaScript or text.**
+  Only `url(...)` functions inside `<style>` content and `style` attributes are
+  rewritten, with the original function-name casing preserved. Owner and share
+  rendering continue to sign literal asset references, including those inside
+  `<template>` elements.
+- **Share shells no longer inject viewer state through a CSP-blocked inline
+  script.** Viewer and attachment-editability state now use the existing HTML
+  data attributes without adding `script-src 'unsafe-inline'`.
+
+### Changed
+
+- **Sandbox migration guidance covers JavaScript-built asset paths.** Relative
+  paths created only at runtime cannot receive a server signature and return
+  `403` from opaque-origin frames. The HTML authoring reference documents the
+  signed `<template><img src>` pattern and the opt-out restart rollback.
+
 ## [0.13.0] - 2026-09-27
 
 ### Security

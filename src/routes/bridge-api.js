@@ -274,7 +274,7 @@ export function setupBridgeApi(app, config = {}) {
     let capability = null;
     try {
       requireSameOrigin(req);
-      if (config.security?.htmlArtifactSandboxEnabled !== true) {
+      if (config.security?.htmlArtifactSandboxDisabled === true) {
         throw bridgeError('bridge_disabled', 'bridge requires the HTML artifact sandbox', 403);
       }
       page = getLogicalPageById(req.params.pageId);
