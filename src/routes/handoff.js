@@ -2,7 +2,8 @@ import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import { HANDOFF_MAX_VALUE_BYTES, handoffStore } from '../handoff/handoff-store.js';
 import { handoffFormHtml, handoffResultHtml, handoffRevealHtml, handoffRevealedHtml, handoffUnavailableHtml } from '../templates/handoffTemplate.js';
 
-export const HANDOFF_BODY_LIMIT_BYTES = HANDOFF_MAX_VALUE_BYTES + 512;
+// Form encoding can expand each UTF-8 byte to a three-byte %XX sequence.
+export const HANDOFF_BODY_LIMIT_BYTES = HANDOFF_MAX_VALUE_BYTES * 3 + 1024;
 const ID_RE = /^[a-f0-9]{32}$/;
 
 function noStore(res) {
@@ -87,6 +88,22 @@ function readForm(req) {
   });
 }
 
+function submittedValue(form, fields) {
+  if (form.getAll('csrf').length !== 1) {
+    throw Object.assign(new Error('Invalid CSRF token'), { code: 'csrf' });
+  }
+  const valueNames = fields ? fields.map(field => field.name) : ['value'];
+  const allowed = new Set(['csrf', ...valueNames]);
+  for (const key of form.keys()) {
+    if (!allowed.has(key)) throw Object.assign(new Error('Unexpected form field'), { code: 'invalid_value' });
+  }
+  if (valueNames.some(name => form.getAll(name).length !== 1)) {
+    throw Object.assign(new Error('Missing or repeated form field'), { code: 'invalid_value' });
+  }
+  if (!fields) return form.get('value');
+  return Object.fromEntries(valueNames.map(name => [name, form.get(name)]));
+}
+
 export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
   const route = '/handoff/:id';
 
@@ -103,6 +120,7 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
       action: browserPath(browserBase, `handoff/${session.id}`),
       csrfToken,
       label: session.label,
+      fields: session.fields,
       expiresAt: session.expiresAt,
       assetBase: browserBase,
     }));
@@ -132,7 +150,7 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
         const value = store.reveal(req.params.id, form.get('csrf'));
         return res.type('html').send(handoffRevealedHtml({ value, assetBase: browserBaseFromRequest(req) }));
       }
-      store.submit(req.params.id, form.get('csrf'), form.get('value'));
+      store.submit(req.params.id, form.get('csrf'), submittedValue(form, liveSession.fields));
       return res.type('html').send(handoffResultHtml({ assetBase: browserBaseFromRequest(req) }));
     } catch (err) {
       const status = err.statusCode || (err.code === 'csrf' ? 403 : err.code === 'value_too_large' ? 413 : err.code === 'unavailable' ? 409 : 400);

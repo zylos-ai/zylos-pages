@@ -53,7 +53,8 @@ export const AUTH_CARD_CSS = `
       color: var(--color-text);
       margin-bottom: 6px;
     }
-    .login-card input[type="password"] {
+    .login-card input[type="password"],
+    .login-card input[type="text"] {
       width: 100%;
       padding: 10px 12px;
       font-size: 14px;
@@ -64,7 +65,8 @@ export const AUTH_CARD_CSS = `
       box-sizing: border-box;
       transition: border-color 0.12s ease, box-shadow 0.12s ease;
     }
-    .login-card input[type="password"]:focus {
+    .login-card input[type="password"]:focus,
+    .login-card input[type="text"]:focus {
       outline: none;
       border-color: var(--color-link);
       box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
@@ -88,6 +90,31 @@ export const AUTH_CARD_CSS = `
       border-color: var(--color-link);
       box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
     }
+    .login-card .password-input { position: relative; }
+    .login-card .password-input input { padding-right: 46px; }
+    .login-card .password-toggle {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      width: 32px;
+      height: 32px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--color-text-secondary);
+    }
+    .login-card .password-toggle:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+    .login-card .password-toggle:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
+    }
+    .login-card .password-toggle svg { width: 17px; height: 17px; display: block; }
+    .login-card .password-toggle .eye-off { display: none; }
+    .login-card .password-toggle.revealed .eye { display: none; }
+    .login-card .password-toggle.revealed .eye-off { display: block; }
     /* Value box with an inline copy control (used by the reveal page). */
     .login-card .copy-input { position: relative; }
     .login-card .copy-input textarea { padding-right: 46px; }

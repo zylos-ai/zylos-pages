@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
-import { HandoffStore, HANDOFF_MAX_VALUE_BYTES } from '../src/handoff/handoff-store.js';
+import { HandoffStore, HANDOFF_MAX_FIELDS, HANDOFF_MAX_VALUE_BYTES } from '../src/handoff/handoff-store.js';
 import { HANDOFF_BODY_LIMIT_BYTES, setupHandoffRoutes } from '../src/routes/handoff.js';
 import { startHandoffControlServer } from '../src/handoff/handoff-control.js';
 import { handoffRevealedHtml } from '../src/templates/handoffTemplate.js';
@@ -41,6 +41,14 @@ async function submit(origin, id, csrf, value, headers = {}) {
     method: 'POST',
     headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
     body: new URLSearchParams({ csrf, value }),
+  });
+}
+
+async function submitFields(origin, id, csrf, fields, headers = {}) {
+  return fetch(`${origin}/handoff/${id}`, {
+    method: 'POST',
+    headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
+    body: new URLSearchParams({ csrf, ...fields }),
   });
 }
 
@@ -130,6 +138,53 @@ test('one-time form submits and await atomically consumes without reflecting the
   });
 });
 
+test('named fields render safely and are submitted and consumed as one atomic object', async () => {
+  const store = new HandoffStore();
+  const fields = [
+    { name: 'email', label: '<Email>', type: 'text' },
+    { name: 'password', label: 'Password', type: 'password' },
+  ];
+  const created = store.create({ label: 'Service account', fields });
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    assert.equal(opened.response.status, 200);
+    assert.match(opened.html, /&lt;Email&gt;/);
+    assert.doesNotMatch(opened.html, /<Email>/);
+    assert.match(opened.html, /type="text"[^>]*name="email"/);
+    assert.match(opened.html, /type="password"[^>]*name="password"/);
+    assert.match(opened.html, /class="password-toggle"[^>]*data-password-toggle="handoff-field-1"/);
+    assert.match(opened.html, /<script src="\/_assets\/handoff\.js" defer><\/script>/);
+    assert.doesNotMatch(opened.html, /<script>[\s\S]*<\/script>/);
+
+    const waiting = store.awaitAndConsume(created.id, created.manageToken);
+    const values = { email: 'owner@example.test', password: 'correct horse' };
+    const response = await submitFields(origin, created.id, csrfFrom(opened.html), values);
+    const resultHtml = await response.text();
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(resultHtml, /owner@example\.test|correct horse/);
+    assert.deepEqual(await waiting, values);
+    assert.equal(store.status(created.id, created.manageToken).state, 'consumed');
+    assert.throws(() => store.consume(created.id, created.manageToken), { code: 'consumed' });
+  });
+});
+
+test('field schemas reject unsafe, ambiguous, or unsupported definitions', () => {
+  const invalidFields = [
+    [],
+    Array.from({ length: HANDOFF_MAX_FIELDS + 1 }, (_, index) => ({ name: `f${index}`, label: `F${index}`, type: 'text' })),
+    [{ name: 'same', label: 'One', type: 'text' }, { name: 'same', label: 'Two', type: 'password' }],
+    [{ name: 'two words', label: 'Value', type: 'text' }],
+    [{ name: 'csrf', label: 'Value', type: 'text' }],
+    [{ name: 'value', label: ' ', type: 'text' }],
+    [{ name: 'value', label: 'x'.repeat(101), type: 'text' }],
+    [{ name: 'value', label: 'Value', type: 'email' }],
+    [{ name: 'value', label: 'Value', type: 'text', html: '<textarea>' }],
+  ];
+  for (const fields of invalidFields) {
+    assert.throws(() => new HandoffStore().create({ fields }), { code: 'invalid_fields' });
+  }
+});
+
 test('separate client process creates, checks, awaits, consumes, and revokes through a 0600 local socket', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-control-'));
   const socketPath = path.join(dataDir, 'handoff-control.sock');
@@ -179,6 +234,31 @@ test('separate client process creates, checks, awaits, consumes, and revokes thr
 
     const consumedStatus = await runCli(dataDir, { operation: 'status', id, manageToken });
     assert.equal(consumedStatus.json.state, 'consumed');
+
+    const named = (await runCli(dataDir, {
+      operation: 'create',
+      label: 'Service account',
+      fields: [
+        { name: 'username', label: 'Username', type: 'text' },
+        { name: 'password', label: 'Password', type: 'password' },
+      ],
+    })).json;
+    const awaitingNamed = startCli(dataDir, {
+      operation: 'await', id: named.id, manageToken: named.manageToken,
+    });
+    await withServer(store, async internalOrigin => {
+      const opened = await form(internalOrigin, named.id);
+      const response = await submitFields(internalOrigin, named.id, csrfFrom(opened.html), {
+        username: 'operator', password: 'socket-only-secret',
+      }, { Origin: 'https://agent.example' });
+      assert.equal(response.status, 200);
+      const consumed = await awaitingNamed.completed;
+      assert.equal(consumed.code, 0);
+      assert.deepEqual(JSON.parse(consumed.stdout), {
+        ok: true, value: { username: 'operator', password: 'socket-only-secret' },
+      });
+      assert.equal(consumed.stderr, '');
+    }, { publicBaseUrl: 'https://agent.example/pages' });
 
     const abandoned = (await runCli(dataDir, { operation: 'create' })).json;
     const revoked = await runCli(dataDir, {
@@ -473,6 +553,49 @@ test('POST rejects missing/cross-origin proof, wrong CSRF, media type, empty and
       assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
     });
   }
+});
+
+test('named-field POST rejects missing, repeated, unexpected, empty, and oversized aggregate values', async () => {
+  const fields = [
+    { name: 'first', label: 'First', type: 'text' },
+    { name: 'second', label: 'Second', type: 'password' },
+  ];
+  const scenarios = [
+    params => { params.delete('second'); },
+    params => { params.append('second', 'duplicate'); },
+    params => { params.set('unexpected', 'value'); },
+    params => { params.set('second', ''); },
+    params => { params.set('first', 'x'.repeat(HANDOFF_MAX_VALUE_BYTES)); params.set('second', 'y'); },
+  ];
+  for (const mutate of scenarios) {
+    const store = new HandoffStore();
+    const created = store.create({ fields });
+    await withServer(store, async origin => {
+      const opened = await form(origin, created.id);
+      const params = new URLSearchParams({ csrf: csrfFrom(opened.html), first: 'one', second: 'two' });
+      mutate(params);
+      const response = await fetch(`${origin}/handoff/${created.id}`, {
+        method: 'POST',
+        headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params,
+      });
+      assert.equal(response.status, params.get('first')?.length === HANDOFF_MAX_VALUE_BYTES ? 413 : 400);
+      assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
+    });
+  }
+});
+
+test('the body limit permits a percent-encoded 4 KiB aggregate but the value limit remains exact', async () => {
+  const store = new HandoffStore();
+  const created = store.create({ fields: [{ name: 'unicode', label: 'Unicode', type: 'text' }] });
+  const exactLimit = '\u00e9'.repeat(HANDOFF_MAX_VALUE_BYTES / 2);
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const waiting = store.awaitAndConsume(created.id, created.manageToken);
+    const response = await submitFields(origin, created.id, csrfFrom(opened.html), { unicode: exactLimit });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await waiting, { unicode: exactLimit });
+  });
 });
 
 test('submit rejects a concrete wrong Origin even when Fetch Metadata says same-origin', async () => {

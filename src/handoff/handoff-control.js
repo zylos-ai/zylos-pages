@@ -36,7 +36,7 @@ async function removeStaleSocket(socketPath) {
 function safeError(err) {
   const allowed = new Set([
     'aborted', 'consumed', 'expired', 'invalid_label', 'invalid_ttl',
-    'invalid_value', 'not_found', 'revoked', 'unavailable', 'value_too_large',
+    'invalid_fields', 'invalid_value', 'not_found', 'revoked', 'unavailable', 'value_too_large',
     'viewed', 'waiting',
   ]);
   const code = allowed.has(err?.code) ? err.code : 'invalid_request';
@@ -54,7 +54,7 @@ async function dispatch(request, socket, store, config, abortController) {
   const { operation, id, manageToken } = request;
   switch (operation) {
     case 'create': {
-      const created = store.create({ ttlMs: request.ttlMs, label: request.label });
+      const created = store.create({ ttlMs: request.ttlMs, label: request.label, fields: request.fields });
       return {
         ok: true,
         ...created,
