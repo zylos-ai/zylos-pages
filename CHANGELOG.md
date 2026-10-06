@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.0] - 2026-10-06
+
+### Added
+
+- **Secure Handoff supports atomic named fields.** Create requests may define
+  one to four unique `text` or `password` fields, and await/consume returns all
+  submitted values together under the existing 4 KiB limit. Omitting `fields`
+  preserves the original single-value contract.
+
 ## [0.14.0] - 2026-09-28
 
 ### Security
