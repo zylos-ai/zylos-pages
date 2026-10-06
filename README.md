@@ -132,7 +132,10 @@ data before discarding the backup.
 
 Pages includes a process-local, one-time form for general human-to-agent
 delivery of short-lived sensitive values. It is zero-retention and fails closed
-on restart. Separate local clients reach the daemon over a `0600` Unix socket;
+on restart. A create request may declare 1–4 named `text` / `password` fields,
+which are submitted and consumed atomically under the existing 4 KiB limit;
+omitting them preserves the original single-value contract. Separate local
+clients reach the daemon over a `0600` Unix socket;
 no management endpoint is exposed through Caddy. **When Pages is served behind
 a reverse proxy, `publicBaseUrl` is required** and must be the externally
 reachable absolute Pages base URL. Install and upgrade hooks warn when it is

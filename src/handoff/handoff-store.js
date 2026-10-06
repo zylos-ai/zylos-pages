@@ -4,6 +4,11 @@ export const HANDOFF_MIN_TTL_MS = 60_000;
 export const HANDOFF_MAX_TTL_MS = 15 * 60_000;
 export const HANDOFF_DEFAULT_TTL_MS = 5 * 60_000;
 export const HANDOFF_MAX_VALUE_BYTES = 4096;
+export const HANDOFF_MAX_FIELDS = 4;
+
+const HANDOFF_FIELD_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const HANDOFF_FIELD_TYPES = new Set(['text', 'password']);
+const HANDOFF_FIELD_KEYS = new Set(['name', 'label', 'type']);
 
 function handoffError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -19,6 +24,68 @@ function tokenMatches(expected, candidate) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+function validateFields(fields) {
+  if (fields === undefined) return null;
+  if (!Array.isArray(fields) || fields.length < 1 || fields.length > HANDOFF_MAX_FIELDS) {
+    throw handoffError('invalid_fields', `Fields must contain between 1 and ${HANDOFF_MAX_FIELDS} entries`);
+  }
+
+  const names = new Set();
+  return fields.map(field => {
+    if (!field || typeof field !== 'object' || Array.isArray(field)
+      || Object.keys(field).some(key => !HANDOFF_FIELD_KEYS.has(key))) {
+      throw handoffError('invalid_fields', 'Each field must contain only name, label, and type');
+    }
+    if (typeof field.name !== 'string' || !HANDOFF_FIELD_NAME_RE.test(field.name)
+      || field.name === 'csrf' || names.has(field.name)) {
+      throw handoffError('invalid_fields', 'Field names must be unique, safe identifiers');
+    }
+    if (typeof field.label !== 'string' || field.label.trim().length < 1 || field.label.length > 100) {
+      throw handoffError('invalid_fields', 'Field labels must be between 1 and 100 characters');
+    }
+    if (!HANDOFF_FIELD_TYPES.has(field.type)) {
+      throw handoffError('invalid_fields', 'Field type must be text or password');
+    }
+    names.add(field.name);
+    return { name: field.name, label: field.label, type: field.type };
+  });
+}
+
+function validatedSubmission(fields, value) {
+  if (!fields) {
+    if (typeof value !== 'string' || value.length === 0) throw handoffError('invalid_value', 'A value is required');
+    if (Buffer.byteLength(value, 'utf8') > HANDOFF_MAX_VALUE_BYTES) {
+      throw handoffError('value_too_large', 'Value exceeds the size limit');
+    }
+    return value;
+  }
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw handoffError('invalid_value', 'All configured fields are required');
+  }
+  const expectedNames = fields.map(field => field.name);
+  const submittedNames = Object.keys(value);
+  if (submittedNames.length !== expectedNames.length
+    || submittedNames.some(name => !expectedNames.includes(name))) {
+    throw handoffError('invalid_value', 'Submitted fields must exactly match the configured schema');
+  }
+
+  let bytes = 0;
+  const result = {};
+  for (const name of expectedNames) {
+    const submitted = value[name];
+    if (typeof submitted !== 'string' || submitted.length === 0) {
+      throw handoffError('invalid_value', 'All configured fields are required');
+    }
+    bytes += Buffer.byteLength(submitted, 'utf8');
+    result[name] = submitted;
+  }
+  if (bytes > HANDOFF_MAX_VALUE_BYTES) {
+    throw handoffError('value_too_large', 'Combined field values exceed the size limit');
+  }
+  return result;
+}
+
 export class HandoffStore {
   constructor({ now = Date.now, randomBytes = crypto.randomBytes } = {}) {
     this.now = now;
@@ -28,7 +95,7 @@ export class HandoffStore {
     this.viewWaiters = new Map();
   }
 
-  create({ ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value' } = {}) {
+  create({ ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value', fields } = {}) {
     if (!Number.isInteger(ttlMs) || ttlMs < HANDOFF_MIN_TTL_MS || ttlMs > HANDOFF_MAX_TTL_MS) {
       throw handoffError('invalid_ttl', 'TTL must be between 1 and 15 minutes');
     }
@@ -36,6 +103,7 @@ export class HandoffStore {
       throw handoffError('invalid_label', 'Label must be between 1 and 100 characters');
     }
 
+    const validatedFields = validateFields(fields);
     const id = this.randomBytes(16).toString('hex');
     const manageToken = this.randomBytes(32).toString('base64url');
     const csrfToken = this.randomBytes(32).toString('base64url');
@@ -44,6 +112,7 @@ export class HandoffStore {
       id,
       mode: 'submit',
       label,
+      fields: validatedFields,
       manageTokenHash: digest(manageToken),
       csrfTokenHash: digest(csrfToken),
       csrfTokenForRoute: csrfToken,
@@ -106,7 +175,13 @@ export class HandoffStore {
   publicView(id) {
     const session = this._live(id);
     if (!session || !['waiting', 'ready'].includes(session.state)) return null;
-    return { id: session.id, mode: session.mode, label: session.label, expiresAt: session.expiresAt };
+    return {
+      id: session.id,
+      mode: session.mode,
+      label: session.label,
+      expiresAt: session.expiresAt,
+      fields: session.fields?.map(field => ({ ...field })) ?? null,
+    };
   }
 
   formCsrfToken(id, routeHost) {
@@ -145,11 +220,7 @@ export class HandoffStore {
     const session = this._live(id);
     if (!session || session.state !== 'waiting') throw handoffError('unavailable', 'Handoff is unavailable');
     if (!tokenMatches(session.csrfTokenHash, csrfToken)) throw handoffError('csrf', 'CSRF validation failed');
-    if (typeof value !== 'string' || value.length === 0) throw handoffError('invalid_value', 'A value is required');
-    if (Buffer.byteLength(value, 'utf8') > HANDOFF_MAX_VALUE_BYTES) {
-      throw handoffError('value_too_large', 'Value exceeds the size limit');
-    }
-    session.value = value;
+    session.value = validatedSubmission(session.fields, value);
     session.state = 'submitted';
     session.submittedAt = this.now();
     const submittedAt = session.submittedAt;

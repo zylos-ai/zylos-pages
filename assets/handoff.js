@@ -1,7 +1,8 @@
-// Copy-to-clipboard control for the secure-handoff reveal page.
+// Progressive controls for secure-handoff forms and reveal pages.
 // Loaded as an external asset because the pages CSP is `script-src 'self'`
 // (no inline scripts). Progressive enhancement only: the value is always
-// selectable/copyable by hand if this script does not run.
+// Password fields remain masked and revealed values remain selectable if this
+// script does not run.
 (function () {
   'use strict';
 
@@ -38,6 +39,20 @@
   }
 
   document.addEventListener('click', function (ev) {
+    var toggle = ev.target && ev.target.closest ? ev.target.closest('.password-toggle') : null;
+    if (toggle) {
+      ev.preventDefault();
+      var inputId = toggle.getAttribute('data-password-toggle');
+      var input = inputId ? document.getElementById(inputId) : null;
+      if (!input) return;
+      var reveal = input.type === 'password';
+      input.type = reveal ? 'text' : 'password';
+      toggle.classList.toggle('revealed', reveal);
+      var label = toggle.getAttribute(reveal ? 'data-hide-label' : 'data-show-label');
+      toggle.setAttribute('aria-label', label || (reveal ? 'Hide value' : 'Show value'));
+      toggle.setAttribute('title', label || (reveal ? 'Hide value' : 'Show value'));
+      return;
+    }
     var btn = ev.target && ev.target.closest ? ev.target.closest('.copy-btn') : null;
     if (!btn) return;
     ev.preventDefault();

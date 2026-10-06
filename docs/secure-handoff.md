@@ -26,6 +26,13 @@ response. A preview GET never loads or consumes the value.
    service runs `cleanup()` each minute; cleanup is safe to repeat and removes
    terminal sessions, making their public paths return 404.
 
+`create` may include a `fields` array with 1–4 entries. Each entry has a unique
+safe `name`, a display `label` of at most 100 characters, and a `type` of `text`
+or `password`. The form requires every configured field and `await` / `consume`
+returns their values together as one object. The combined UTF-8 size of all
+values remains capped at 4 KiB. Omitting `fields` preserves the original scalar
+`value` request and response contract.
+
 For a reverse reveal, send `create_reveal` with `value`, `ttlMs`, and `label` on
 stdin. Give the human only `revealUrl`. The integration may wait with
 `await_viewed`; its response is a secret-free event containing only the handoff
@@ -68,6 +75,7 @@ non-logging in-memory API, then release the reference.
 The client accepts exactly one JSON object on stdin. Supported operations are:
 
 - `{"operation":"create","ttlMs":300000,"label":"API token"}`
+- `{"operation":"create","ttlMs":300000,"label":"Service account","fields":[{"name":"email","label":"Email","type":"text"},{"name":"password","label":"Password","type":"password"}]}`
 - `{"operation":"status","id":"…","manageToken":"…"}`
 - `{"operation":"await","id":"…","manageToken":"…"}`
 - `{"operation":"consume","id":"…","manageToken":"…"}`

@@ -1,7 +1,33 @@
 import { escapeHtml } from '../security/sanitize.js';
 import { AUTH_CARD_CSS } from './authCardStyles.js';
 
-export function handoffFormHtml({ action, csrfToken, label, expiresAt, assetBase = '' }) {
+function handoffFieldsHtml(fields) {
+  if (!fields) {
+    return `<div class="login-field">
+          <label for="value">Value</label>
+          <input type="password" id="value" name="value" autocomplete="new-password" maxlength="4096" required autofocus>
+        </div>`;
+  }
+  return fields.map((field, index) => {
+    const id = `handoff-field-${index}`;
+    const input = `<input type="${escapeHtml(field.type)}" id="${id}" name="${escapeHtml(field.name)}" autocomplete="${field.type === 'password' ? 'new-password' : 'off'}" maxlength="4096" required${index === 0 ? ' autofocus' : ''}>`;
+    const control = field.type === 'password'
+      ? `<div class="password-input">${input}
+          <button type="button" class="password-toggle" data-password-toggle="${id}" data-show-label="Show ${escapeHtml(field.label)}" data-hide-label="Hide ${escapeHtml(field.label)}" aria-label="Show ${escapeHtml(field.label)}" title="Show ${escapeHtml(field.label)}">
+            <svg class="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            <svg class="eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 002.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0112 4c6.5 0 10 8 10 8a16.5 16.5 0 01-2.1 3.1"></path><path d="M6.6 6.6C3.5 8.6 2 12 2 12s3.5 8 10 8a9.8 9.8 0 004.1-.9"></path></svg>
+          </button>
+        </div>`
+      : input;
+    return `<div class="login-field">
+          <label for="${id}">${escapeHtml(field.label)}</label>
+          ${control}
+        </div>`;
+  }).join('\n        ');
+}
+
+export function handoffFormHtml({ action, csrfToken, label, expiresAt, fields = null, assetBase = '' }) {
+  const hasPasswordToggle = fields?.some(field => field.type === 'password');
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -23,15 +49,13 @@ export function handoffFormHtml({ action, csrfToken, label, expiresAt, assetBase
       </div>
       <form method="post" action="${escapeHtml(action)}" autocomplete="off">
         <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
-        <div class="login-field">
-          <label for="value">Value</label>
-          <input type="password" id="value" name="value" autocomplete="new-password" maxlength="4096" required autofocus>
-        </div>
+        ${handoffFieldsHtml(fields)}
         <button type="submit">Send securely</button>
       </form>
       <p class="login-hint">This one-time form expires at ${escapeHtml(new Date(expiresAt).toISOString())}. The value is not retained after delivery.</p>
     </div>
   </main>
+  ${hasPasswordToggle ? `<script src="${escapeHtml(assetBase)}/_assets/handoff.js" defer></script>` : ''}
 </body>
 </html>`;
 }
