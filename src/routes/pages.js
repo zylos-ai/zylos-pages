@@ -227,6 +227,9 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         ? `s/${shareContext.tokenId}?raw=1`
         : `${displaySlug}?raw=1`;
       const iframeSrc = browserPath(browserBase, iframeRoute);
+      const navigationPages = sandboxEnabled && policy.enabled
+        ? await scanPages(config.contentDir)
+        : null;
       if (sandboxEnabled && policy.enabled) {
         res.setHeader('Content-Security-Policy', htmlArtifactShellCsp(
           browserVisibleFrameUrl(req, config, iframeSrc),
@@ -242,12 +245,14 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         bridgeEndpoint: sandboxEnabled && policy.enabled
           ? browserPath(browserBase, `api/bridge/${logicalPage.pageId}`)
           : null,
+        pageOpenPaths: navigationPages?.map(page => browserPath(browserBase, page.slug)) || [],
+        outboundDenied: logicalPage?.outboundDenied === true,
       });
       if (isShareViewer) {
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
       } else {
-        const pages = await scanPages(config.contentDir);
+        const pages = navigationPages || await scanPages(config.contentDir);
         html = injectNavSidebar(html, pages, displaySlug, browserBase);
       }
       logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });

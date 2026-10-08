@@ -170,7 +170,20 @@ export function attachmentPageTemplate({ title, filename, sizeBytes, downloadUrl
  * This activates CSS rules that hide auth-only elements.
  * Called post-cache in the page route.
  */
-export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc, sandboxed = false, scriptsEnabled = true, bridgeEndpoint = null }) {
+export function htmlArtifactTemplate({
+  title,
+  baseUrl,
+  slug,
+  iframeSrc,
+  sandboxed = false,
+  scriptsEnabled = true,
+  bridgeEndpoint = null,
+  pageOpenPaths = [],
+  outboundDenied = false,
+}) {
+  const pageOpenData = bridgeEndpoint
+    ? ` data-page-open-paths="${escapeHtml(JSON.stringify(pageOpenPaths))}" data-outbound-denied="${outboundDenied ? 'true' : 'false'}"`
+    : '';
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -212,7 +225,7 @@ export function htmlArtifactTemplate({ title, baseUrl, slug, iframeSrc, sandboxe
   <div class="nav-overlay" hidden></div>
 
   <div class="html-artifact-container">
-    <iframe class="html-artifact-frame"${bridgeEndpoint ? ` data-bridge-src="${escapeHtml(iframeSrc)}" data-bridge-endpoint="${escapeHtml(bridgeEndpoint)}"` : ` src="${escapeHtml(iframeSrc)}"`}${sandboxed ? ` sandbox="${scriptsEnabled ? 'allow-scripts' : ''}"` : ''}></iframe>
+    <iframe class="html-artifact-frame"${bridgeEndpoint ? ` data-bridge-src="${escapeHtml(iframeSrc)}" data-bridge-endpoint="${escapeHtml(bridgeEndpoint)}"${pageOpenData}` : ` src="${escapeHtml(iframeSrc)}"`}${sandboxed ? ` sandbox="${scriptsEnabled ? 'allow-scripts' : ''}"` : ''}></iframe>
   </div>
 
   <!-- Share Modal (hidden for share viewers via CSS) -->
