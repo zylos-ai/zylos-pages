@@ -13,7 +13,7 @@ import {
 import { rewriteSignedOwnerAssetRefs, rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
 import { attachmentDescriptorMetadata, sendAttachmentDownload } from '../pages/attachment-page.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
-import { scanPages } from '../pages/navigation.js';
+import { pageOpenPaths, scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import {
@@ -227,6 +227,9 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         ? `s/${shareContext.tokenId}?raw=1`
         : `${displaySlug}?raw=1`;
       const iframeSrc = browserPath(browserBase, iframeRoute);
+      const navigationPages = sandboxEnabled && policy.enabled
+        ? await scanPages(config.contentDir)
+        : null;
       if (sandboxEnabled && policy.enabled) {
         res.setHeader('Content-Security-Policy', htmlArtifactShellCsp(
           browserVisibleFrameUrl(req, config, iframeSrc),
@@ -242,12 +245,24 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         bridgeEndpoint: sandboxEnabled && policy.enabled
           ? browserPath(browserBase, `api/bridge/${logicalPage.pageId}`)
           : null,
+        pageOpenBase: browserPath(
+          browserBase,
+          displaySlug.startsWith('p/') ? displaySlug.slice(2) : displaySlug,
+        ),
+        pageOpenPaths: navigationPages ? pageOpenPaths({
+          pages: navigationPages,
+          browserBase,
+          html: result.html,
+          currentSlug: displaySlug,
+          linkedOnly: isShareViewer,
+        }) : [],
+        outboundDenied: logicalPage?.outboundDenied === true,
       });
       if (isShareViewer) {
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
       } else {
-        const pages = await scanPages(config.contentDir);
+        const pages = navigationPages || await scanPages(config.contentDir);
         html = injectNavSidebar(html, pages, displaySlug, browserBase);
       }
       logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });

@@ -57,6 +57,9 @@ async function withServer(fn) {
     uri: 'other', title: 'Other', sourcePath: path.join(contentDir, 'other.html'), component: 'content',
     capabilities: ['state.read'],
   }, config);
+  const navigationOnly = registerLogicalPage({
+    uri: 'navigation-only', title: 'Navigation only', sourcePath: path.join(contentDir, 'other.html'), component: 'content',
+  }, config);
 
   initCache(config.cache);
   const app = express();
@@ -77,7 +80,7 @@ async function withServer(fn) {
       body: new URLSearchParams({ password: 'secret' }),
     });
     const ownerCookie = cookieHeader(login.headers.get('set-cookie'));
-    await fn({ origin, config, page, other, ownerCookie });
+    await fn({ origin, config, page, other, navigationOnly, ownerCookie });
   } finally {
     await new Promise((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
     await rm(contentDir, { recursive: true, force: true });
@@ -96,6 +99,7 @@ test('capability policy defaults closed and read capability forces outbound deni
   assert.deepEqual(normalizePageSecurity(), { capabilities: [], outboundDenied: false, scriptsEnabled: true });
   const normalized = normalizePageSecurity({ capabilities: ['state.read'], outboundDenied: false });
   assert.equal(normalized.outboundDenied, true);
+  assert.equal(bridgePolicy({ type: 'html', scriptsEnabled: true, outboundDenied: false, capabilities: [] }).enabled, true);
   assert.equal(bridgePolicy({ type: 'html', scriptsEnabled: true, outboundDenied: false, capabilities: ['state.read'] }).enabled, false);
   assert.equal(bridgePolicy({ type: 'html', scriptsEnabled: false, outboundDenied: true, capabilities: ['state.read'] }).enabled, false);
   assert.throws(() => normalizePageSecurity({ capabilities: ['dashboard.read'] }), /unsupported capability/);
@@ -140,6 +144,19 @@ test('owner bridge operations are page-bound, schema-checked, and cover state an
     assert.equal((await response.json()).result.dataBase64, JPEG.toString('base64'));
     response = await bridge(origin, page.pageId, ownerCookie, 'attachment.delete', { attachmentId: attachment.attachmentId });
     assert.equal(response.status, 200);
+  });
+});
+
+test('navigation-only pages do not gain state or attachment capabilities', async () => {
+  await withServer(async ({ origin, navigationOnly, ownerCookie }) => {
+    for (const [operation, input] of [
+      ['state.get', { key: 'private' }],
+      ['attachment.list', { key: 'private' }],
+    ]) {
+      const response = await bridge(origin, navigationOnly.pageId, ownerCookie, operation, input);
+      assert.equal(response.status, 403, operation);
+      assert.equal((await response.json()).error.code, 'capability_denied', operation);
+    }
   });
 });
 

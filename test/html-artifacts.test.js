@@ -297,8 +297,14 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
     const config = baseConfig(contentDir);
     delete config.security.htmlArtifactSandboxDisabled;
     const artifactPath = path.join(contentDir, 'sandboxed.html');
-    await writeFile(artifactPath, '<!doctype html><title>Sandboxed</title><script>window.ok=true</script>');
-    registerPage(config, 'sandboxed', artifactPath, 'Sandboxed');
+    const linkedPath = path.join(contentDir, 'linked.html');
+    const confidentialPath = path.join(contentDir, 'confidential.html');
+    await writeFile(artifactPath, '<!doctype html><title>Sandboxed</title><script>window.ok=true</script><a href="/p/linked#details">Linked</a>');
+    await writeFile(linkedPath, '<!doctype html><title>Linked</title>');
+    await writeFile(confidentialPath, '<!doctype html><title>Confidential</title>');
+    const page = registerPage(config, 'sandboxed', artifactPath, 'Sandboxed');
+    registerPage(config, 'linked', linkedPath, 'Linked');
+    registerPage(config, 'confidential', confidentialPath, 'Confidential');
     const share = createShare('sandboxed', '24h');
 
     await withServer(config, async ({ origin, fetch: ownerFetch }) => {
@@ -308,6 +314,10 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
       assert.match(ownerShellBody, /sandbox="allow-scripts"/);
       assert.doesNotMatch(ownerShellBody, /allow-same-origin/);
       assert.match(ownerShellBody, /sandboxed\?raw=1/);
+      assert.match(ownerShellBody, /data-page-open-base="\/sandboxed"/);
+      for (const route of ['/p/linked', '/linked', '/p/confidential', '/confidential']) {
+        assert.match(ownerShellBody, new RegExp(`&quot;${route}&quot;`));
+      }
 
       const missingDest = await ownerFetch(`${origin}/sandboxed?raw=1`);
       assert.equal(missingDest.status, 403);
@@ -344,10 +354,19 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
 
       const shareShell = await fetch(`${origin}/s/${share.tokenId}`);
       assert.equal(shareShell.status, 200);
-      assert.equal(shareShell.headers.get('content-security-policy'), DEFAULT_CSP);
+      assert.match(
+        shareShell.headers.get('content-security-policy'),
+        new RegExp(`frame-src http://127\\.0\\.0\\.1:\\d+/s/${share.tokenId}`),
+      );
       const shareShellBody = await shareShell.text();
       assert.match(shareShellBody, /sandbox="allow-scripts"/);
       assert.match(shareShellBody, new RegExp(`/s/${share.tokenId}\\?raw=1`));
+      assert.match(shareShellBody, new RegExp(`data-bridge-endpoint="/api/bridge/${page.pageId}"`));
+      assert.match(shareShellBody, /data-page-open-base="\/sandboxed"/);
+      assert.match(shareShellBody, /data-page-open-paths="[^"]*&quot;\/p\/linked&quot;[^"]*"/);
+      assert.match(shareShellBody, /data-page-open-paths="[^"]*&quot;\/linked&quot;[^"]*"/);
+      assert.doesNotMatch(shareShellBody, /&quot;\/p\/confidential&quot;|&quot;\/confidential&quot;/);
+      assert.doesNotMatch(shareShellBody, /&quot;\/p\/sandboxed&quot;|&quot;\/sandboxed&quot;/);
       assert.doesNotMatch(shareShellBody, /<script>window\.ok=true<\/script>/);
 
       const rejectedShareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`);
@@ -373,18 +392,23 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
   }
 });
 
-test('capability bridge is injected only from the trusted shell and read policy denies egress', async () => {
+test('navigation bridge is injected only from the trusted shell and read policy denies egress', async () => {
   const contentDir = await makeContentDir();
   try {
     const config = baseConfig(contentDir);
     delete config.security.htmlArtifactSandboxDisabled;
     const bridgePath = path.join(contentDir, 'bridge-policy.html');
+    const navigationPath = path.join(contentDir, 'navigation-only.html');
     const scriptlessPath = path.join(contentDir, 'scriptless.html');
     await writeFile(bridgePath, '<!doctype html><title>Bridge Policy</title><h1>Bridge</h1>');
+    await writeFile(navigationPath, '<!doctype html><title>Navigation Only</title><a href="/p/bridge-policy">Bridge</a>');
     await writeFile(scriptlessPath, '<!doctype html><title>Scriptless</title><script>window.bad=true</script>');
     const bridgePage = registerLogicalPage({
       uri: 'bridge-policy', title: 'Bridge Policy', sourcePath: bridgePath, component: 'content',
       capabilities: ['state.read'],
+    }, config);
+    const navigationPage = registerLogicalPage({
+      uri: 'navigation-only', title: 'Navigation Only', sourcePath: navigationPath, component: 'content',
     }, config);
     registerLogicalPage({
       uri: 'scriptless', title: 'Scriptless', sourcePath: scriptlessPath, component: 'content',
@@ -399,7 +423,18 @@ test('capability bridge is injected only from the trusted shell and read policy 
       assert.doesNotMatch(shell, /<iframe[^>]*\ssrc=/);
       assert.match(shell, /_assets\/bridge\.js/);
       assert.match(shell, /sandbox="allow-scripts"/);
+      assert.match(shell, /data-outbound-denied="true"/);
+      assert.match(shell, /data-page-open-paths="[^"]*&quot;\/p\/bridge-policy&quot;[^"]*"/);
+      assert.match(shell, /data-page-open-paths="[^"]*&quot;\/p\/navigation-only&quot;[^"]*"/);
       assert.match(response.headers.get('content-security-policy'), /frame-src http:\/\/127\.0\.0\.1:\d+\/bridge-policy/);
+
+      response = await fetch(`${origin}/navigation-only`);
+      const navigationShell = await response.text();
+      assert.match(navigationShell, new RegExp(`data-bridge-endpoint="/api/bridge/${navigationPage.pageId}"`));
+      assert.match(navigationShell, /data-outbound-denied="false"/);
+      assert.doesNotMatch(navigationShell, /<iframe[^>]*\ssrc=/);
+      response = await fetch(`${origin}/navigation-only?raw=1`, { headers: { 'Sec-Fetch-Dest': 'iframe' } });
+      assert.match(await response.text(), /_assets\/bridge-client\.js/);
 
       config.publicBaseUrl = 'https://pages.example.test/pages';
       response = await fetch(`${origin}/bridge-policy`);

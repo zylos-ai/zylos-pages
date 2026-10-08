@@ -32,7 +32,14 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
   const { securityHeaders } = await import('../src/security/headers.js');
 
   const pagePath = path.join(contentDir, 'browser-bridge.html');
-  await writeFile(pagePath, '<!doctype html><html><head><title>Browser bridge</title></head><body>bridge</body></html>');
+  const targetPath = path.join(contentDir, 'browser-target.html');
+  await writeFile(pagePath, `<!doctype html><html><head><title>Browser bridge</title></head><body>
+    <a id="canonical-link" href="/p/browser-target#done">canonical</a>
+    <a id="legacy-link" href="/browser-target#done">legacy</a>
+    <a id="relative-link" href="browser-target#done">relative</a>
+    <div style="height:1600px"></div><div id="source-anchor">source anchor</div>
+  </body></html>`);
+  await writeFile(targetPath, '<!doctype html><html><head><title>Browser target</title></head><body><div style="height:1600px"></div><div id="done">target</div></body></html>');
   const config = {
     contentDir,
     publicBaseUrl: null,
@@ -48,6 +55,9 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
   registerLogicalPage({
     uri: 'browser-bridge', title: 'Browser bridge', sourcePath: pagePath, component: 'content',
     capabilities: ['state.read', 'state.write'], outboundDenied: true,
+  }, config);
+  registerLogicalPage({
+    uri: 'browser-target', title: 'Browser target', sourcePath: targetPath, component: 'content',
   }, config);
   initCache({ maxEntries: 20, ttlSeconds: 60 });
 
@@ -88,9 +98,11 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
       page.locator('form').press('Enter'),
     ]);
 
-    await page.goto(`${origin}/browser-bridge`);
+    await page.goto(`${origin}/browser-bridge#source-anchor`);
     const firstFrame = await waitForRawFrame(page);
     await firstFrame.waitForFunction(() => Boolean(window.zylosPages));
+    await firstFrame.waitForFunction(() => location.hash === '#source-anchor' && scrollY > 0);
+    assert.match(firstFrame.url(), /\/browser-bridge\?raw=1#source-anchor$/);
     await firstFrame.waitForFunction(async () => {
       try {
         await window.zylosPages.request('state.set', { key: 'browser', value: 'ready' });
@@ -150,6 +162,23 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
       }
     });
     assert.equal(rejection?.code, 'bridge_unavailable');
+
+    for (const [linkId, expectedPath] of [
+      ['canonical-link', '/p/browser-target#done'],
+      ['legacy-link', '/browser-target#done'],
+      ['relative-link', '/browser-target#done'],
+    ]) {
+      await page.goto(`${origin}/browser-bridge`);
+      const navigationFrame = await waitForRawFrame(page);
+      await navigationFrame.waitForFunction(() => Boolean(window.zylosPages));
+      await Promise.all([
+        page.waitForURL(`${origin}${expectedPath}`),
+        navigationFrame.locator(`#${linkId}`).click(),
+      ]);
+      const targetFrame = await waitForRawFrame(page);
+      await targetFrame.waitForFunction(() => location.hash === '#done' && scrollY > 0);
+      assert.match(targetFrame.url(), /\/browser-target\?raw=1#done$/);
+    }
   } finally {
     await browser.close();
     await Promise.all([

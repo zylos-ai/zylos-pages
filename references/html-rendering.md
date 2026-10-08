@@ -124,32 +124,42 @@ not ask for interactive confirmation.
 
 ### Cross-page links
 
-Pages never lets another origin frame a document: ordinary responses send
-`frame-ancestors 'none'` + `X-Frame-Options: DENY`, and HTML artifacts served
-as the internal raw iframe document send `frame-ancestors 'self'` +
-`SAMEORIGIN`; the wrapper applies an opaque-origin sandbox. Cross-origin framing
-and top-level raw navigation are refused.
-Host clients that open clicked links in an embedded webview are a different
-origin, so an in-place cross-page link shows a refusal there, while the same
-URL works as a top-level navigation. Author cross-page anchors to open a new
-tab, and leave same-page fragment anchors alone:
+In script-enabled sandbox HTML pages, ordinary unmodified primary clicks on
+anchors are handled by the Pages bridge. A link to another registered Pages
+view navigates the trusted top-level shell, while same-page fragment links keep
+their normal in-frame behavior:
 
 ```html
-<!-- Cross-page: link to another Pages document — open as top-level navigation -->
-<a href="/pages/p/reports/q3-summary" target="_blank" rel="noopener noreferrer">Q3 summary</a>
+<!-- Cross-page: navigates the Pages shell to this registered view -->
+<a href="/pages/p/reports/q3-summary">Q3 summary</a>
+
+<!-- Legacy and relative registered view paths are also supported -->
+<a href="/pages/reports/q3-summary">Q3 summary (legacy)</a>
+<a href="q3-summary">Q3 summary (relative)</a>
 
 <!-- Same-page fragment: navigates within this document — keep default behavior -->
 <a href="#findings">Jump to findings</a>
 ```
 
-The same anchor works in Markdown sources: standard `[text](url)` syntax
-cannot carry `target`/`rel`, but the default sanitizer (`allowRawHtml:
-false`) allowlists inline HTML anchors with `href`, `title`, `target`, and
-`rel`, and the render pipeline preserves them end to end.
+Same-site navigation is limited to exact registered page-view paths. Fragments
+are allowed; query strings, URL credentials, unregistered paths, APIs,
+`_assets`, admin/share-management paths, and handoff paths are rejected. Share
+viewers receive only the registered destinations actually linked by the shared
+artifact; other registered paths are not disclosed to the share shell. Opening
+a private target sends an unauthenticated viewer to login rather than inheriting
+the source share.
 
-The new-tab default preserves the anti-framing protection. Never weaken
-`frame-ancestors` or `X-Frame-Options` to make in-frame navigation work — the
-link target is the fix, not the headers.
+External links allow only HTTP(S). They open in a new browsing context with
+`noopener,noreferrer` when the page permits outbound access, and are rejected
+when outbound access is denied. Modified clicks, non-primary clicks, download
+links, and clicks canceled by page code retain their normal behavior.
+
+The shell accepts `page.open` only while the browser reports active user
+activation. That proves a recent interaction in the page, not that the exact
+link passed to the bridge caused it. Pages with `scriptsEnabled=false` cannot
+run the bridge client, so cross-page links in those artifacts remain a known
+limitation. Never weaken `frame-ancestors`, `X-Frame-Options`, or the iframe's
+`sandbox="allow-scripts"` boundary to work around either limitation.
 
 ### Dark mode pattern
 

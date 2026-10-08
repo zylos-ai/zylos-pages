@@ -50,7 +50,7 @@ export function bridgePolicy(page) {
   const readRequiresOutboundDenial = hasReadCapability(capabilities);
   const invariantSatisfied = !readRequiresOutboundDenial || page?.outboundDenied === true;
   return {
-    enabled: page?.type === 'html' && page?.scriptsEnabled !== false && capabilities.length > 0 && invariantSatisfied,
+    enabled: page?.type === 'html' && page?.scriptsEnabled !== false && invariantSatisfied,
     invariantSatisfied,
     capabilities,
   };

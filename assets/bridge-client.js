@@ -37,6 +37,17 @@
   });
 
   window.zylosPages = Object.freeze({ request });
+  document.addEventListener('click', event => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target?.closest?.('a[href]');
+    if (!anchor || anchor.hasAttribute('download')) return;
+    const rawHref = anchor.getAttribute('href');
+    if (!rawHref || rawHref.startsWith('#')) return;
+    event.preventDefault();
+    request('page.open', { href: rawHref }).catch(error => {
+      console.warn('[zylos-pages] page.open rejected', error?.code || 'bridge_error');
+    });
+  });
   const announceReady = () => parent.postMessage({ type: 'zylos-pages:bridge-ready' }, '*');
   announceReady();
   readyTimer = setInterval(announceReady, 250);
