@@ -297,8 +297,14 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
     const config = baseConfig(contentDir);
     delete config.security.htmlArtifactSandboxDisabled;
     const artifactPath = path.join(contentDir, 'sandboxed.html');
-    await writeFile(artifactPath, '<!doctype html><title>Sandboxed</title><script>window.ok=true</script>');
+    const linkedPath = path.join(contentDir, 'linked.html');
+    const confidentialPath = path.join(contentDir, 'confidential.html');
+    await writeFile(artifactPath, '<!doctype html><title>Sandboxed</title><script>window.ok=true</script><a href="/p/linked#details">Linked</a>');
+    await writeFile(linkedPath, '<!doctype html><title>Linked</title>');
+    await writeFile(confidentialPath, '<!doctype html><title>Confidential</title>');
     const page = registerPage(config, 'sandboxed', artifactPath, 'Sandboxed');
+    registerPage(config, 'linked', linkedPath, 'Linked');
+    registerPage(config, 'confidential', confidentialPath, 'Confidential');
     const share = createShare('sandboxed', '24h');
 
     await withServer(config, async ({ origin, fetch: ownerFetch }) => {
@@ -308,6 +314,10 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
       assert.match(ownerShellBody, /sandbox="allow-scripts"/);
       assert.doesNotMatch(ownerShellBody, /allow-same-origin/);
       assert.match(ownerShellBody, /sandboxed\?raw=1/);
+      assert.match(ownerShellBody, /data-page-open-base="\/sandboxed"/);
+      for (const route of ['/p/linked', '/linked', '/p/confidential', '/confidential']) {
+        assert.match(ownerShellBody, new RegExp(`&quot;${route}&quot;`));
+      }
 
       const missingDest = await ownerFetch(`${origin}/sandboxed?raw=1`);
       assert.equal(missingDest.status, 403);
@@ -352,7 +362,11 @@ test('enabled HTML sandbox uses trusted shells and rejects non-iframe raw naviga
       assert.match(shareShellBody, /sandbox="allow-scripts"/);
       assert.match(shareShellBody, new RegExp(`/s/${share.tokenId}\\?raw=1`));
       assert.match(shareShellBody, new RegExp(`data-bridge-endpoint="/api/bridge/${page.pageId}"`));
-      assert.match(shareShellBody, /data-page-open-paths="[^"]*&quot;\/p\/sandboxed&quot;[^"]*"/);
+      assert.match(shareShellBody, /data-page-open-base="\/sandboxed"/);
+      assert.match(shareShellBody, /data-page-open-paths="[^"]*&quot;\/p\/linked&quot;[^"]*"/);
+      assert.match(shareShellBody, /data-page-open-paths="[^"]*&quot;\/linked&quot;[^"]*"/);
+      assert.doesNotMatch(shareShellBody, /&quot;\/p\/confidential&quot;|&quot;\/confidential&quot;/);
+      assert.doesNotMatch(shareShellBody, /&quot;\/p\/sandboxed&quot;|&quot;\/sandboxed&quot;/);
       assert.doesNotMatch(shareShellBody, /<script>window\.ok=true<\/script>/);
 
       const rejectedShareRaw = await fetch(`${origin}/s/${share.tokenId}?raw=1`);

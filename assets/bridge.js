@@ -3,14 +3,18 @@
   if (!iframe) return;
 
   const endpoint = iframe.dataset.bridgeEndpoint;
-  const expectedSrc = iframe.dataset.bridgeSrc;
-  if (!expectedSrc) return;
+  const configuredSrc = iframe.dataset.bridgeSrc;
+  if (!configuredSrc) return;
+  const expectedSrc = `${configuredSrc}${window.location.hash || ''}`;
   const hasQueryDelimiter = url => {
     const hrefWithoutHash = url.hash ? url.href.slice(0, -url.hash.length) : url.href;
     return hrefWithoutHash.includes('?');
   };
   let pageOpenPaths;
+  let pageOpenBase;
   try {
+    pageOpenBase = new URL(iframe.dataset.pageOpenBase, window.location.href);
+    if (pageOpenBase.origin !== window.location.origin || hasQueryDelimiter(pageOpenBase) || pageOpenBase.hash) return;
     const configuredPaths = JSON.parse(iframe.dataset.pageOpenPaths || '[]');
     if (!Array.isArray(configuredPaths) || configuredPaths.some(path => typeof path !== 'string')) return;
     pageOpenPaths = new Set(configuredPaths.map(path => {
@@ -43,7 +47,7 @@
     }
     let target;
     try {
-      target = new URL(input.href, window.location.href);
+      target = new URL(input.href, pageOpenBase);
     } catch {
       return bridgeError('invalid_url', 'page.open href must be a valid URL');
     }

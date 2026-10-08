@@ -133,6 +133,10 @@ their normal in-frame behavior:
 <!-- Cross-page: navigates the Pages shell to this registered view -->
 <a href="/pages/p/reports/q3-summary">Q3 summary</a>
 
+<!-- Legacy and relative registered view paths are also supported -->
+<a href="/pages/reports/q3-summary">Q3 summary (legacy)</a>
+<a href="q3-summary">Q3 summary (relative)</a>
+
 <!-- Same-page fragment: navigates within this document — keep default behavior -->
 <a href="#findings">Jump to findings</a>
 ```
@@ -140,8 +144,10 @@ their normal in-frame behavior:
 Same-site navigation is limited to exact registered page-view paths. Fragments
 are allowed; query strings, URL credentials, unregistered paths, APIs,
 `_assets`, admin/share-management paths, and handoff paths are rejected. Share
-viewers can follow a registered same-site link, but a private target will send
-an unauthenticated viewer to login rather than inherit the source share.
+viewers receive only the registered destinations actually linked by the shared
+artifact; other registered paths are not disclosed to the share shell. Opening
+a private target sends an unauthenticated viewer to login rather than inheriting
+the source share.
 
 External links allow only HTTP(S). They open in a new browsing context with
 `noopener,noreferrer` when the page permits outbound access, and are rejected

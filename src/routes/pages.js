@@ -13,7 +13,7 @@ import {
 import { rewriteSignedOwnerAssetRefs, rewriteSignedShareAssetRefs } from '../pages/asset-resolver.js';
 import { attachmentDescriptorMetadata, sendAttachmentDownload } from '../pages/attachment-page.js';
 import { resolvePageDescriptor } from '../security/pathGuard.js';
-import { scanPages } from '../pages/navigation.js';
+import { pageOpenPaths, scanPages } from '../pages/navigation.js';
 import { logger } from '../utils/logger.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
 import {
@@ -245,7 +245,17 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         bridgeEndpoint: sandboxEnabled && policy.enabled
           ? browserPath(browserBase, `api/bridge/${logicalPage.pageId}`)
           : null,
-        pageOpenPaths: navigationPages?.map(page => browserPath(browserBase, page.slug)) || [],
+        pageOpenBase: browserPath(
+          browserBase,
+          displaySlug.startsWith('p/') ? displaySlug.slice(2) : displaySlug,
+        ),
+        pageOpenPaths: navigationPages ? pageOpenPaths({
+          pages: navigationPages,
+          browserBase,
+          html: result.html,
+          currentSlug: displaySlug,
+          linkedOnly: isShareViewer,
+        }) : [],
         outboundDenied: logicalPage?.outboundDenied === true,
       });
       if (isShareViewer) {

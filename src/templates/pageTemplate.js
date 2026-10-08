@@ -178,11 +178,12 @@ export function htmlArtifactTemplate({
   sandboxed = false,
   scriptsEnabled = true,
   bridgeEndpoint = null,
+  pageOpenBase = '',
   pageOpenPaths = [],
   outboundDenied = false,
 }) {
   const pageOpenData = bridgeEndpoint
-    ? ` data-page-open-paths="${escapeHtml(JSON.stringify(pageOpenPaths))}" data-outbound-denied="${outboundDenied ? 'true' : 'false'}"`
+    ? ` data-page-open-base="${escapeHtml(pageOpenBase)}" data-page-open-paths="${escapeHtml(JSON.stringify(pageOpenPaths))}" data-outbound-denied="${outboundDenied ? 'true' : 'false'}"`
     : '';
   return `<!DOCTYPE html>
 <html lang="en">

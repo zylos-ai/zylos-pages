@@ -34,7 +34,7 @@ async function flush() {
   await new Promise(resolve => setImmediate(resolve));
 }
 
-async function createShellBridge({ outboundDenied = false, userActive = true } = {}) {
+async function createShellBridge({ outboundDenied = false, userActive = true, locationHash = '' } = {}) {
   const source = await readFile(new URL('../assets/bridge.js', import.meta.url), 'utf8');
   const windowListeners = new Map();
   const iframeListeners = new Map();
@@ -48,7 +48,8 @@ async function createShellBridge({ outboundDenied = false, userActive = true } =
     dataset: {
       bridgeEndpoint: '/api/bridge/page-id',
       bridgeSrc: '/p/current?raw=1',
-      pageOpenPaths: JSON.stringify(['/p/current', '/p/other', '/p/\u62a5\u544a']),
+      pageOpenBase: '/current',
+      pageOpenPaths: JSON.stringify(['/p/current', '/current', '/p/other', '/other', '/p/\u62a5\u544a', '/\u62a5\u544a']),
       outboundDenied: String(outboundDenied),
     },
     contentWindow: childWindow,
@@ -61,6 +62,7 @@ async function createShellBridge({ outboundDenied = false, userActive = true } =
   const location = {
     href: 'https://pages.example.test/p/current',
     origin: 'https://pages.example.test',
+    hash: locationHash,
     assign(href) { assigned.push(href); },
   };
   const window = {
@@ -101,7 +103,7 @@ async function createShellBridge({ outboundDenied = false, userActive = true } =
     await flush();
     return response;
   };
-  return { activation, assigned, opened, forwarded, request };
+  return { activation, assigned, iframe, opened, forwarded, request };
 }
 
 test('trusted shell bridge provisions once, preserves concurrency accounting, and revokes on navigation', async () => {
@@ -115,7 +117,12 @@ test('trusted shell bridge provisions once, preserves concurrency accounting, an
     },
   };
   const iframe = {
-    dataset: { bridgeEndpoint: '/api/bridge/page-id', bridgeSrc: '/p/expected?raw=1' },
+    dataset: {
+      bridgeEndpoint: '/api/bridge/page-id',
+      bridgeSrc: '/p/expected?raw=1',
+      pageOpenBase: '/expected',
+      pageOpenPaths: '[]',
+    },
     contentWindow: childWindow,
     addEventListener(type, listener) { iframeListeners.set(type, listener); },
   };
@@ -124,7 +131,15 @@ test('trusted shell bridge provisions once, preserves concurrency accounting, an
   const fetchGate = new Promise(resolve => { releaseFetch = resolve; });
   const context = {
     document: { querySelector: () => iframe },
-    window: { addEventListener(type, listener) { windowListeners.set(type, listener); } },
+    window: {
+      location: { href: 'https://pages.example.test/expected', origin: 'https://pages.example.test', hash: '' },
+      addEventListener(type, listener) { windowListeners.set(type, listener); },
+    },
+    URL,
+    Set,
+    JSON,
+    Object,
+    Array,
     MessageChannel: FakeMessageChannel,
     fetch: async (endpoint, options) => {
       calls.push({ endpoint, body: JSON.parse(options.body) });
@@ -180,6 +195,14 @@ test('trusted shell handles page.open locally and allows only registered same-si
   response = await bridge.request('page.open', { href: '/p/%E6%8A%A5%E5%91%8A#details' });
   assert.equal(response.ok, true);
   assert.equal(bridge.assigned[1], 'https://pages.example.test/p/%E6%8A%A5%E5%91%8A#details');
+
+  response = await bridge.request('page.open', { href: '/other#legacy' });
+  assert.equal(response.ok, true);
+  assert.equal(bridge.assigned[2], 'https://pages.example.test/other#legacy');
+
+  response = await bridge.request('page.open', { href: 'other#relative' });
+  assert.equal(response.ok, true);
+  assert.equal(bridge.assigned[3], 'https://pages.example.test/other#relative');
 
   const rejected = [
     ['/p/other?', 'navigation_denied'],
@@ -237,6 +260,12 @@ test('trusted shell requires activation and enforces per-page outbound denial', 
   assert.equal(response.error.code, 'invalid_request');
 });
 
+test('trusted shell propagates the page fragment into the raw iframe URL', async () => {
+  const bridge = await createShellBridge({ locationHash: '#details' });
+  assert.equal(bridge.assigned.length, 0);
+  assert.equal(bridge.iframe.src, '/p/current?raw=1#details');
+});
+
 test('sandbox bridge client re-announces readiness when the trusted shell probes', async () => {
   const source = await readFile(new URL('../assets/bridge-client.js', import.meta.url), 'utf8');
   const listeners = new Map();
@@ -271,6 +300,7 @@ test('sandbox bridge client intercepts only unmodified primary cross-page clicks
   const windowListeners = new Map();
   const documentListeners = new Map();
   const parent = { postMessage() {} };
+  const warnings = [];
   const window = {
     addEventListener(type, listener) { windowListeners.set(type, listener); },
     dispatchEvent() {},
@@ -288,6 +318,7 @@ test('sandbox bridge client intercepts only unmodified primary cross-page clicks
     Object,
     Promise,
     Map,
+    console: { warn: (...args) => warnings.push(args) },
   });
 
   const channel = new FakeMessageChannel();
@@ -323,7 +354,29 @@ test('sandbox bridge client intercepts only unmodified primary cross-page clicks
   assert.equal(ordinary.prevented, true);
   assert.equal(requests.length, 1);
   assert.equal(requests[0].operation, 'page.open');
-  assert.equal(requests[0].input.href, anchor.href);
+  assert.equal(requests[0].input.href, '/p/other#details');
+
+  channel.port1.onmessage = ({ data }) => {
+    requests.push(data);
+    channel.port1.postMessage({
+      id: data.id,
+      ok: false,
+      error: { code: 'navigation_denied', message: 'same-site target is not a registered page view' },
+    });
+  };
+  const denied = {
+    ...ordinary,
+    prevented: false,
+    target: { closest: () => ({
+      ...anchor,
+      href: 'https://pages.example.test/p/denied',
+      getAttribute: () => '/p/denied',
+    }) },
+  };
+  click(denied);
+  await flush();
+  assert.equal(denied.prevented, true);
+  assert.deepEqual(warnings, [['[zylos-pages] page.open rejected', 'navigation_denied']]);
 
   const exceptions = [
     { defaultPrevented: true },
@@ -359,5 +412,5 @@ test('sandbox bridge client intercepts only unmodified primary cross-page clicks
     assert.equal(event.prevented, false, JSON.stringify(exception));
   }
   await flush();
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
 });
