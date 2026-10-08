@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.15.1] - 2026-10-09
+
+### Fixed
+
+- **Sandboxed HTML pages can navigate through the trusted shell again.**
+  User-activated links can open exact registered owner-page paths, including
+  canonical, legacy, relative, and fragment forms. Share visitors are sent
+  through owner authentication instead of receiving access to private pages.
+- **Cross-page fragments and rejected-navigation diagnostics are preserved.**
+  Allowed targets retain their `#fragment`, while denied targets emit a stable
+  warning and error code. API routes, raw-query variants, script-initiated
+  opens, and outbound-denied external links remain blocked by the existing
+  capability checks.
+
 ## [0.15.0] - 2026-10-06
 
 ### Added
