@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Local reading annotations for Markdown and script-enabled sandboxed HTML:
+  select text, save a comment, restore it after refresh, and manage annotations
+  from the lower-right reader control. Copy Prompt exports readable Markdown
+  quotes and comments, with a manual-copy fallback.
+- Isolated browser storage per page, mount and viewing context, conservative
+  quote relocation, stale-edit checks, and explicit storage/unavailable states.
+  HTML annotation messages carry anchors only and do not grant backend access.
+
 ## [0.15.1] - 2026-10-09
 
 ### Fixed

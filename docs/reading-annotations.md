@@ -1,0 +1,52 @@
+# Reading annotations
+
+Markdown readers and script-enabled sandboxed HTML readers support local text
+annotations. Selecting text opens **Annotate**. The lower-right **Annotations**
+control shows the count and provides locate, edit, individual delete, confirmed
+clear, and **Copy Prompt**. Selecting an existing highlight opens its matching
+entries, including overlapping annotations.
+
+Copy Prompt uses simple Markdown: a document reference, numbered original quotes,
+and comments. Internal positions and record identifiers are not exported. Share
+readers export the title instead of a bearer URL. Clipboard rejection reveals
+the complete prompt for manual copying; long prompts are never truncated.
+
+## Storage and recovery
+
+- Records remain in the current browser profile's localStorage. They are not
+  uploaded, automatically sent to an Agent, synchronized across devices, or
+  guaranteed to survive site-data clearing or private browsing.
+- Mount path, stable page ID and owner/share context isolate storage. Each share
+  has its own non-secret hashed scope. Theme keys and other pages are untouched.
+- Each annotation has its own key. A storage event refreshes other tabs. Editing
+  and deleting check the previously read record; conflicts retain the draft.
+  Concurrent writes to one record still have localStorage's last-write behavior.
+- Quote, comment and page limits are 10,000 UTF-16 units, 4,000 units and 200
+  records. Quota/storage failures retain the editor draft. Corrupt records are
+  reported and preserved until an explicit scope clear.
+- Recovery verifies the original position against a text revision, then uses a
+  unique quote and its surrounding context. Missing/ambiguous references remain
+  available in the list and export, with an explicit location warning. They are
+  not highlighted at an arbitrary occurrence.
+
+## HTML boundaries
+
+The trusted reader shell owns comments, editing and persistence. A dedicated
+MessageChannel exchanges only selections, anchor IDs and positioning data with
+the current iframe. It never exposes comments, storage keys or share credentials
+to the artifact and does not invoke the backend bridge. The existing sandbox,
+CSP and page capabilities remain in force.
+
+HTML with scripts disabled, HTML with the sandbox disabled, and downloadable
+non-DOM attachments do not support annotation selection. Unsupported HTML
+configurations show an unavailable reader control. A hostile artifact can alter
+its own text or selection reports: quotes are user-confirmed reading snapshots,
+not authenticated content proofs.
+
+## Verification
+
+Run the normal suite with `npm test`. Browser tests activate when both
+`PAGES_PLAYWRIGHT_CORE_PATH` and `PAGES_CHROMIUM_PATH` point to installed
+Playwright and Chromium. `PAGES_ANNOTATIONS_EVIDENCE_DIR` optionally retains
+screenshots. Browser viewport/touch emulation does not prove real iOS Safari or
+Android Chrome long-press selection; those require separate device validation.
