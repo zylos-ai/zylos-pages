@@ -58,6 +58,7 @@
   manual.append(manualLabel, manualText);
   panel.append(heading, status, editor, confirmation, actions, manual, list); host.append(panel);
   let store, records = [], candidate = null, editing = null, index = null;
+  let markdownObserver, mutationTimer;
   let port = null, generation = '', portReady = false, handshakeTimer, rateTime = 0, rateCount = 0;
   const locations = new Map();
   let activeIds = new Set();
@@ -155,7 +156,8 @@
   }
   function updateLocations() {
     if (root) {
-      index = core.buildTextIndex(root);
+      if (!records.length) { window.CSS?.highlights?.delete('pages-annotations'); return; }
+      index = markdownIndex();
       const ranges = [];
       for (const record of records) {
         const range = core.rangeForAnchor(index, record);
@@ -169,7 +171,7 @@
   }
   function locate(record) {
     if (frame) { send({ type: 'locate', id: record.id }); return; }
-    index = core.buildTextIndex(root);
+    index = markdownIndex();
     const range = core.rangeForAnchor(index, record);
     if (!range) { refresh(); return; }
     const target = range.startContainer.parentElement;
@@ -201,6 +203,17 @@
     } catch { status.textContent = 'Could not prepare a safe prompt.'; }
   }
   function send(message) { if (port && portReady) port.postMessage({ ...message, version: 1, generation }); }
+  function invalidateMarkdownIndex() {
+    index = null;
+    clearTimeout(mutationTimer);
+    mutationTimer = setTimeout(() => { updateLocations(); renderList(); }, 200);
+  }
+  function markdownIndex() {
+    // Drain pending mutations too, so synchronous selection/locate never uses stale nodes.
+    if (markdownObserver?.takeRecords().length) invalidateMarkdownIndex();
+    if (!index) index = core.buildTextIndex(root);
+    return index;
+  }
   function disconnect() {
     clearTimeout(handshakeTimer); port?.close(); port = null; portReady = false;
     clearCandidate(); locations.clear();
@@ -249,8 +262,11 @@
       clearTimeout(selectionTimer);
       selectionTimer = setTimeout(() => {
         if (!editor.hidden) return;
-        index = core.buildTextIndex(root);
-        const selection = window.getSelection(); const anchor = core.selectionAnchor(index, selection);
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || selection.rangeCount !== 1 ||
+            !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) { clearCandidate(); return; }
+        index = markdownIndex();
+        const anchor = core.selectionAnchor(index, selection);
         if (!anchor) { clearCandidate(); return; }
         const rect = selection.getRangeAt(0).getBoundingClientRect();
         setCandidate(anchor, rect);
@@ -260,17 +276,16 @@
     document.addEventListener('pointerup', selectionChanged);
     document.addEventListener('keyup', selectionChanged);
     root.addEventListener('click', event => {
-      if (!window.getSelection()?.isCollapsed) return;
-      index = core.buildTextIndex(root);
+      if (!records.length || !window.getSelection()?.isCollapsed) return;
+      index = markdownIndex();
       const ids = records.filter(record => {
         const range = core.rangeForAnchor(index, record);
         return range && [...range.getClientRects()].some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom);
       }).map(record => record.id);
       if (ids.length) activate(ids);
     });
-    let mutationTimer;
-    new MutationObserver(() => { clearTimeout(mutationTimer); mutationTimer = setTimeout(() => { updateLocations(); renderList(); }, 200); })
-      .observe(root, { childList: true, characterData: true, subtree: true });
+    markdownObserver = new MutationObserver(invalidateMarkdownIndex);
+    markdownObserver.observe(root, { childList: true, characterData: true, attributes: true, subtree: true });
   } else if (!unavailable) {
     frame.addEventListener('load', connect);
     window.addEventListener('message', event => {
@@ -282,6 +297,7 @@
   window.addEventListener('pagehide', disconnect);
   window.addEventListener('pageshow', event => {
     if (event.persisted) {
+      index = null;
       if (frame && !unavailable) connect();
       refresh();
     }

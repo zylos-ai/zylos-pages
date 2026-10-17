@@ -11,6 +11,104 @@ const playwrightPath = process.env.PAGES_PLAYWRIGHT_CORE_PATH;
 const chromiumPath = process.env.PAGES_CHROMIUM_PATH;
 const available = playwrightPath && chromiumPath && fs.existsSync(playwrightPath) && fs.existsSync(chromiumPath);
 
+test('Markdown annotation index is lazy, reused on long documents, and invalidated by body changes', {
+  skip: available ? false : 'set PAGES_PLAYWRIGHT_CORE_PATH and PAGES_CHROMIUM_PATH for browser coverage',
+  timeout: 60_000,
+}, async () => {
+  const require = createRequire(import.meta.url);
+  const { chromium } = require(playwrightPath);
+  const assets = new Map(['annotations-core.js', 'annotations.js', 'annotations.css'].map(name =>
+    [`/${name}`, fs.readFileSync(path.resolve(import.meta.dirname, '../assets', name))]));
+  const probe = `window.annotationIndexBuilds = [];
+    window.PagesAnnotationsCore = { ...window.PagesAnnotationsCore, buildTextIndex(root) {
+      const start = performance.now();
+      const index = originalCore.buildTextIndex(root);
+      window.annotationIndexBuilds.push(performance.now() - start);
+      return index;
+    } };`;
+  const fixture = `<!doctype html><html><head><title>Long Markdown</title>
+    <link rel="stylesheet" href="/annotations.css">
+    <script src="/annotations-core.js"></script><script src="/probe.js"></script>
+    <script src="/annotations.js" defer></script></head><body>
+    <article class="markdown-body"><p id="quote">Unique long document selection.</p>
+    <p id="bulk">${'Long readable text. '.repeat(35000)}</p>
+    <p id="visibility" hidden>Newly visible selection.</p></article>
+    <section id="pages-annotations" data-base-namespace="/" data-viewer-scope="owner"
+      data-page-id="long-markdown" data-document-url="/p/long-markdown"></section></body></html>`;
+  assert.ok(Buffer.byteLength(fixture) < 1048576, 'fixture stays below the default 1 MiB file limit');
+  const server = http.createServer((req, res) => {
+    if (assets.has(req.url)) {
+      res.setHeader('Content-Type', req.url.endsWith('.css') ? 'text/css' : 'application/javascript');
+      res.end(assets.get(req.url));
+    } else if (req.url === '/probe.js') {
+      res.setHeader('Content-Type', 'application/javascript');
+      res.end(`const originalCore = window.PagesAnnotationsCore;${probe}`);
+    } else { res.setHeader('Content-Type', 'text/html'); res.end(fixture); }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  let browser;
+  try {
+    browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    await page.goto(`http://127.0.0.1:${server.address().port}/p/long-markdown`);
+    await page.locator('.annotation-launcher').waitFor();
+    const builds = () => page.evaluate(() => window.annotationIndexBuilds.length);
+    const settled = () => page.waitForTimeout(350);
+    await page.locator('#quote').click();
+    await settled();
+    assert.equal(await builds(), 0, 'ordinary clicks with zero annotations never index the document');
+    await select(page, '#quote', 'Unique long document selection.');
+    await page.locator('.annotation-add').waitFor({ state: 'visible' });
+    assert.equal(await builds(), 1, 'the first real selection builds one index');
+    await page.evaluate(() => {
+      const range = document.createRange(); range.selectNodeContents(document.querySelector('#quote'));
+      range.setEnd(document.querySelector('#quote').firstChild, 'Unique long document'.length);
+      getSelection().removeAllRanges(); getSelection().addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    });
+    await settled();
+    assert.equal(await builds(), 1, 'selection adjustment reuses the unchanged index');
+    await saveSelection(page, 'Long document comment');
+    await count(page, 1);
+    await page.getByRole('button', { name: 'Locate', exact: true }).click();
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await page.evaluate(() => window.getSelection().removeAllRanges());
+    await page.locator('#quote').click();
+    await settled();
+    assert.equal(await builds(), 1, 'save, locate and highlight clicks reuse the index');
+
+    await page.evaluate(() => { document.querySelector('#bulk').firstChild.data += ' Extra text.'; });
+    await settled();
+    assert.equal(await builds(), 2, 'characterData invalidates the index');
+    await page.evaluate(() => document.querySelector('#visibility').removeAttribute('hidden'));
+    await settled();
+    assert.equal(await builds(), 3, 'visibility attributes invalidate the index');
+    await page.locator('#visibility').scrollIntoViewIfNeeded();
+    await select(page, '#visibility', 'Newly visible selection.');
+    await page.locator('.annotation-add').waitFor({ state: 'visible' });
+    assert.equal(await builds(), 3, 'newly visible text is selectable using the refreshed index');
+    await page.evaluate(() => {
+      window.getSelection().removeAllRanges();
+      const paragraph = document.createElement('p'); paragraph.textContent = 'Inserted selection.';
+      document.querySelector('.markdown-body').prepend(paragraph);
+    });
+    await settled();
+    assert.equal(await builds(), 4, 'childList invalidates the index');
+    assert.equal(await page.locator('.annotation-unmatched').count(), 0, 'stored quote relocates after insertion');
+    await page.evaluate(() => {
+      document.querySelector('#quote').textContent = 'The original quote was removed.';
+      document.querySelector('.markdown-body').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settled();
+    assert.equal(await builds(), 5, 'a same-task click drains pending mutations before reusing the index');
+    assert.equal(await page.locator('.annotation-unmatched').count(), 1, 'removed text never uses a stale cached match');
+    console.log('Long Markdown index builds:', JSON.stringify(await page.evaluate(() => window.annotationIndexBuilds)));
+  } finally {
+    await browser?.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
 test('annotations persist and manage Markdown and opaque HTML without backend capabilities', {
   skip: available ? false : 'set PAGES_PLAYWRIGHT_CORE_PATH and PAGES_CHROMIUM_PATH for browser coverage',
   timeout: 120_000,
