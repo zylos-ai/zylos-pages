@@ -17,12 +17,32 @@
     const node = element('button', className, text);
     node.type = 'button'; node.addEventListener('click', action); parent.append(node); return node;
   };
+  const icons = {
+    comment: '<path d="M21 15a4 4 0 0 1-4 4H7l-4 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z"/>',
+    close: '<path d="m6 6 12 12M6 18 18 6"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    locate: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
+    edit: '<path d="m16 3 5 5-12 12-6 1 1-6ZM14 5l5 5"/>',
+    delete: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+  };
+  function decorate(node, name, label, text) {
+    // Match the reader's existing inline stroke-icon convention.
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    for (const [key, value] of Object.entries({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.7', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true' })) svg.setAttribute(key, value);
+    svg.innerHTML = icons[name];
+    node.replaceChildren(svg);
+    if (text !== undefined) node.append(element('span', 'annotation-count', text));
+    node.setAttribute('aria-label', label); node.title = label;
+    return node;
+  }
   const launcher = button('Annotations (0)', () => {
     panel.hidden = !panel.hidden;
     launcher.setAttribute('aria-expanded', String(!panel.hidden));
     if (!panel.hidden) { refresh(); closeButton.focus(); }
   }, host, 'annotation-launcher');
   launcher.setAttribute('aria-expanded', 'false'); launcher.setAttribute('aria-controls', 'annotation-panel');
+  decorate(launcher, 'comment', 'Annotations (0)', '0');
   const add = button('Annotate', () => openEditor(candidate), host, 'annotation-add');
   add.hidden = true;
   add.addEventListener('pointerdown', event => event.preventDefault());
@@ -30,15 +50,33 @@
   panel.id = 'annotation-panel'; panel.hidden = true;
   panel.setAttribute('role', 'region'); panel.setAttribute('aria-label', 'Annotations');
   const heading = element('div', 'annotation-heading');
-  heading.append(element('h2', '', 'Annotations'));
+  const title = element('h2', '', 'Annotations · 0');
+  heading.append(title);
   const closeButton = button('Close', () => {
     panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); launcher.focus();
   }, heading);
+  closeButton.className = 'annotation-icon';
+  decorate(closeButton, 'close', 'Close');
   const status = element('p', 'annotation-status', 'Saved in this browser');
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
-  const actions = element('div', 'annotation-actions');
-  const copy = button('Copy Prompt', copyPrompt, actions);
-  const clear = button('Clear all', confirmClear, actions);
+  const actions = element('div', 'annotation-actions annotation-toolbar');
+  const copy = button('Copy Prompt', copyPrompt, actions, 'annotation-primary');
+  decorate(copy, 'copy', 'Copy Prompt', 'Copy annotations');
+  const moreWrap = element('div', 'annotation-more'); actions.append(moreWrap);
+  const more = button('More actions', () => {
+    menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden));
+    if (!menu.hidden) clear.focus();
+  }, moreWrap, 'annotation-icon');
+  decorate(more, 'more', 'More actions');
+  more.setAttribute('aria-expanded', 'false'); more.setAttribute('aria-controls', 'annotation-more-menu');
+  const menu = element('div', 'annotation-menu'); menu.id = 'annotation-more-menu'; menu.hidden = true;
+  moreWrap.append(menu);
+  const clear = button('Clear all', () => { closeMenu(); confirmClear(); }, menu, 'annotation-danger');
+  function closeMenu() { menu.hidden = true; more.setAttribute('aria-expanded', 'false'); }
+  document.addEventListener('click', event => { if (!moreWrap.contains(event.target)) closeMenu(); });
+  moreWrap.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.stopPropagation(); closeMenu(); more.focus(); }
+  });
   const list = element('ol', 'annotation-list');
   const editor = element('form', 'annotation-editor'); editor.hidden = true;
   const selectedQuote = element('blockquote', 'annotation-quote');
@@ -73,7 +111,10 @@
     status.textContent = unavailable
       ? 'Annotations unavailable for this document configuration.'
       : 'Browser storage unavailable. Annotations cannot be saved.';
-    if (unavailable) launcher.textContent = 'Annotations unavailable';
+    if (unavailable) {
+      launcher.textContent = 'Annotations unavailable';
+      launcher.setAttribute('aria-label', 'Annotations unavailable'); launcher.title = 'Annotations unavailable';
+    }
   }
 
   function report(error) {
@@ -134,12 +175,12 @@
       item.classList.toggle('annotation-active', activeIds.has(record.id));
       const quote = element('blockquote', 'annotation-quote', record.quote.exact);
       const comment = element('p', 'annotation-comment', record.comment);
-      const controls = element('div', 'annotation-actions');
+      const controls = element('div', 'annotation-actions annotation-item-actions');
       const matched = locations.get(record.id) === 'matched';
       if (!matched) item.append(element('p', 'annotation-unmatched', 'Original text changed or could not be located'));
-      button('Locate', () => locate(record), controls).disabled = !matched;
-      button('Edit', () => openEditor(record, record), controls);
-      button('Delete', () => ask('Delete this annotation?', () => store.remove(record.id, record)), controls);
+      decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate').disabled = !matched;
+      decorate(button('Edit', () => openEditor(record, record), controls, 'annotation-icon'), 'edit', 'Edit');
+      decorate(button('Delete', () => ask('Delete this annotation?', () => store.remove(record.id, record)), controls, 'annotation-icon'), 'delete', 'Delete');
       item.append(quote, comment, controls); list.append(item);
     }
     if (!records.length) list.append(element('li', 'annotation-status', 'No annotations'));
@@ -150,7 +191,8 @@
       const result = store.read(); records = result.records;
       status.textContent = result.corrupt.length ? 'Some saved records could not be read. They have been preserved.' : 'Saved in this browser';
     } catch (error) { report(error); return; }
-    launcher.textContent = `Annotations (${records.length})`;
+    decorate(launcher, 'comment', `Annotations (${records.length})`, String(records.length));
+    title.textContent = `Annotations · ${records.length}`;
     copy.disabled = !records.length; clear.disabled = !store;
     updateLocations(); renderList();
   }

@@ -236,6 +236,10 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       await otherTab.evaluate(() => window.testAnnotationStore.remove(window.testExtraAnnotation.id, window.testExtraAnnotation));
       await count(page, 1);
       await otherTab.close();
+      await page.getByRole('button', { name: 'More actions', exact: true }).click();
+      await page.keyboard.press('Escape');
+      assert.equal(await page.getByRole('button', { name: 'Clear all', exact: true }).isVisible(), false);
+      await page.getByRole('button', { name: 'More actions', exact: true }).click();
       await page.getByRole('button', { name: 'Clear all', exact: true }).click();
       await page.getByRole('button', { name: 'Cancel', exact: true }).click();
       await count(page, 1);
@@ -321,6 +325,9 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       assert.ok(childMessages.includes('anchors'), 'frame should receive only location anchors');
       assert.deepEqual(bridgeRequests, []);
       await snapshot(page, evidenceDir, `${label}-html`);
+      await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+      await snapshot(page, evidenceDir, `${label}-html-dark`);
+      await page.getByRole('button', { name: 'More actions', exact: true }).click();
       await page.getByRole('button', { name: 'Clear all', exact: true }).click();
       await page.getByRole('button', { name: 'Confirm', exact: true }).click();
       await count(page, 0);
@@ -360,7 +367,7 @@ async function saveSelection(page, comment) {
 }
 
 async function count(page, expected) {
-  await page.waitForFunction(value => document.querySelector('.annotation-launcher')?.textContent === `Annotations (${value})`, expected);
+  await page.waitForFunction(value => document.querySelector('.annotation-launcher')?.getAttribute('aria-label') === `Annotations (${value})`, expected);
 }
 
 async function rawFrame(page) {
@@ -374,6 +381,16 @@ async function snapshot(page, directory, label) {
   await page.screenshot({ path: path.join(directory, `${label}.png`), fullPage: true });
   const dimensions = await page.evaluate(() => ({ viewport: innerWidth, body: document.documentElement.scrollWidth }));
   assert.ok(dimensions.body <= dimensions.viewport + 1, `${label} has horizontal overflow`);
+  const panel = await page.locator('.annotation-panel').boundingBox();
+  const viewport = page.viewportSize();
+  assert.ok(panel.x >= 0 && panel.x + panel.width <= viewport.width + 1, `${label} panel fits horizontally`);
+  assert.ok(panel.y >= 0 && panel.y + panel.height <= viewport.height, `${label} panel fits vertically`);
+  assert.equal(await page.locator('.annotation-heading h2').innerText(), 'Annotations · 1');
+  for (const name of ['Locate', 'Edit', 'Delete']) {
+    const control = page.locator('.annotation-item-actions').getByRole('button', { name, exact: true });
+    assert.equal(await control.getAttribute('title'), name);
+    assert.equal(await control.locator('svg').count(), 1);
+  }
 }
 
 async function denyClipboard(page) {
