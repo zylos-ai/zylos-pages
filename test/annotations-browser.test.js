@@ -11,6 +11,73 @@ const playwrightPath = process.env.PAGES_PLAYWRIGHT_CORE_PATH;
 const chromiumPath = process.env.PAGES_CHROMIUM_PATH;
 const available = playwrightPath && chromiumPath && fs.existsSync(playwrightPath) && fs.existsSync(chromiumPath);
 
+test('annotation header keeps all controls inside narrow panels at 1, 10 and 200 records', {
+  skip: available ? false : 'set browser paths for browser coverage', timeout: 60_000,
+}, async () => {
+  const require = createRequire(import.meta.url);
+  const { chromium } = require(playwrightPath);
+  const evidenceDir = process.env.PAGES_ANNOTATIONS_EVIDENCE_DIR;
+  if (evidenceDir) await mkdir(evidenceDir, { recursive: true });
+  const assets = new Map(['style.css', 'annotations-core.js', 'annotations.js', 'annotations.css'].map(name =>
+    [`/${name}`, fs.readFileSync(path.resolve(import.meta.dirname, '../assets', name))]));
+  const fixture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/annotations.css">
+    <script src="/annotations-core.js"></script><script src="/annotations.js" defer></script></head>
+    <body><main class="markdown-body"><h1>Review notes</h1><p>A passage for annotation review.</p></main>
+    <section id="pages-annotations" data-base-namespace="/" data-viewer-scope="owner" data-page-id="narrow-count"></section></body></html>`;
+  const server = http.createServer((request, response) => {
+    const asset = assets.get(request.url);
+    response.setHeader('Content-Type', asset ? request.url.endsWith('.css') ? 'text/css' : 'text/javascript' : 'text/html');
+    response.end(asset || fixture);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  try {
+    for (const width of [320, 390]) {
+      const page = await browser.newPage({ viewport: { width, height: 720 } });
+      for (const records of [1, 10, 200]) {
+        await page.goto(origin);
+        await page.evaluate(total => {
+          const store = PagesAnnotationsCore.createStore(localStorage, { baseNamespace: '/', viewerScope: 'owner', pageId: 'narrow-count' });
+          store.clear(store.snapshot());
+          const index = PagesAnnotationsCore.buildTextIndex(document.querySelector('.markdown-body'));
+          const exact = 'A passage for annotation review.';
+          const start = index.text.indexOf(exact);
+          const anchor = { quote: { exact, prefix: '', suffix: '' }, textPosition: { start, end: start + exact.length, indexVersion: 1 }, contentRevision: index.contentRevision };
+          for (let i = 0; i < total; i++) store.add(anchor, `Review note ${i + 1}`);
+        }, records);
+        await page.reload(); await count(page, records); await page.locator('.annotation-launcher').click();
+        await page.evaluate(() => {
+          document.body.style.fontFamily = 'Arial, sans-serif';
+          document.querySelector('.annotation-heading h2').style.fontWeight = '600';
+        });
+        for (const theme of ['light', 'dark']) {
+          await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme);
+          const panel = await page.locator('.annotation-panel').boundingBox();
+          let right = panel.x;
+          for (const selector of ['h2', '.annotation-primary', '.annotation-more > button', ':scope > button']) {
+            const box = await page.locator('.annotation-heading').locator(selector).boundingBox();
+            assert.ok(box.x >= right && box.x + box.width <= panel.x + panel.width, `${width}px/${records}/${theme}: ${selector} inside panel and ordered`);
+            assert.ok(box.y >= panel.y && box.y + box.height <= panel.y + panel.height, `${selector} inside panel vertically`);
+            right = box.x + box.width;
+          }
+          const heading = page.locator('.annotation-heading h2');
+          assert.equal(await heading.innerText(), `Annotations · ${records}`);
+          assert.equal(await heading.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'count remains visible');
+          if (evidenceDir && records > 1) await page.screenshot({ path: path.join(evidenceDir, `header-${width}-${records}-${theme}.png`) });
+        }
+        await page.getByRole('button', { name: 'More actions', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: 'Clear all', exact: true }).isVisible(), true);
+        await page.keyboard.press('Escape');
+        await page.getByRole('button', { name: 'Close', exact: true }).click();
+        assert.equal(await page.locator('.annotation-panel').isVisible(), false, 'close stays reachable at every count');
+      }
+      await page.close();
+    }
+  } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+});
+
 test('Markdown annotation index is lazy, reused on long documents, and invalidated by body changes', {
   skip: available ? false : 'set PAGES_PLAYWRIGHT_CORE_PATH and PAGES_CHROMIUM_PATH for browser coverage',
   timeout: 60_000,
@@ -249,6 +316,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       const darkBackground = await page.locator('.annotation-panel').evaluate(node => getComputedStyle(node).backgroundColor);
       assert.notEqual(darkBackground, lightBackground, 'annotation panel must follow dark theme');
       await snapshot(page, evidenceDir, `${label}-markdown-dark`);
+      if (viewport.width === 320) await multiCountHeader(page, evidenceDir, label);
       await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
       const ownerStorage = await page.evaluate(() => Object.entries(localStorage).filter(([key]) => key.startsWith('zylos-pages:annotations:')));
       const shareContext = await browser.newContext({ viewport });
@@ -408,4 +476,32 @@ async function denyClipboard(page) {
   await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {
     configurable: true, value: { writeText: () => Promise.reject(new Error('test denial')) }
   }));
+}
+
+async function multiCountHeader(page, directory, label) {
+  for (const total of [10, 200]) {
+    await page.evaluate(count => {
+      const host = document.getElementById('pages-annotations');
+      const store = PagesAnnotationsCore.createStore(localStorage, { baseNamespace: host.dataset.baseNamespace, viewerScope: host.dataset.viewerScope, pageId: host.dataset.pageId });
+      const anchor = store.read().records[0];
+      window.headerExtraRecords ||= [];
+      for (let i = store.read().records.length; i < count; i++) window.headerExtraRecords.push(store.add(anchor, `Extra note ${i}`));
+      window.dispatchEvent(new StorageEvent('storage', { key: store.prefix }));
+    }, total);
+    await count(page, total);
+    const panel = await page.locator('.annotation-panel').boundingBox();
+    for (const name of ['Copy Prompt', 'More actions', 'Close']) {
+      const box = await page.locator('.annotation-heading').getByRole('button', { name, exact: true }).boundingBox();
+      assert.ok(box.x >= panel.x && box.x + box.width <= panel.x + panel.width, `${total} records: ${name} stays inside real page panel`);
+    }
+    await page.screenshot({ path: path.join(directory, `${label}-${total}-records.png`) });
+  }
+  await page.evaluate(() => {
+    const host = document.getElementById('pages-annotations');
+    const store = PagesAnnotationsCore.createStore(localStorage, { baseNamespace: host.dataset.baseNamespace, viewerScope: host.dataset.viewerScope, pageId: host.dataset.pageId });
+    for (const record of window.headerExtraRecords) store.remove(record.id, record);
+    window.headerExtraRecords = [];
+    window.dispatchEvent(new StorageEvent('storage', { key: store.prefix }));
+  });
+  await count(page, 1);
 }
