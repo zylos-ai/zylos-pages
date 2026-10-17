@@ -17,13 +17,16 @@
 #pages-annotations .annotation-primary:hover { background: var(--color-accent-hover, #4f46e5); }
 .annotation-launcher { min-width: 66px; height: 42px; font-variant-numeric: tabular-nums; }
 .annotation-heading { flex-wrap: nowrap; margin-bottom: 4px; }
-.annotation-toolbar { flex-wrap: nowrap; padding: 12px 0; border-bottom: 1px solid var(--color-border, #ddd); }
+.annotation-toolbar { flex-wrap: nowrap; gap: 4px; margin-left: auto; flex: none; }
+#pages-annotations .annotation-heading .annotation-icon { width: 30px; height: 30px; min-height: 30px; padding: 6px; }
+#pages-annotations .annotation-heading .annotation-primary { height: 30px; min-height: 30px; padding: 4px 8px; gap: 5px; font-size: 12px; white-space: nowrap; }
+#pages-annotations .annotation-heading .annotation-primary svg { width: 14px; height: 14px; }
 .annotation-more { position: relative; }
 .annotation-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 3; min-width: 150px; padding: 4px; background: var(--color-panel, #fff); border: 1px solid var(--color-border, #ddd); border-radius: 6px; box-shadow: 0 4px 16px #0002; }
 #pages-annotations .annotation-menu button { width: 100%; border-color: transparent; justify-content: flex-start; white-space: nowrap; }
 #pages-annotations .annotation-danger { color: var(--color-danger, #a13b25); }
 .annotation-item-actions { justify-content: flex-end; gap: 4px; flex-wrap: nowrap; }
-.annotation-heading h2 { font-size: 17px; margin: 0; }
+.annotation-heading h2 { font-size: 17px; margin: 0; white-space: nowrap; }
 .annotation-status { margin: 8px 0; font-size: 12px; color: var(--color-text-secondary, #666); overflow-wrap: anywhere; }
 .annotation-list { padding: 0; margin: 0; list-style: none; }
 .annotation-item { padding: 14px 0 10px; border-bottom: 1px solid var(--color-border, #ddd); }

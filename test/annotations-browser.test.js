@@ -157,9 +157,9 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
   let browser;
   try {
     browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-      const label = viewport.width === 390 ? 'mobile' : 'desktop';
-      const context = await browser.newContext({ viewport, isMobile: viewport.width === 390, hasTouch: viewport.width === 390 });
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 320, height: 720 }]) {
+      const label = viewport.width === 320 ? 'mobile-narrow' : viewport.width === 390 ? 'mobile' : 'desktop';
+      const context = await browser.newContext({ viewport, isMobile: viewport.width < 500, hasTouch: viewport.width < 500 });
       // Capture only annotation messages delivered to the artifact, to verify comment isolation.
       await context.addInitScript(() => {
         window.annotationMessages = [];
@@ -386,6 +386,17 @@ async function snapshot(page, directory, label) {
   assert.ok(panel.x >= 0 && panel.x + panel.width <= viewport.width + 1, `${label} panel fits horizontally`);
   assert.ok(panel.y >= 0 && panel.y + panel.height <= viewport.height, `${label} panel fits vertically`);
   assert.equal(await page.locator('.annotation-heading h2').innerText(), 'Annotations · 1');
+  const heading = page.locator('.annotation-heading');
+  const title = await heading.locator('h2').boundingBox();
+  const copy = await heading.getByRole('button', { name: 'Copy Prompt', exact: true }).boundingBox();
+  const more = await heading.getByRole('button', { name: 'More actions', exact: true }).boundingBox();
+  const close = await heading.getByRole('button', { name: 'Close', exact: true }).boundingBox();
+  assert.ok(title.x + title.width <= copy.x && copy.x + copy.width <= more.x && more.x + more.width <= close.x, `${label} header controls do not overlap`);
+  assert.ok(Math.abs(title.y + title.height / 2 - copy.y - copy.height / 2) < 2, `${label} copy aligns with title`);
+  assert.equal(copy.height, 30);
+  assert.equal(await page.locator('.annotation-panel > .annotation-toolbar').count(), 0, 'no standalone toolbar row');
+  if (label.includes('markdown')) assert.ok(panel.height < 280, `${label} one-record panel is shorter than the previous 319px desktop / 312px mobile layout`);
+  console.log(`${label} panel height: ${panel.height}px`);
   for (const name of ['Locate', 'Edit', 'Delete']) {
     const control = page.locator('.annotation-item-actions').getByRole('button', { name, exact: true });
     assert.equal(await control.getAttribute('title'), name);

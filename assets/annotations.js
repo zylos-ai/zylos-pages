@@ -61,7 +61,7 @@
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const actions = element('div', 'annotation-actions annotation-toolbar');
   const copy = button('Copy Prompt', copyPrompt, actions, 'annotation-primary');
-  decorate(copy, 'copy', 'Copy Prompt', 'Copy annotations');
+  decorate(copy, 'copy', 'Copy Prompt', 'Copy');
   const moreWrap = element('div', 'annotation-more'); actions.append(moreWrap);
   const more = button('More actions', () => {
     menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden));
@@ -77,6 +77,7 @@
   moreWrap.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.stopPropagation(); closeMenu(); more.focus(); }
   });
+  heading.insertBefore(actions, closeButton);
   const list = element('ol', 'annotation-list');
   const editor = element('form', 'annotation-editor'); editor.hidden = true;
   const selectedQuote = element('blockquote', 'annotation-quote');
@@ -94,7 +95,7 @@
   const manualLabel = element('label', '', 'Copy Prompt'); manualLabel.htmlFor = 'annotation-copy-text';
   const manualText = element('textarea', 'annotation-copy-text'); manualText.id = 'annotation-copy-text'; manualText.readOnly = true;
   manual.append(manualLabel, manualText);
-  panel.append(heading, status, editor, confirmation, actions, manual, list); host.append(panel);
+  panel.append(heading, status, editor, confirmation, manual, list); host.append(panel);
   let store, records = [], candidate = null, editing = null, index = null;
   let markdownObserver, mutationTimer;
   let port = null, generation = '', portReady = false, handshakeTimer, rateTime = 0, rateCount = 0;
