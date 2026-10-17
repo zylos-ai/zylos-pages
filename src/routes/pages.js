@@ -24,6 +24,7 @@ import {
 } from '../security/headers.js';
 import { getLogicalPage } from '../pages/page-store.js';
 import { bridgePolicy } from '../security/page-capabilities.js';
+import { injectAnnotations, injectAnnotationReporter } from '../templates/annotations.js';
 
 const ASSET_VERSION = Date.now();
 
@@ -192,6 +193,9 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         const withClient = injected.replace(/<head([^>]*)>/i, `<head$1>${bridgeClient}`);
         injected = withClient === injected ? bridgeClient + injected : withClient;
       }
+      if (sandboxEnabled && logicalPage?.scriptsEnabled !== false) {
+        injected = injectAnnotationReporter(injected, browserBase);
+      }
       if (isShareViewer) {
         injected = await finalizeShareHtml(injected, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
       } else if (sandboxEnabled) {
@@ -258,6 +262,11 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         }) : [],
         outboundDenied: logicalPage?.outboundDenied === true,
       });
+      html = injectAnnotations(html, {
+        baseUrl: browserBase, pageId: descriptor.pageId, uri: slug,
+        share: isShareViewer ? (shareContext || res.locals.shareContext) : null,
+        enabled: sandboxEnabled && logicalPage?.scriptsEnabled !== false,
+      });
       if (isShareViewer) {
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
@@ -269,7 +278,10 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
       return res.send(html);
     }
 
-    let html = result.html;
+    let html = injectAnnotations(result.html, {
+      baseUrl: browserBase, pageId: descriptor.pageId, uri: slug,
+      share: isShareViewer ? (shareContext || res.locals.shareContext) : null,
+    });
     if (isShareViewer) {
       html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
       html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
