@@ -10,6 +10,56 @@ const chromiumPath = process.env.PAGES_CHROMIUM_PATH;
 const available = playwrightPath && chromiumPath && fs.existsSync(playwrightPath) && fs.existsSync(chromiumPath);
 const quote = 'First passage for touch annotation.';
 
+async function tracePage(page) {
+  await page.addInitScript(() => {
+    window.touchTrace = [];
+    window.touchSequence = 0;
+    window.viewportEpoch = 0;
+    const trace = event => {
+      if (event.type === 'resize') window.viewportEpoch++;
+      window.touchTrace.push({ sequence: ++window.touchSequence, type: event.type, time: performance.now(), target: event.target?.className,
+        onAdd: !!event.target?.closest?.('.annotation-add'), x: event.clientX, y: event.clientY,
+        addHidden: document.querySelector('.annotation-add')?.hidden, collapsed: getSelection()?.isCollapsed });
+      if (window.touchTrace.length > 80) window.touchTrace.shift();
+    };
+    for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'selectionchange', 'click']) document.addEventListener(type, trace, true);
+    for (const type of ['resize', 'scroll', 'blur']) window.addEventListener(type, trace, true);
+    visualViewport?.addEventListener('resize', trace);
+  });
+}
+
+async function readyViewport(page, width) {
+  // Observe a real resize round-trip before creating a selection or sampling its button.
+  for (const height of [845, 844]) {
+    const epoch = await page.evaluate(() => window.viewportEpoch);
+    await page.setViewportSize({ width, height });
+    await page.waitForFunction(({ width, height, epoch }) => window.viewportEpoch > epoch &&
+      innerWidth === width && innerHeight === height && Math.abs(visualViewport.width - width) < 1 &&
+      Math.abs(visualViewport.height - height) < 1, { width, height, epoch });
+  }
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+}
+
+async function addPoint(add, edge = false) {
+  try { await add.click({ trial: true }); }
+  catch (error) {
+    console.error(JSON.stringify({ stage: 'entry actionability', url: add.page().url(), viewport: add.page().viewportSize(),
+      trace: await add.page().evaluate(() => window.touchTrace) }));
+    throw error;
+  }
+  return add.evaluate((node, edge) => {
+    const box = node.getBoundingClientRect();
+    const point = { x: box.x + box.width / 2, y: edge ? box.bottom - 2 : box.y + box.height / 2 };
+    if (node.hidden || !box.width || !box.height || !node.contains(document.elementFromPoint(point.x, point.y))) {
+      throw new Error('Annotation gesture precondition: entry must be visible and hit-tested at fresh coordinates');
+    }
+    return point;
+  }, edge);
+}
+
 async function fixtureServer() {
   const assets = path.resolve(import.meta.dirname, '../assets');
   const server = http.createServer((request, response) => {
@@ -43,20 +93,10 @@ test('touch activation survives selection collapse and rejects cancelled gesture
       const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true });
       const page = await context.newPage();
       page.setDefaultTimeout(4000);
-      await page.addInitScript(() => {
-        window.touchTrace = [];
-        const trace = event => {
-          window.touchTrace.push({ type: event.type, time: performance.now(), target: event.target?.className,
-            x: event.clientX, y: event.clientY, addHidden: document.querySelector('.annotation-add')?.hidden,
-            collapsed: getSelection()?.isCollapsed });
-          if (window.touchTrace.length > 80) window.touchTrace.shift();
-        };
-        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'selectionchange', 'click']) document.addEventListener(type, trace, true);
-        for (const type of ['resize', 'scroll', 'blur']) window.addEventListener(type, trace, true);
-        visualViewport?.addEventListener('resize', trace);
-      });
+      await tracePage(page);
       const cdp = await context.newCDPSession(page);
       await page.goto(`http://127.0.0.1:${server.address().port}/${kind}`);
+      await readyViewport(page, width);
       const target = kind === 'html' ? page.frames().find(frame => frame !== page.mainFrame()) : page.mainFrame();
       await target.waitForFunction(() => window.PagesAnnotationsCore);
       const add = page.locator('.annotation-add');
@@ -70,9 +110,13 @@ test('touch activation survives selection collapse and rejects cancelled gesture
         await add.waitFor({ state: 'visible' });
       };
       const start = async (edge = false) => {
-        const box = await add.boundingBox();
-        const point = { x: box.x + box.width / 2, y: edge ? box.y + box.height - 2 : box.y + box.height / 2 };
+        const point = await addPoint(add, edge);
+        const previous = await page.evaluate(() => window.touchTrace.filter(event => event.type === 'pointerdown').at(-1)?.sequence || 0);
         await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [point] });
+        const trace = await page.evaluate(() => window.touchTrace);
+        const downs = trace.filter(event => event.type === 'pointerdown');
+        assert.ok(downs.at(-1)?.sequence > previous, JSON.stringify({ width, kind, stage: 'touch start', trace }));
+        assert.equal(downs.at(-1).onAdd, true, JSON.stringify({ width, kind, stage: 'touch start hit', trace }));
         return point;
       };
       const end = () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
@@ -81,6 +125,10 @@ test('touch activation survives selection collapse and rejects cancelled gesture
         await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
         await editor.waitFor({ state: 'hidden' });
       };
+      await select();
+      await addPoint(add);
+      await page.evaluate(() => visualViewport.dispatchEvent(new Event('resize')));
+      await add.waitFor({ state: 'hidden' });
       await select();
       await start(); await page.waitForTimeout(250); await end();
       try { await editor.waitFor({ state: 'visible' }); }
@@ -156,14 +204,25 @@ test('outside pointer dismisses the summary without deleting records or breaking
       const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: touch, hasTouch: touch });
       const page = await context.newPage();
       page.setDefaultTimeout(4000);
+      await tracePage(page);
       await page.goto(`http://127.0.0.1:${server.address().port}/${kind}`);
+      await readyViewport(page, width);
       const target = kind === 'html' ? page.frames().find(frame => frame !== page.mainFrame()) : page.mainFrame();
       await target.waitForFunction(() => window.PagesAnnotationsCore);
       await target.evaluate(() => {
         const range = document.createRange(); range.selectNodeContents(document.querySelector('p'));
         getSelection().removeAllRanges(); getSelection().addRange(range);
       });
-      await page.locator('.annotation-add').click();
+      const add = page.locator('.annotation-add');
+      await addPoint(add);
+      try { await add.click(); }
+      catch (error) {
+        console.error(JSON.stringify({ width, kind, stage: 'outside fixture add click', trace: await page.evaluate(() => window.touchTrace) }));
+        throw error;
+      }
+      const trace = await page.evaluate(() => window.touchTrace);
+      assert.equal(trace.filter(event => event.type === 'pointerdown').at(-1)?.onAdd, true,
+        JSON.stringify({ width, kind, stage: 'outside fixture add hit', trace }));
       await page.locator('#annotation-comment').fill('Keep this saved annotation');
       await page.getByRole('button', { name: 'Save', exact: true }).click();
       const panel = page.locator('.annotation-panel');
