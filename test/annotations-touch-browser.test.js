@@ -10,9 +10,7 @@ const chromiumPath = process.env.PAGES_CHROMIUM_PATH;
 const available = playwrightPath && chromiumPath && fs.existsSync(playwrightPath) && fs.existsSync(chromiumPath);
 const quote = 'First passage for touch annotation.';
 
-test('touch activation survives selection collapse and rejects cancelled gestures', {
-  skip: available ? false : 'set browser paths for browser coverage', timeout: 120_000,
-}, async () => {
+async function fixtureServer() {
   const assets = path.resolve(import.meta.dirname, '../assets');
   const server = http.createServer((request, response) => {
     const name = request.url.slice(1);
@@ -29,14 +27,34 @@ test('touch activation survives selection collapse and rejects cancelled gesture
     response.end(`<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/annotations.css">${content}<div id="pages-annotations" data-base-namespace="/" data-viewer-scope="touch-test" data-page-id="touch"></div><script src="/annotations-core.js"></script><script src="/annotations.js"></script>`);
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return server;
+}
+
+test('touch activation survives selection collapse and rejects cancelled gestures', {
+  skip: available ? false : 'set browser paths for browser coverage', timeout: 120_000,
+}, async () => {
+  const server = await fixtureServer();
   let browser;
   try {
     const { chromium } = createRequire(import.meta.url)(playwrightPath);
     browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
-    for (const [width, kind] of [[390, 'markdown'], [390, 'html'], [320, 'markdown'], [320, 'html']]) {
+    const cases = [[390, 'markdown'], [390, 'html'], [320, 'markdown'], [320, 'html']];
+    for (const [width, kind] of cases) {
       const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: true, hasTouch: true });
       const page = await context.newPage();
       page.setDefaultTimeout(4000);
+      await page.addInitScript(() => {
+        window.touchTrace = [];
+        const trace = event => {
+          window.touchTrace.push({ type: event.type, time: performance.now(), target: event.target?.className,
+            x: event.clientX, y: event.clientY, addHidden: document.querySelector('.annotation-add')?.hidden,
+            collapsed: getSelection()?.isCollapsed });
+          if (window.touchTrace.length > 80) window.touchTrace.shift();
+        };
+        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'selectionchange', 'click']) document.addEventListener(type, trace, true);
+        for (const type of ['resize', 'scroll', 'blur']) window.addEventListener(type, trace, true);
+        visualViewport?.addEventListener('resize', trace);
+      });
       const cdp = await context.newCDPSession(page);
       await page.goto(`http://127.0.0.1:${server.address().port}/${kind}`);
       const target = kind === 'html' ? page.frames().find(frame => frame !== page.mainFrame()) : page.mainFrame();
@@ -65,7 +83,11 @@ test('touch activation survives selection collapse and rejects cancelled gesture
       };
       await select();
       await start(); await page.waitForTimeout(250); await end();
-      await editor.waitFor({ state: 'visible' });
+      try { await editor.waitFor({ state: 'visible' }); }
+      catch (error) {
+        console.error(JSON.stringify({ width, kind, stage: 'ordinary touch', trace: await page.evaluate(() => window.touchTrace) }));
+        throw error;
+      }
       await cancelEditor();
       await select();
       await start(); await collapse(); await page.waitForTimeout(250); await end();
@@ -113,6 +135,94 @@ test('touch activation survives selection collapse and rejects cancelled gesture
       await cancelEditor();
       await select(); await page.touchscreen.tap(20, 250); await page.waitForTimeout(250);
       assert.equal(await add.isVisible(), false, 'outside tap still clears the selection candidate');
+      await context.close();
+    }
+  } finally {
+    await browser?.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('outside pointer dismisses the summary without deleting records or breaking inside controls', {
+  skip: available ? false : 'set browser paths for browser coverage', timeout: 120_000,
+}, async () => {
+  const server = await fixtureServer();
+  let browser;
+  try {
+    const { chromium } = createRequire(import.meta.url)(playwrightPath);
+    browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+    for (const width of [390, 320, 1280]) for (const kind of ['markdown', 'html']) {
+      const touch = width !== 1280;
+      const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: touch, hasTouch: touch });
+      const page = await context.newPage();
+      page.setDefaultTimeout(4000);
+      await page.goto(`http://127.0.0.1:${server.address().port}/${kind}`);
+      const target = kind === 'html' ? page.frames().find(frame => frame !== page.mainFrame()) : page.mainFrame();
+      await target.waitForFunction(() => window.PagesAnnotationsCore);
+      await target.evaluate(() => {
+        const range = document.createRange(); range.selectNodeContents(document.querySelector('p'));
+        getSelection().removeAllRanges(); getSelection().addRange(range);
+      });
+      await page.locator('.annotation-add').click();
+      await page.locator('#annotation-comment').fill('Keep this saved annotation');
+      await page.getByRole('button', { name: 'Save', exact: true }).click();
+      const panel = page.locator('.annotation-panel');
+      const launcher = page.locator('.annotation-launcher');
+      const press = locator => touch ? locator.tap() : locator.click();
+      const outside = async inFrame => {
+        if (inFrame) {
+          const point = await page.locator('iframe').evaluate(frame => {
+            const bounds = frame.getBoundingClientRect();
+            for (const y of [390, 350, 220, 150]) for (const x of [20, bounds.width - 2]) {
+              const point = { x: bounds.x + x, y: bounds.y + y };
+              if (document.elementFromPoint(point.x, point.y) === frame) return point;
+            }
+            return null;
+          });
+          assert.ok(point, 'the outside touch must reach the opaque document');
+          if (touch) await page.touchscreen.tap(point.x, point.y);
+          else await page.mouse.click(point.x, point.y);
+        } else {
+          assert.equal(await page.evaluate(() => !!document.elementFromPoint(2, 600)?.closest('#pages-annotations')), false);
+          if (touch) await page.touchscreen.tap(2, 600);
+          else await page.mouse.click(2, 600);
+        }
+      };
+      const open = async () => {
+        await press(launcher); await panel.waitFor({ state: 'visible' });
+        assert.equal(await launcher.getAttribute('aria-expanded'), 'true');
+        assert.equal(await panel.locator('.annotation-item').count(), 1);
+      };
+      const closed = async () => {
+        await panel.waitFor({ state: 'hidden' });
+        assert.equal(await launcher.getAttribute('aria-expanded'), 'false');
+        assert.equal(await page.locator('.annotation-confirmation').isVisible(), false);
+      };
+      await open(); await outside(false); await closed();
+      await open();
+      await press(panel.locator('h2'));
+      assert.equal(await panel.isVisible(), true, 'inside summary remains open');
+      await press(panel.getByRole('button', { name: 'More actions', exact: true }));
+      assert.equal(await page.locator('.annotation-menu').isVisible(), true);
+      assert.equal(await panel.isVisible(), true, 'menu does not dismiss summary');
+      await press(panel.getByRole('button', { name: 'Clear all', exact: true }));
+      const confirmation = page.locator('.annotation-confirmation');
+      await confirmation.waitFor({ state: 'visible' });
+      await press(confirmation.getByRole('button', { name: 'Cancel', exact: true }));
+      assert.equal(await panel.isVisible(), true, 'cancelling confirmation preserves summary');
+      await press(panel.getByRole('button', { name: 'Delete', exact: true }));
+      await confirmation.waitFor({ state: 'visible' });
+      await outside(kind === 'html'); await closed();
+      await open();
+      await press(panel.getByRole('button', { name: 'Edit', exact: true }));
+      await page.locator('.annotation-editor').waitFor({ state: 'visible' });
+      await outside(kind === 'html');
+      await page.locator('.annotation-editor').waitFor({ state: 'hidden' }); await closed();
+      await open();
+      await press(panel.getByRole('button', { name: 'More actions', exact: true }));
+      await outside(kind === 'html'); await closed();
+      await open();
+      assert.equal(await page.locator('.annotation-menu').isVisible(), false, 'reopen does not restore stale menu');
       await context.close();
     }
   } finally {

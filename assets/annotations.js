@@ -218,6 +218,11 @@
     restorePanel = false; clearCandidate();
   }
   function closePreview() { manual.hidden = true; resetCopyState(); }
+  function dismissOutside() {
+    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate(); closeMenu();
+    // Editor dismissal can restore the summary, so hide it after that restoration.
+    panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+  }
   function clearSelection() {
     window.getSelection()?.removeAllRanges();
     if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
@@ -447,7 +452,7 @@
       else if (data.type === 'position' && portReady && !editor.hidden) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) { editorRect = rect; place(editor, rect); }
-      } else if (data.type === 'dismiss' && portReady) { dismissEditor(); closePreview(); clearCandidate(); }
+      } else if (data.type === 'dismiss' && portReady) dismissOutside();
       else if (data.type === 'activate' && portReady) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) activate(data.ids, rect);
@@ -517,8 +522,8 @@
   });
   document.addEventListener('pointerdown', event => {
     if (addTouch && addTouch.id !== event.pointerId) clearCandidate();
-    if (!confirmation.hidden && !confirmation.contains(event.target)) closeConfirmation();
-    if (!host.contains(event.target)) { dismissEditor(); closePreview(); clearCandidate(); }
+    if (!host.contains(event.target)) dismissOutside();
+    else if (!confirmation.hidden && !confirmation.contains(event.target)) closeConfirmation();
   });
   list.addEventListener('scroll', () => closeConfirmation(), { passive: true });
   window.addEventListener('blur', () => {
