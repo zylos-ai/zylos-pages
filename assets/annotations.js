@@ -66,7 +66,7 @@
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const actions = element('div', 'annotation-actions annotation-toolbar');
   const copy = button('Copy Prompt', previewPrompt, actions, 'annotation-primary');
-  decorate(copy, 'copy', 'Copy Prompt', 'Copy');
+  decorate(copy, 'copy', 'Copy Prompt', 'Prompt');
   const moreWrap = element('div', 'annotation-more'); actions.append(moreWrap);
   const more = button('More actions', () => {
     menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden));
@@ -109,13 +109,12 @@
   const previewHeading = element('div', 'annotation-heading');
   previewHeading.append(element('h2', '', 'Feedback preview'));
   decorate(button('Close preview', closePreview, previewHeading, 'annotation-icon'), 'close', 'Close preview');
-  const manualLabel = element('label', '', 'Copy Prompt'); manualLabel.htmlFor = 'annotation-copy-text';
   const manualText = element('textarea', 'annotation-copy-text'); manualText.id = 'annotation-copy-text'; manualText.readOnly = true;
+  manualText.setAttribute('aria-label', 'Feedback prompt');
   const previewStatus = element('p', 'annotation-preview-status'); previewStatus.setAttribute('role', 'status');
   const previewActions = element('div', 'annotation-actions');
-  button('View annotations', () => { closePreview(); showPanel(); }, previewActions);
-  const copyAll = button('Copy all', copyPrompt, previewActions, 'annotation-primary');
-  manual.append(previewHeading, manualLabel, manualText, previewStatus, previewActions);
+  const copyAll = button('Copy Prompt', copyPrompt, previewActions, 'annotation-primary');
+  manual.append(previewHeading, manualText, previewStatus, previewActions);
   panel.append(heading, status, confirmation, list); host.append(panel, editor, manual);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
   let editorRect = null, restorePanel = false, pendingLocate = null;

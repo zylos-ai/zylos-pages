@@ -34,7 +34,7 @@ test('annotation header keeps all controls inside narrow panels at 1, 10 and 200
   const origin = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   try {
-    for (const width of [320, 390]) {
+    for (const width of [320, 390, 1280]) {
       const page = await browser.newPage({ viewport: { width, height: 720 } });
       for (const records of [1, 10, 200]) {
         await page.goto(origin);
@@ -55,6 +55,21 @@ test('annotation header keeps all controls inside narrow panels at 1, 10 and 200
         for (const theme of ['light', 'dark']) {
           await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme);
           const panel = await page.locator('.annotation-panel').boundingBox();
+          assert.ok(panel.height <= 520, 'summary is capped rather than growing with the record count');
+          assert.equal(await page.locator('.annotation-panel .annotation-toolbar .annotation-primary').innerText(), 'Prompt');
+          const scrolling = await page.locator('.annotation-list').evaluate(node => ({ height: node.clientHeight, full: node.scrollHeight }));
+          if (records === 1) assert.equal(scrolling.full, scrolling.height, 'a short list does not need scrolling');
+          else {
+            assert.ok(scrolling.full > scrolling.height, 'long lists scroll within the capped panel');
+            const headerBefore = await page.locator('.annotation-panel > .annotation-heading').boundingBox();
+            await page.locator('.annotation-list').evaluate(node => { node.scrollTop = node.scrollHeight; });
+            assert.equal(await page.locator('.annotation-list').evaluate(node => node.scrollTop > 0), true);
+            assert.deepEqual(await page.locator('.annotation-panel > .annotation-heading').boundingBox(), headerBefore, 'header remains fixed while the list scrolls');
+            assert.equal(await page.locator('.annotation-panel').evaluate(node => node.scrollTop), 0, 'panel itself does not scroll');
+            const last = await page.locator('.annotation-list .annotation-item').last().boundingBox();
+            assert.ok(last.y + last.height <= panel.y + panel.height, 'the final annotation remains reachable');
+            await page.locator('.annotation-list').evaluate(node => { node.scrollTop = 0; });
+          }
           let right = panel.x;
           for (const selector of ['h2', '.annotation-primary', '.annotation-more > button', ':scope > button']) {
             const box = await page.locator('.annotation-panel > .annotation-heading').locator(selector).boundingBox();
@@ -67,6 +82,11 @@ test('annotation header keeps all controls inside narrow panels at 1, 10 and 200
           assert.equal(await heading.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'count remains visible');
           if (evidenceDir && records > 1) await page.screenshot({ path: path.join(evidenceDir, `header-${width}-${records}-${theme}.png`) });
         }
+        await page.setViewportSize({ width, height: 400 });
+        const shortPanel = await page.locator('.annotation-panel').boundingBox();
+        assert.ok(shortPanel.y >= 0 && shortPanel.y + shortPanel.height <= 400, 'summary respects a short viewport');
+        assert.ok(shortPanel.height <= 290, 'viewport cap takes precedence over the fixed maximum');
+        await page.setViewportSize({ width, height: 720 });
         await page.getByRole('button', { name: 'More actions', exact: true }).click();
         assert.equal(await page.getByRole('button', { name: 'Clear all', exact: true }).isVisible(), true);
         await page.keyboard.press('Escape');
@@ -337,7 +357,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       assert.equal(await sharePage.locator('.annotation-comment').innerText(), `Share-only comment ${label}`);
       await denyClipboard(sharePage);
       await sharePage.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
-      await sharePage.getByRole('button', { name: 'Copy all', exact: true }).click();
+      await sharePage.getByRole('dialog', { name: 'Feedback preview', exact: true }).getByRole('button', { name: 'Copy Prompt', exact: true }).click();
       await sharePage.locator('#annotation-copy-text').waitFor({ state: 'visible' });
       const sharePrompt = await sharePage.locator('#annotation-copy-text').inputValue();
       assert.ok(sharePrompt.includes(`Share-only comment ${label}`));
@@ -388,7 +408,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       // Force the tested clipboard fallback without relying on host clipboard permissions.
       await denyClipboard(page);
       await page.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
-      await page.getByRole('button', { name: 'Copy all', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Feedback preview', exact: true }).getByRole('button', { name: 'Copy Prompt', exact: true }).click();
       await page.locator('#annotation-copy-text').waitFor({ state: 'visible' });
       const prompt = await page.locator('#annotation-copy-text').inputValue();
       assert.match(prompt, /Opaque sandbox text supports local annotations\./);

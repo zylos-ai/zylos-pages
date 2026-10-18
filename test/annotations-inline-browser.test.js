@@ -179,6 +179,9 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         await page.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
         const preview = page.getByRole('dialog').filter({ has: page.locator('#annotation-copy-text') });
         await preview.waitFor({ state: 'visible' });
+        assert.equal(await preview.locator('label').count(), 0, 'preview has no redundant copy label');
+        assert.equal(await preview.getByRole('button', { name: 'View annotations', exact: true }).count(), 0, 'preview has no redundant return button');
+        assert.equal(await preview.getByRole('textbox', { name: 'Feedback prompt' }).count(), 1, 'prompt keeps an accessible name');
         assert.deepEqual(await page.evaluate(() => window.inlineCopies), [], 'preview opens before any clipboard write');
         const text = await preview.locator('#annotation-copy-text').inputValue();
         assert.ok(text.includes(quote), 'preview includes original quote');
@@ -189,8 +192,8 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
           await fits(page, preview, `${kind}/${width}/${theme} preview`);
           if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `preview-${kind}-${width}-${theme}.png`) });
         }
-        await preview.getByRole('button', { name: 'Copy all', exact: true }).click();
-        assert.deepEqual(await page.evaluate(() => window.inlineCopies), [text], 'Copy all copies exactly the displayed full preview');
+        await preview.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+        assert.deepEqual(await page.evaluate(() => window.inlineCopies), [text], 'Copy Prompt copies exactly the displayed full preview');
         await preview.getByRole('button', { name: 'Close preview', exact: true }).click();
         await preview.waitFor({ state: 'hidden' });
         await page.reload();
