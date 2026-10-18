@@ -27,6 +27,13 @@
 #pages-annotations .annotation-menu button { width: 100%; border-color: transparent; justify-content: flex-start; white-space: nowrap; }
 #pages-annotations .annotation-danger { color: var(--color-danger, #a13b25); }
 .annotation-item-actions { justify-content: flex-end; gap: 4px; flex-wrap: nowrap; }
+.annotation-confirmation { position: fixed; z-index: 5; box-sizing: border-box; width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 14px; background: var(--color-panel, #fff); border: 1px solid var(--color-border-strong, #bbb); border-radius: 8px; box-shadow: 0 6px 24px #0003; }
+.annotation-confirmation p { margin: 0 0 14px; font-size: 14px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+.annotation-confirmation .annotation-actions { justify-content: flex-end; flex-wrap: nowrap; }
+#pages-annotations .annotation-confirmation button { min-height: 28px; height: 28px; padding: 4px 10px; border-radius: 4px; font-size: 12px; line-height: 18px; font-weight: 400; }
+#pages-annotations .annotation-confirmation button:focus-visible { outline-width: 1px; outline-offset: 2px; }
+#pages-annotations .annotation-delete-confirm { background: #b4232d; border-color: #b4232d; color: #fff; }
+#pages-annotations .annotation-delete-confirm:hover { background: #961e27; border-color: #961e27; }
 .annotation-heading h2 { font-size: 17px; margin: 0; white-space: nowrap; min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; }
 .annotation-status { margin: 8px 0; font-size: 12px; color: var(--color-text-secondary, #666); overflow-wrap: anywhere; }
 .annotation-list { padding: 0; margin: 0; list-style: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
@@ -41,6 +48,14 @@
 .annotation-view { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 .annotation-preview { width: min(620px, calc(100vw - 16px)); }
 .annotation-preview .annotation-actions { margin-top: 12px; justify-content: flex-end; }
+#pages-annotations .annotation-copy-button { box-sizing: border-box; width: 164px; max-width: 100%; height: 40px; white-space: nowrap; }
+#pages-annotations .annotation-copy-button[data-copy-state="success"] { background: #167047; border-color: #167047; }
+#pages-annotations .annotation-copy-button[data-copy-state="error"] { background: #a33037; border-color: #a33037; }
+.annotation-copy-button[data-copy-state="pending"] svg { animation: annotation-copy-spin .8s linear infinite; }
+.annotation-copy-button[data-copy-state="success"] svg { animation: annotation-copy-confirm .2s ease-out; }
+@keyframes annotation-copy-spin { to { transform: rotate(360deg); } }
+@keyframes annotation-copy-confirm { from { transform: scale(.6); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .annotation-copy-button svg { animation: none !important; } }
 .annotation-preview-status { font-size: 12px; color: var(--color-text-secondary, #666); overflow-wrap: anywhere; }
 .annotation-preview .annotation-copy-text { height: min(360px, 50dvh); white-space: pre-wrap; }
 #pages-annotations textarea { box-sizing: border-box; width: 100%; min-height: 100px; resize: vertical; padding: 8px; background: var(--color-panel, #fff); color: inherit; border: 1px solid var(--color-border-strong, #aaa); border-radius: 4px; }

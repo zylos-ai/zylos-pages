@@ -71,10 +71,29 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
               });
             },
           });
+        } else {
+          window.inlineDeferredLocations = [];
+          const descriptor = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+          Object.defineProperty(MessagePort.prototype, 'onmessage', {
+            ...descriptor,
+            set(handler) {
+              descriptor.set.call(this, event => {
+                if (window.inlineHoldLocations && event.data?.type === 'locations') {
+                  window.inlineDeferredLocations.push(() => handler.call(this, event));
+                } else handler.call(this, event);
+              });
+            },
+          });
         }
         window.inlineCopies = [];
+        window.inlineCopyAttempts = 0;
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
-          writeText: async text => { window.inlineCopies.push(text); },
+          writeText: async text => {
+            window.inlineCopyAttempts++;
+            if (window.inlineCopyMode === 'reject') throw new Error('Clipboard denied');
+            if (window.inlineCopyMode === 'hold') await new Promise((resolve, reject) => { window.inlineCopyResult = { resolve, reject }; });
+            window.inlineCopies.push(text);
+          },
         } });
       });
       const page = await context.newPage();
@@ -192,8 +211,57 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
           await fits(page, preview, `${kind}/${width}/${theme} preview`);
           if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `preview-${kind}-${width}-${theme}.png`) });
         }
+        await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), width === 320 ? 'light' : 'dark');
         await preview.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+        await preview.getByRole('button', { name: 'Copied', exact: true }).waitFor();
         assert.deepEqual(await page.evaluate(() => window.inlineCopies), [text], 'Copy Prompt copies exactly the displayed full preview');
+        const copyButton = preview.locator('.annotation-actions button');
+        const copyWidth = (await copyButton.boundingBox()).width;
+        await page.evaluate(() => { window.inlineCopyMode = 'hold'; });
+        await copyButton.click();
+        assert.equal(await copyButton.innerText(), 'Copying...');
+        assert.equal(await copyButton.isDisabled(), true);
+        assert.equal(await copyButton.getAttribute('aria-busy'), 'true');
+        await copyButton.dispatchEvent('click');
+        assert.equal(await page.evaluate(() => window.inlineCopyAttempts), 2, 'pending copy rejects duplicate activation');
+        if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `copy-pending-${kind}-${width}.png`) });
+        await page.evaluate(() => window.inlineCopyResult.resolve());
+        await preview.getByRole('button', { name: 'Copied', exact: true }).waitFor();
+        assert.equal(await copyButton.isDisabled(), false);
+        assert.equal((await copyButton.boundingBox()).width, copyWidth, 'copy states keep a stable button width');
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        assert.equal(await copyButton.locator('svg').evaluate(node => getComputedStyle(node).animationName), 'none');
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `copy-success-${kind}-${width}.png`) });
+        await page.evaluate(() => { window.inlineCopyMode = 'reject'; });
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copy failed', exact: true }).waitFor();
+        assert.match(await preview.locator('.annotation-preview-status').innerText(), /Clipboard unavailable/);
+        assert.equal(await preview.locator('#annotation-copy-text').evaluate(node => node.selectionEnd - node.selectionStart), text.length);
+        if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `copy-failure-${kind}-${width}.png`) });
+        for (const outcome of ['resolve', 'reject']) {
+          await page.evaluate(() => { window.inlineCopyMode = 'hold'; });
+          await copyButton.click();
+          await preview.getByRole('button', { name: 'Close preview', exact: true }).click();
+          await page.locator('.annotation-panel').getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+          await page.evaluate(result => window.inlineCopyResult[result](), outcome);
+          assert.equal(await copyButton.innerText(), 'Copy Prompt', 'old clipboard result cannot change a reopened preview');
+          assert.equal(await preview.locator('.annotation-preview-status').innerText(), '1 annotation(s)');
+        }
+        await page.evaluate(() => { window.inlineCopyMode = ''; });
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copied', exact: true }).waitFor();
+        await preview.locator('#annotation-copy-text').evaluate(node => { node.value = 'x'.repeat(100001); });
+        const attempts = await page.evaluate(() => window.inlineCopyAttempts);
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copy manually', exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => window.inlineCopyAttempts), attempts, 'large prompt uses manual copy without a clipboard write');
+        assert.equal(await preview.locator('#annotation-copy-text').evaluate(node => node.selectionEnd - node.selectionStart), 100001);
+        await preview.locator('#annotation-copy-text').evaluate((node, value) => { node.value = value; }, text);
+        await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copy failed', exact: true }).waitFor();
+        assert.equal(await preview.locator('#annotation-copy-text').evaluate(node => node.selectionEnd - node.selectionStart), text.length, 'missing Clipboard API retains manual fallback');
         await preview.getByRole('button', { name: 'Close preview', exact: true }).click();
         await preview.waitFor({ state: 'hidden' });
         await page.reload();
@@ -214,6 +282,90 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         assert.equal(await editor.isVisible(), true, 'scrolling repositions rather than dropping an open draft');
         assert.equal(await editor.locator('#annotation-comment').inputValue(), 'Draft retained while scrolling');
         await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+        const deletion = page.locator('.annotation-item').getByRole('button', { name: 'Delete', exact: true });
+        const confirmation = page.getByRole('dialog', { name: 'Delete this annotation?', exact: true });
+        for (const height of [900, 400]) {
+          await page.setViewportSize({ width, height });
+          for (const theme of ['light', 'dark']) {
+            await page.evaluate(theme => document.documentElement.setAttribute('data-theme', theme), theme);
+            const before = await page.locator('.annotation-list').boundingBox();
+            await deletion.click();
+            await confirmation.waitFor({ state: 'visible' });
+            await fits(page, confirmation, 'delete confirmation');
+            assert.deepEqual(await page.locator('.annotation-list').boundingBox(), before, 'floating confirmation does not shift the list');
+            assert.equal(await confirmation.getByRole('button', { name: 'Cancel', exact: true }).evaluate(node => node === document.activeElement), true, 'safe Cancel receives focus');
+            if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `delete-${kind}-${width}-${height}-${theme}.png`) });
+            await page.keyboard.press('Escape');
+            assert.equal(await confirmation.isVisible(), false);
+            assert.equal(await page.locator('.annotation-panel').isVisible(), true, 'Escape cancels without closing the list');
+            assert.equal(await deletion.evaluate(node => node === document.activeElement), true);
+            await count(page, 1);
+          }
+        }
+        await deletion.click();
+        await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await count(page, 1);
+        assert.equal(await deletion.evaluate(node => node === document.activeElement), true);
+        await deletion.click();
+        await page.mouse.click(2, 2);
+        assert.equal(await confirmation.isVisible(), false, 'outside click cancels');
+        await count(page, 1);
+        if (kind === 'html') {
+          for (const cancellation of ['escape', 'cancel']) {
+            for (const moveFocus of [false, true]) {
+              await page.evaluate(() => { window.inlineHoldLocations = true; });
+              await target.evaluate(() => window.dispatchEvent(new Event('resize')));
+              await page.waitForFunction(() => window.inlineDeferredLocations.length > 0);
+              await deletion.click();
+              if (cancellation === 'escape') await page.keyboard.press('Escape');
+              else await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+              assert.equal(await deletion.evaluate(node => node === document.activeElement), true, 'cancel restores focus before held locations are delivered');
+              const close = page.locator('.annotation-panel > .annotation-heading').getByRole('button', { name: 'Close', exact: true });
+              if (moveFocus) await close.focus();
+              await page.evaluate(() => {
+                window.inlineHoldLocations = false;
+                window.inlineDeferredLocations.splice(0).forEach(deliver => deliver());
+              });
+              assert.equal(await (moveFocus ? close : deletion).evaluate(node => node === document.activeElement), true,
+                moveFocus ? 'late locations cannot steal focus moved outside the list' : 'late locations preserve the restored current Delete action');
+              await count(page, 1);
+            }
+          }
+          await deletion.click();
+          await target.locator('body').click({ position: { x: 2, y: 310 } });
+          await confirmation.waitFor({ state: 'hidden' });
+          await count(page, 1);
+        }
+        await page.getByRole('button', { name: 'More actions', exact: true }).click();
+        await page.getByRole('button', { name: 'Clear all', exact: true }).click();
+        const clearConfirmation = page.locator('.annotation-confirmation');
+        await fits(page, clearConfirmation, 'clear all confirmation');
+        await clearConfirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: 'More actions', exact: true }).evaluate(node => node === document.activeElement), true);
+        await count(page, 1);
+        await deletion.click();
+        await page.evaluate(() => {
+          const host = document.getElementById('pages-annotations');
+          const store = PagesAnnotationsCore.createStore(localStorage, {
+            baseNamespace: host.dataset.baseNamespace, viewerScope: host.dataset.viewerScope, pageId: host.dataset.pageId,
+          });
+          const record = store.read().records[0];
+          store.update(record.id, 'Changed while confirmation was open', record);
+        });
+        await confirmation.getByRole('button', { name: 'Delete', exact: true }).click();
+        assert.equal(await confirmation.isVisible(), true, 'stale confirmation cannot delete a changed record');
+        assert.match(await page.locator('.annotation-status[role="status"]').innerText(), /Changed in another tab/);
+        await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.reload();
+        await count(page, 1);
+        await page.locator('.annotation-launcher').click();
+        assert.equal(await page.locator('.annotation-comment').innerText(), 'Changed while confirmation was open');
+        await deletion.click();
+        await confirmation.getByRole('button', { name: 'Delete', exact: true }).click();
+        await count(page, 0);
+        await page.reload();
+        await count(page, 0);
+        await page.setViewportSize({ width, height: 900 });
       }
       assert.deepEqual(errors, [], `${width}px browser errors`);
       await context.close();

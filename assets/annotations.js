@@ -22,6 +22,8 @@
     close: '<path d="m6 6 12 12M6 18 18 6"/>',
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    check: '<path d="m5 12 4 4L19 6"/>',
+    loading: '<path d="M12 3a9 9 0 1 1-9 9"/>',
     locate: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     edit: '<path d="m16 3 5 5-12 12-6 1 1-6ZM14 5l5 5"/>',
     delete: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
@@ -38,7 +40,7 @@
   }
   const launcher = button('Annotations (0)', () => {
     const opening = panel.hidden || !editor.hidden || !manual.hidden;
-    dismissEditor(); closePreview(); clearCandidate();
+    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate();
     panel.hidden = !opening;
     launcher.setAttribute('aria-expanded', String(!panel.hidden));
     if (!panel.hidden) { refresh(); closeButton.focus(); }
@@ -57,7 +59,7 @@
   const title = element('h2', '', 'Annotations · 0');
   heading.append(title);
   const closeButton = button('Close', () => {
-    dismissEditor(); closePreview(); clearCandidate();
+    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate();
     panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); launcher.focus();
   }, heading);
   closeButton.className = 'annotation-icon';
@@ -101,8 +103,12 @@
     if (editing?.record) openEditor(editing.anchor, editing.record, editorRect);
   }, editorActions);
   editor.append(editorHeading, selectedQuote, viewText, label, input, editorActions);
-  const confirmation = element('div'); confirmation.hidden = true;
-  const confirmText = element('p'); const confirmActions = element('div', 'annotation-actions');
+  const confirmation = element('div', 'annotation-confirmation'); confirmation.hidden = true;
+  confirmation.setAttribute('role', 'dialog'); confirmation.setAttribute('aria-labelledby', 'annotation-confirm-title');
+  const confirmText = element('p'); confirmText.id = 'annotation-confirm-title';
+  const confirmActions = element('div', 'annotation-actions');
+  let confirmationAnchor = null;
+  let confirmationRecordId = null;
   confirmation.append(confirmText, confirmActions);
   const manual = element('section', 'annotation-preview'); manual.hidden = true;
   manual.setAttribute('role', 'dialog'); manual.setAttribute('aria-label', 'Feedback preview');
@@ -113,10 +119,12 @@
   manualText.setAttribute('aria-label', 'Feedback prompt');
   const previewStatus = element('p', 'annotation-preview-status'); previewStatus.setAttribute('role', 'status');
   const previewActions = element('div', 'annotation-actions');
-  const copyAll = button('Copy Prompt', copyPrompt, previewActions, 'annotation-primary');
+  const copyAll = button('Copy Prompt', copyPrompt, previewActions, 'annotation-primary annotation-copy-button');
+  let copyGeneration = 0, copyPending = false;
   manual.append(previewHeading, manualText, previewStatus, previewActions);
-  panel.append(heading, status, confirmation, list); host.append(panel, editor, manual);
+  panel.append(heading, status, list); host.append(panel, editor, manual, confirmation);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
+  setCopyState('idle');
   let editorRect = null, restorePanel = false, pendingLocate = null;
   let frameSelectionId = null;
   let markdownObserver, mutationTimer;
@@ -170,11 +178,11 @@
   function showPanel() { panel.hidden = false; launcher.setAttribute('aria-expanded', 'true'); }
   function dismissEditor() {
     editor.hidden = true; editing = null; pendingLocate = null; editorRect = null;
-    panel.insertBefore(status, confirmation);
+    panel.insertBefore(status, list);
     if (restorePanel) showPanel();
     restorePanel = false; clearCandidate();
   }
-  function closePreview() { manual.hidden = true; }
+  function closePreview() { manual.hidden = true; resetCopyState(); }
   function clearSelection() {
     window.getSelection()?.removeAllRanges();
     if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
@@ -182,7 +190,7 @@
   function openEditor(anchor, record = null, rect = null, viewing = false) {
     if (!core.validateAnchor(anchor)) return;
     const returning = restorePanel || !panel.hidden;
-    dismissEditor(); closePreview(); confirmation.hidden = true; closeMenu();
+    dismissEditor(); closePreview(); closeConfirmation(false); closeMenu();
     restorePanel = returning; panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
     editing = { anchor, record }; editor.hidden = false; add.hidden = true;
     editorRect = rect;
@@ -207,23 +215,40 @@
       status.textContent = 'Saved in this browser';
     } catch (error) { report(error); }
   });
-  function ask(text, action) {
+  function closeConfirmation(restore = true) {
+    if (confirmation.hidden) return;
+    confirmation.hidden = true;
+    const anchor = confirmationAnchor?.isConnected ? confirmationAnchor
+      : [...list.querySelectorAll('.annotation-item')].find(item => item.dataset.annotationId === confirmationRecordId)?.querySelector('button[aria-label="Delete"]');
+    confirmationAnchor = null; confirmationRecordId = null;
+    if (restore) (anchor || closeButton).focus({ preventScroll: true });
+  }
+  function ask(text, action, anchor, label = 'Delete') {
     dismissEditor(); closePreview(); clearCandidate();
-    showPanel(); confirmText.textContent = text; confirmActions.replaceChildren(); confirmation.hidden = false;
-    button('Confirm', () => {
-      try { action(); confirmation.hidden = true; refresh(); }
+    showPanel(); confirmText.textContent = text; confirmActions.replaceChildren();
+    confirmationAnchor = anchor;
+    confirmationRecordId = anchor.closest('.annotation-item')?.dataset.annotationId || null;
+    const cancel = button('Cancel', () => closeConfirmation(), confirmActions);
+    button(label, () => {
+      try { action(); closeConfirmation(false); refresh(); closeButton.focus({ preventScroll: true }); }
       catch (error) { report(error); }
-    }, confirmActions);
-    button('Cancel', () => { confirmation.hidden = true; }, confirmActions);
+    }, confirmActions, 'annotation-delete-confirm');
+    place(confirmation, anchor.getBoundingClientRect());
+    cancel.focus({ preventScroll: true });
   }
   function confirmClear() {
     if (!store) return;
     try {
       const snapshot = store.snapshot();
-      ask(`Clear ${snapshot.length} saved annotation record(s) for this page and viewing context?`, () => store.clear(snapshot));
+      ask(`Delete all ${snapshot.length} annotations saved for this page and viewing context?`, () => store.clear(snapshot), more, 'Delete all');
     } catch (error) { report(error); }
   }
   function renderList() {
+    // Location replies may rebuild a row just after cancellation restored its focus.
+    const active = document.activeElement;
+    const focusedItem = list.contains(active) ? active.closest('.annotation-item') : null;
+    const focusedId = focusedItem?.dataset.annotationId;
+    const focusedAction = focusedItem ? active.getAttribute('aria-label') : null;
     list.replaceChildren();
     for (const record of records) {
       const item = element('li', 'annotation-item');
@@ -236,10 +261,15 @@
       if (!matched) item.append(element('p', 'annotation-unmatched', 'Original text changed or could not be located'));
       decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate').disabled = !matched;
       decorate(button('Edit', () => locate(record, true), controls, 'annotation-icon'), 'edit', 'Edit');
-      decorate(button('Delete', () => ask('Delete this annotation?', () => store.remove(record.id, record)), controls, 'annotation-icon'), 'delete', 'Delete');
+      decorate(button('Delete', event => ask('Delete this annotation?', () => store.remove(record.id, record), event.currentTarget), controls, 'annotation-icon'), 'delete', 'Delete');
       item.append(quote, comment, controls); list.append(item);
     }
     if (!records.length) list.append(element('li', 'annotation-status', 'No annotations'));
+    if (focusedAction) {
+      const item = [...list.children].find(node => node.dataset.annotationId === focusedId);
+      const action = [...(item?.querySelectorAll('button') || [])].find(node => node.getAttribute('aria-label') === focusedAction && !node.disabled);
+      (action || closeButton).focus({ preventScroll: true });
+    }
   }
   function refresh() {
     if (!store) { copy.disabled = clear.disabled = true; return; }
@@ -290,21 +320,44 @@
   }
   function previewPrompt() {
     try {
-      dismissEditor(); clearCandidate();
+      closeConfirmation(false); dismissEditor(); clearCandidate();
       const documentUrl = host.dataset.documentUrl
         ? new URL(host.dataset.documentUrl, location.origin).href : '';
       const text = core.exportMarkdown(records.map(record => ({ ...record, locationStatus: locations.get(record.id) })), documentUrl, document.title);
       manualText.value = text;
-      previewStatus.textContent = `${records.length} annotation(s)`; copyAll.disabled = !records.length;
+      resetCopyState();
+      previewStatus.textContent = `${records.length} annotation(s)`;
       place(manual); manualText.focus({ preventScroll: true });
     } catch { status.textContent = 'Could not prepare a safe prompt.'; }
   }
+  function setCopyState(state) {
+    const [icon, label] = state === 'pending' ? ['loading', 'Copying...']
+      : state === 'success' ? ['check', 'Copied']
+        : state === 'error' ? ['close', 'Copy failed']
+          : state === 'manual' ? ['copy', 'Copy manually'] : ['copy', 'Copy Prompt'];
+    decorate(copyAll, icon, label, label);
+    copyAll.dataset.copyState = state;
+    copyPending = state === 'pending';
+    copyAll.disabled = copyPending || !records.length;
+    copyAll.setAttribute('aria-busy', String(copyPending));
+  }
+  function resetCopyState() { copyGeneration++; setCopyState('idle'); }
   async function copyPrompt() {
+    if (copyPending || manual.hidden || !records.length) return;
+    const generation = ++copyGeneration;
     const text = manualText.value;
-    if (text.length > 100000) { previewStatus.textContent = 'Large prompt. Select and copy the full text below.'; manualText.focus(); manualText.select(); return; }
+    if (text.length > 100000) { setCopyState('manual'); previewStatus.textContent = 'Large prompt. Select and copy the full text.'; manualText.focus(); manualText.select(); return; }
+    setCopyState('pending');
+    previewStatus.textContent = 'Copying prompt...';
     try {
-      await navigator.clipboard.writeText(text); previewStatus.textContent = 'Prompt copied';
-    } catch { previewStatus.textContent = 'Clipboard unavailable. Select and copy the full prompt below.'; manualText.focus(); manualText.select(); }
+      await navigator.clipboard.writeText(text);
+      if (generation !== copyGeneration || manual.hidden) return;
+      setCopyState('success'); previewStatus.textContent = 'Prompt copied';
+    } catch {
+      if (generation !== copyGeneration || manual.hidden) return;
+      setCopyState('error'); previewStatus.textContent = 'Clipboard unavailable. Select and copy the full prompt, or try again.';
+      manualText.focus(); manualText.select();
+    }
   }
   function send(message) { if (port && portReady) port.postMessage({ ...message, version: 1, generation }); }
   function invalidateMarkdownIndex() {
@@ -426,14 +479,21 @@
     }
   });
   document.addEventListener('pointerdown', event => {
+    if (!confirmation.hidden && !confirmation.contains(event.target)) closeConfirmation();
     if (!host.contains(event.target)) { dismissEditor(); closePreview(); clearCandidate(); }
+  });
+  list.addEventListener('scroll', () => closeConfirmation(), { passive: true });
+  window.addEventListener('blur', () => {
+    if (frame && document.activeElement === frame) closeConfirmation();
   });
   function resizeTransient() {
     clearCandidate();
     if (!editor.hidden) place(editor, editorRect);
     if (!manual.hidden) place(manual);
+    closeConfirmation();
   }
   window.addEventListener('scroll', () => {
+    closeConfirmation();
     clearCandidate();
     if (!editor.hidden && root && editing) {
       const range = core.rangeForAnchor(markdownIndex(), editing.anchor);
@@ -444,6 +504,7 @@
   window.visualViewport?.addEventListener('resize', resizeTransient);
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
+    if (!confirmation.hidden) { event.preventDefault(); closeConfirmation(); return; }
     clearSelection();
     if (!editor.hidden) { dismissEditor(); return; }
     if (!manual.hidden) { closePreview(); return; }
