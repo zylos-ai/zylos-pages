@@ -298,7 +298,11 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
             await page.keyboard.press('Escape');
             assert.equal(await confirmation.isVisible(), false);
             assert.equal(await page.locator('.annotation-panel').isVisible(), true, 'Escape cancels without closing the list');
-            assert.equal(await deletion.evaluate(node => node === document.activeElement), true);
+            const focus = await page.evaluate(() => {
+              const current = document.querySelector('.annotation-item button[aria-label="Delete"]');
+              return { matches: current === document.activeElement, active: document.activeElement?.outerHTML?.slice(0, 200) };
+            });
+            assert.equal(focus.matches, true, JSON.stringify({ kind, width, height, theme, focus }));
             await count(page, 1);
           }
         }
@@ -309,7 +313,9 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         await deletion.click();
         await page.mouse.click(2, 2);
         assert.equal(await confirmation.isVisible(), false, 'outside click cancels');
+        await page.locator('.annotation-panel').waitFor({ state: 'hidden' });
         await count(page, 1);
+        await page.locator('.annotation-launcher').click();
         if (kind === 'html') {
           for (const cancellation of ['escape', 'cancel']) {
             for (const moveFocus of [false, true]) {
@@ -334,7 +340,9 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
           await deletion.click();
           await target.locator('body').click({ position: { x: 2, y: 310 } });
           await confirmation.waitFor({ state: 'hidden' });
+          await page.locator('.annotation-panel').waitFor({ state: 'hidden' });
           await count(page, 1);
+          await page.locator('.annotation-launcher').click();
         }
         await page.getByRole('button', { name: 'More actions', exact: true }).click();
         await page.getByRole('button', { name: 'Clear all', exact: true }).click();

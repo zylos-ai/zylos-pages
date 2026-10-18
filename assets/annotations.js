@@ -51,7 +51,13 @@
   add.setAttribute('aria-label', 'Annotate');
   add.title = 'Annotate';
   add.hidden = true;
-  add.addEventListener('pointerdown', event => event.preventDefault());
+  add.addEventListener('pointerdown', event => {
+    touchClickPending = event.pointerType === 'touch';
+    if (event.pointerType === 'touch' && event.isPrimary && candidate) {
+      addTouch = { id: event.pointerId, x: event.clientX, y: event.clientY, anchor: candidate, rect: candidateRect };
+    }
+    event.preventDefault();
+  });
   const panel = element('div', 'annotation-panel');
   panel.id = 'annotation-panel'; panel.hidden = true;
   panel.setAttribute('role', 'region'); panel.setAttribute('aria-label', 'Annotations');
@@ -124,6 +130,7 @@
   manual.append(previewHeading, manualText, previewStatus, previewActions);
   panel.append(heading, status, list); host.append(panel, editor, manual, confirmation);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
+  let addTouch = null, touchClickPending = false;
   setCopyState('idle');
   let editorRect = null, restorePanel = false, pendingLocate = null;
   let frameSelectionId = null;
@@ -174,7 +181,35 @@
     const above = (rect?.y ?? top + 30) - box.height - 8;
     node.style.top = `${Math.max(top + 8, Math.min(top + height - box.height - 8, below + box.height <= top + height - 8 ? below : above))}px`;
   }
-  function clearCandidate() { candidate = null; candidateRect = null; add.hidden = true; }
+  function clearCandidate() { addTouch = null; candidate = null; candidateRect = null; add.hidden = true; }
+  document.addEventListener('pointerdown', () => { touchClickPending = false; }, true);
+  document.addEventListener('click', event => {
+    // The compatibility click may land on the editor that pointerup just opened.
+    if (touchClickPending && event.detail !== 0) { event.preventDefault(); event.stopImmediatePropagation(); }
+  }, true);
+  function touchSelectionChanged() {
+    if (!addTouch || !root) return false;
+    const selection = window.getSelection();
+    // Native touch menus can collapse the selection before the finger is lifted.
+    if (!selection || selection.isCollapsed) return false;
+    const anchor = core.selectionAnchor(markdownIndex(), selection);
+    return JSON.stringify(anchor) !== JSON.stringify(addTouch.anchor);
+  }
+  document.addEventListener('pointermove', event => {
+    if (addTouch?.id === event.pointerId && Math.hypot(event.clientX - addTouch.x, event.clientY - addTouch.y) > 10) clearCandidate();
+  });
+  document.addEventListener('pointercancel', event => {
+    if (addTouch?.id === event.pointerId) clearCandidate();
+  });
+  document.addEventListener('pointerup', event => {
+    if (addTouch?.id !== event.pointerId) return;
+    const gesture = addTouch;
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 10 ||
+        !target || !add.contains(target) || touchSelectionChanged()) { clearCandidate(); return; }
+    addTouch = null;
+    openEditor(gesture.anchor, null, gesture.rect);
+  });
   function showPanel() { panel.hidden = false; launcher.setAttribute('aria-expanded', 'true'); }
   function dismissEditor() {
     editor.hidden = true; editing = null; pendingLocate = null; editorRect = null;
@@ -183,6 +218,11 @@
     restorePanel = false; clearCandidate();
   }
   function closePreview() { manual.hidden = true; resetCopyState(); }
+  function dismissOutside() {
+    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate(); closeMenu();
+    // Editor dismissal can restore the summary, so hide it after that restoration.
+    panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+  }
   function clearSelection() {
     window.getSelection()?.removeAllRanges();
     if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
@@ -408,11 +448,11 @@
           frameSelectionId = data.selectionId;
           setCandidate(data.anchor, rect);
         }
-      } else if (data.type === 'selection-clear' && (data.selectionId === undefined || data.selectionId === frameSelectionId)) clearCandidate();
+      } else if (data.type === 'selection-clear' && !addTouch && (data.selectionId === undefined || data.selectionId === frameSelectionId)) clearCandidate();
       else if (data.type === 'position' && portReady && !editor.hidden) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) { editorRect = rect; place(editor, rect); }
-      } else if (data.type === 'dismiss' && portReady) { dismissEditor(); closePreview(); clearCandidate(); }
+      } else if (data.type === 'dismiss' && portReady) dismissOutside();
       else if (data.type === 'activate' && portReady) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) activate(data.ids, rect);
@@ -434,7 +474,9 @@
     let selectionTimer;
     function selectionChanged() {
       clearTimeout(selectionTimer);
+      if (touchSelectionChanged()) clearCandidate();
       selectionTimer = setTimeout(() => {
+        if (addTouch) return;
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || selection.rangeCount !== 1 ||
             !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) { clearCandidate(); return; }
@@ -479,11 +521,13 @@
     }
   });
   document.addEventListener('pointerdown', event => {
-    if (!confirmation.hidden && !confirmation.contains(event.target)) closeConfirmation();
-    if (!host.contains(event.target)) { dismissEditor(); closePreview(); clearCandidate(); }
+    if (addTouch && addTouch.id !== event.pointerId) clearCandidate();
+    if (!host.contains(event.target)) dismissOutside();
+    else if (!confirmation.hidden && !confirmation.contains(event.target)) closeConfirmation();
   });
   list.addEventListener('scroll', () => closeConfirmation(), { passive: true });
   window.addEventListener('blur', () => {
+    if (addTouch) clearCandidate();
     if (frame && document.activeElement === frame) closeConfirmation();
   });
   function resizeTransient() {
