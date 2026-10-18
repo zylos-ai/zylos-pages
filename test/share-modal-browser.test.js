@@ -128,23 +128,31 @@ test('share modal consolidates results and preserves warning, password and copy 
       assert.equal(await recent.locator('.share-item-copy-btn').textContent(), 'Copy failed');
       assert.deepEqual(await recent.locator('.share-link-input').evaluate(node => [node.selectionStart, node.selectionEnd]),
         [0, newShare.shortUrl.length]);
-      const password = page.locator('.share-created-password');
+      assert.equal(await page.locator('.share-created-password').count(), 0);
+      const password = recent.locator('.share-password-secret');
       assert.equal(await password.isVisible(), true);
+      assert.equal(await page.locator('.share-password-secret').count(), 1, 'password controls exist only in the protected link row');
       assert.notEqual(await password.locator('code').textContent(), 'fixture-password');
-      await password.locator('.share-created-password-reveal').click();
+      await password.locator('.share-password-reveal-btn').click();
+      await page.waitForFunction(() => document.querySelector('.share-item.is-new code').textContent === 'fixture-password');
       assert.equal(await password.locator('code').textContent(), 'fixture-password');
-      await password.locator('.share-created-password-reveal').click();
-      await password.locator('.share-created-password-copy').click();
+      await password.locator('.share-password-reveal-btn').click();
+      await page.waitForFunction(() => document.querySelector('.share-item.is-new code').textContent !== 'fixture-password');
+      await password.locator('.share-password-copy-btn').click();
+      await page.waitForFunction(() => document.querySelector('.share-password-copy-btn').textContent === 'Copy failed');
       assert.equal(await password.locator('code').textContent(), 'fixture-password', 'failed secret copy remains manually selectable');
-      assert.equal(await password.locator('.share-created-password-copy').textContent(), 'Copy failed');
+      assert.equal(await page.evaluate(() => window.getSelection().toString()), 'fixture-password');
       await page.locator('.share-password-input').uncheck();
       assert.equal(await warning.isVisible(), true, 'a protected link coexisting with an unprotected link remains contextual');
       await page.locator('.share-modal-close').click();
-      assert.equal(await password.locator('code').textContent(), '••••••••••••••••••••••');
+      assert.equal(await page.locator('.share-password-secret code').textContent(), '••••••••••••••••••••••');
+      const previousShareRow = await page.locator('.share-item').first().elementHandle();
       await page.locator('.share-btn').click();
-      await page.locator('.share-item').first().waitFor();
+      // Reopening retains old rows until loadShares replaces the list.
+      await page.waitForFunction(row => !row.isConnected, previousShareRow);
+      await previousShareRow.dispose();
       assert.equal(await page.locator('.share-item.is-new').count(), 0);
-      assert.equal(await password.isVisible(), false);
+      assert.equal(await page.locator('.share-password-secret code').textContent(), '••••••••••••••••••••••');
 
       state.shares = [newShare];
       await page.locator('.share-modal-close').click();
@@ -165,7 +173,7 @@ test('share modal consolidates results and preserves warning, password and copy 
       state.revokeFailed = false;
       await page.locator('.share-revoke-all-btn').click();
       await page.getByText('No active shares', { exact: true }).waitFor();
-      assert.equal(await password.isVisible(), false);
+      assert.equal(await page.locator('.share-password-secret').count(), 0);
       assert.deepEqual(dialogs, ['Revoke denied']);
       const hostileUrl = 'https://example.test/s/\"><img src=x onerror=alert(1)>';
       state.shares = [{ ...oldShare, shortUrl: hostileUrl }];
@@ -202,7 +210,14 @@ test('share modal handles create rejection and failed refresh without losing or 
     await page.locator('.share-item.is-new').waitFor();
     assert.match(await page.locator('.share-list-items').textContent(), /Failed to refresh shares/);
     assert.equal(await page.locator('.share-item.is-new .share-link-input').inputValue(), newShare.shortUrl);
-    assert.equal(await page.locator('.share-created-password').isVisible(), true);
+    assert.equal(await page.locator('.share-created-password').count(), 0);
+    const password = page.locator('.share-item.is-new .share-password-secret');
+    assert.equal(await password.isVisible(), true);
+    await password.locator('.share-password-copy-btn').click();
+    await page.waitForFunction(() => window.copied.includes('fixture-password'));
+    await password.locator('.share-password-reveal-btn').click();
+    await page.waitForFunction(() => document.querySelector('.share-item.is-new code').textContent === 'fixture-password');
+    assert.equal(await password.locator('code').textContent(), 'fixture-password', 'generated secret stays available when refresh fails');
     assert.equal(await page.locator('.share-security-warning').isVisible(), true, 'failed refresh retains the warning about a known unprotected link');
     assert.equal(await page.locator('.share-item').count(), 2, 'known links remain available alongside the created link');
     assert.equal(await page.locator('.share-revoke-all-btn').count(), 0, 'partial list cannot suggest a complete revoke-all view');
@@ -220,7 +235,7 @@ test('share modal handles create rejection and failed refresh without losing or 
     await page.locator('.share-password-input').uncheck();
     await page.locator('.share-generate-btn').click();
     await page.locator('.share-item.is-new').waitFor();
-    assert.equal(await page.locator('.share-created-password').isVisible(), false);
+    assert.equal(await page.locator('.share-password-secret').count(), 0);
     assert.equal(await page.locator('.share-security-warning').isVisible(), false);
     assert.equal(await page.locator('.share-item-copy-btn').count(), 1);
     assert.equal(state.posts, 3);

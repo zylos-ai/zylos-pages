@@ -1685,11 +1685,6 @@ svg { display: block; }
   width: 100%;
 }
 
-#share-modal .share-created-password {
-  margin-top: 16px;
-  font-size: 13px;
-}
-
 #share-modal .share-security-warning { margin: 8px 0 12px; }
 
 #share-modal .share-item.is-new {

@@ -111,14 +111,6 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
           <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make that link private.</div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
-        <div class="share-created-password" hidden>
-          <label>Password (secret):</label>
-          <div class="share-password-secret">
-            <code>••••••••••••••••••••••</code>
-            <button class="share-copy-btn share-created-password-reveal">Reveal</button>
-            <button class="share-copy-btn share-created-password-copy">Copy password</button>
-          </div>
-        </div>
         <div class="share-list">
           <h4>Active shares</h4>
           <div class="share-list-items"></div>
@@ -248,14 +240,6 @@ export function htmlArtifactTemplate({
           </div>
           <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make that link private.</div>
           <button class="share-generate-btn">Generate Link</button>
-        </div>
-        <div class="share-created-password" hidden>
-          <label>Password (secret):</label>
-          <div class="share-password-secret">
-            <code>••••••••••••••••••••••</code>
-            <button class="share-copy-btn share-created-password-reveal">Reveal</button>
-            <button class="share-copy-btn share-created-password-copy">Copy password</button>
-          </div>
         </div>
         <div class="share-list">
           <h4>Active shares</h4>

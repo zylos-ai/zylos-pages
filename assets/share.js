@@ -21,10 +21,6 @@
   var passwordInput = modal.querySelector('.share-password-input');
   var passwordOptions = modal.querySelector('.share-password-create-options');
   var providedPasswordInput = modal.querySelector('.share-provided-password');
-  var createdPassword = modal.querySelector('.share-created-password');
-  var createdPasswordCode = createdPassword.querySelector('code');
-  var createdPasswordReveal = modal.querySelector('.share-created-password-reveal');
-  var createdPasswordCopy = modal.querySelector('.share-created-password-copy');
   var warning = modal.querySelector('.share-security-warning');
   var revealedPasswords = Object.create(null);
   var lastCreatedPassword = '';
@@ -74,7 +70,7 @@
           if (secret) {
             var code = secret.querySelector('code');
             code.textContent = text;
-            var reveal = secret.querySelector('.share-created-password-reveal, .share-password-reveal-btn');
+            var reveal = secret.querySelector('.share-password-reveal-btn');
             if (reveal) reveal.textContent = 'Hide';
             if (row) revealedPasswords[button.dataset.tokenId] = text;
             var range = document.createRange();
@@ -115,6 +111,9 @@
   }
 
   function revealPassword(tokenId) {
+    if (tokenId === lastCreatedTokenId && lastCreatedPassword) {
+      return Promise.resolve(lastCreatedPassword);
+    }
     return passwordRequest(tokenId, 'reveal').then(function (data) {
       return data.protection.password;
     });
@@ -130,13 +129,17 @@
   function clearCreatedShare() {
     lastCreatedPassword = '';
     lastCreatedTokenId = '';
-    createdPassword.hidden = true;
-    createdPasswordCode.textContent = maskedPassword;
   }
   function closeModal() {
     modal.hidden = true;
     clearCreatedShare();
     revealedPasswords = Object.create(null);
+    modal.querySelectorAll('.share-password-secret code').forEach(function (code) {
+      code.textContent = maskedPassword;
+    });
+    modal.querySelectorAll('.share-password-reveal-btn').forEach(function (button) {
+      button.textContent = 'Reveal';
+    });
     lastLoadedShares = [];
     providedPasswordInput.value = '';
   }
@@ -192,9 +195,6 @@
         lastCreatedTokenId = data.tokenId;
         providedPasswordInput.value = '';
         lastCreatedPassword = data.protection && data.protection.password ? data.protection.password : '';
-        createdPassword.hidden = !lastCreatedPassword;
-        createdPasswordCode.textContent = maskedPassword;
-        createdPasswordReveal.textContent = 'Reveal';
         // Keep the newly created link usable if the list refresh fails.
         loadShares({ tokenId: data.tokenId, shortUrl: data.shortUrl || data.url,
           createdAt: Date.now(), expiresAt: data.expiresAt,
@@ -206,15 +206,6 @@
         generateBtn.disabled = false;
         generateBtn.textContent = 'Generate Link';
       });
-  });
-
-  createdPasswordReveal.addEventListener('click', function () {
-    var visible = createdPasswordCode.textContent !== maskedPassword;
-    createdPasswordCode.textContent = visible ? maskedPassword : lastCreatedPassword;
-    createdPasswordReveal.textContent = visible ? 'Reveal' : 'Hide';
-  });
-  createdPasswordCopy.addEventListener('click', function () {
-    copyText(lastCreatedPassword, createdPasswordCopy, 'Copy password');
   });
 
   // Load active shares for this slug
