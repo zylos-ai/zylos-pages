@@ -22,6 +22,8 @@
     close: '<path d="m6 6 12 12M6 18 18 6"/>',
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
     copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    check: '<path d="m5 12 4 4L19 6"/>',
+    loading: '<path d="M12 3a9 9 0 1 1-9 9"/>',
     locate: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     edit: '<path d="m16 3 5 5-12 12-6 1 1-6ZM14 5l5 5"/>',
     delete: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
@@ -113,10 +115,12 @@
   manualText.setAttribute('aria-label', 'Feedback prompt');
   const previewStatus = element('p', 'annotation-preview-status'); previewStatus.setAttribute('role', 'status');
   const previewActions = element('div', 'annotation-actions');
-  const copyAll = button('Copy Prompt', copyPrompt, previewActions, 'annotation-primary');
+  const copyAll = button('Copy Prompt', copyPrompt, previewActions, 'annotation-primary annotation-copy-button');
+  let copyGeneration = 0, copyPending = false;
   manual.append(previewHeading, manualText, previewStatus, previewActions);
   panel.append(heading, status, confirmation, list); host.append(panel, editor, manual);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
+  setCopyState('idle');
   let editorRect = null, restorePanel = false, pendingLocate = null;
   let frameSelectionId = null;
   let markdownObserver, mutationTimer;
@@ -174,7 +178,7 @@
     if (restorePanel) showPanel();
     restorePanel = false; clearCandidate();
   }
-  function closePreview() { manual.hidden = true; }
+  function closePreview() { manual.hidden = true; resetCopyState(); }
   function clearSelection() {
     window.getSelection()?.removeAllRanges();
     if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
@@ -295,16 +299,39 @@
         ? new URL(host.dataset.documentUrl, location.origin).href : '';
       const text = core.exportMarkdown(records.map(record => ({ ...record, locationStatus: locations.get(record.id) })), documentUrl, document.title);
       manualText.value = text;
-      previewStatus.textContent = `${records.length} annotation(s)`; copyAll.disabled = !records.length;
+      resetCopyState();
+      previewStatus.textContent = `${records.length} annotation(s)`;
       place(manual); manualText.focus({ preventScroll: true });
     } catch { status.textContent = 'Could not prepare a safe prompt.'; }
   }
+  function setCopyState(state) {
+    const [icon, label] = state === 'pending' ? ['loading', 'Copying...']
+      : state === 'success' ? ['check', 'Copied']
+        : state === 'error' ? ['close', 'Copy failed']
+          : state === 'manual' ? ['copy', 'Copy manually'] : ['copy', 'Copy Prompt'];
+    decorate(copyAll, icon, label, label);
+    copyAll.dataset.copyState = state;
+    copyPending = state === 'pending';
+    copyAll.disabled = copyPending || !records.length;
+    copyAll.setAttribute('aria-busy', String(copyPending));
+  }
+  function resetCopyState() { copyGeneration++; setCopyState('idle'); }
   async function copyPrompt() {
+    if (copyPending || manual.hidden || !records.length) return;
+    const generation = ++copyGeneration;
     const text = manualText.value;
-    if (text.length > 100000) { previewStatus.textContent = 'Large prompt. Select and copy the full text below.'; manualText.focus(); manualText.select(); return; }
+    if (text.length > 100000) { setCopyState('manual'); previewStatus.textContent = 'Large prompt. Select and copy the full text.'; manualText.focus(); manualText.select(); return; }
+    setCopyState('pending');
+    previewStatus.textContent = 'Copying prompt...';
     try {
-      await navigator.clipboard.writeText(text); previewStatus.textContent = 'Prompt copied';
-    } catch { previewStatus.textContent = 'Clipboard unavailable. Select and copy the full prompt below.'; manualText.focus(); manualText.select(); }
+      await navigator.clipboard.writeText(text);
+      if (generation !== copyGeneration || manual.hidden) return;
+      setCopyState('success'); previewStatus.textContent = 'Prompt copied';
+    } catch {
+      if (generation !== copyGeneration || manual.hidden) return;
+      setCopyState('error'); previewStatus.textContent = 'Clipboard unavailable. Select and copy the full prompt, or try again.';
+      manualText.focus(); manualText.select();
+    }
   }
   function send(message) { if (port && portReady) port.postMessage({ ...message, version: 1, generation }); }
   function invalidateMarkdownIndex() {

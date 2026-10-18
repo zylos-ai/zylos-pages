@@ -22,6 +22,11 @@ headings or blank separators. Internal positions and record identifiers are not
 exported. Share readers export the title instead of a bearer URL. Clipboard
 rejection selects the complete preview for manual copying; long prompts are
 never truncated.
+The copy button shows a spinner and Copying while a write is pending, then a
+green check with Copied or a red Copy failed state. Failure allows retry and
+selects the full prompt for manual copying. Large prompts show Copy manually.
+Closing or reopening the preview resets its feedback and ignores older pending
+clipboard results. Reduced-motion settings disable the icon animations.
 
 ## Storage and recovery
 

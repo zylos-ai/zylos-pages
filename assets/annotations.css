@@ -41,6 +41,14 @@
 .annotation-view { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 .annotation-preview { width: min(620px, calc(100vw - 16px)); }
 .annotation-preview .annotation-actions { margin-top: 12px; justify-content: flex-end; }
+#pages-annotations .annotation-copy-button { box-sizing: border-box; width: 164px; max-width: 100%; height: 40px; white-space: nowrap; }
+#pages-annotations .annotation-copy-button[data-copy-state="success"] { background: #167047; border-color: #167047; }
+#pages-annotations .annotation-copy-button[data-copy-state="error"] { background: #a33037; border-color: #a33037; }
+.annotation-copy-button[data-copy-state="pending"] svg { animation: annotation-copy-spin .8s linear infinite; }
+.annotation-copy-button[data-copy-state="success"] svg { animation: annotation-copy-confirm .2s ease-out; }
+@keyframes annotation-copy-spin { to { transform: rotate(360deg); } }
+@keyframes annotation-copy-confirm { from { transform: scale(.6); } to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .annotation-copy-button svg { animation: none !important; } }
 .annotation-preview-status { font-size: 12px; color: var(--color-text-secondary, #666); overflow-wrap: anywhere; }
 .annotation-preview .annotation-copy-text { height: min(360px, 50dvh); white-space: pre-wrap; }
 #pages-annotations textarea { box-sizing: border-box; width: 100%; min-height: 100px; resize: vertical; padding: 8px; background: var(--color-panel, #fff); color: inherit; border: 1px solid var(--color-border-strong, #aaa); border-radius: 4px; }

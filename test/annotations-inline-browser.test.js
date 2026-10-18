@@ -73,8 +73,14 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
           });
         }
         window.inlineCopies = [];
+        window.inlineCopyAttempts = 0;
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
-          writeText: async text => { window.inlineCopies.push(text); },
+          writeText: async text => {
+            window.inlineCopyAttempts++;
+            if (window.inlineCopyMode === 'reject') throw new Error('Clipboard denied');
+            if (window.inlineCopyMode === 'hold') await new Promise((resolve, reject) => { window.inlineCopyResult = { resolve, reject }; });
+            window.inlineCopies.push(text);
+          },
         } });
       });
       const page = await context.newPage();
@@ -192,8 +198,57 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
           await fits(page, preview, `${kind}/${width}/${theme} preview`);
           if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `preview-${kind}-${width}-${theme}.png`) });
         }
+        await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), width === 320 ? 'light' : 'dark');
         await preview.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+        await preview.getByRole('button', { name: 'Copied', exact: true }).waitFor();
         assert.deepEqual(await page.evaluate(() => window.inlineCopies), [text], 'Copy Prompt copies exactly the displayed full preview');
+        const copyButton = preview.locator('.annotation-actions button');
+        const copyWidth = (await copyButton.boundingBox()).width;
+        await page.evaluate(() => { window.inlineCopyMode = 'hold'; });
+        await copyButton.click();
+        assert.equal(await copyButton.innerText(), 'Copying...');
+        assert.equal(await copyButton.isDisabled(), true);
+        assert.equal(await copyButton.getAttribute('aria-busy'), 'true');
+        await copyButton.dispatchEvent('click');
+        assert.equal(await page.evaluate(() => window.inlineCopyAttempts), 2, 'pending copy rejects duplicate activation');
+        if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `copy-pending-${kind}-${width}.png`) });
+        await page.evaluate(() => window.inlineCopyResult.resolve());
+        await preview.getByRole('button', { name: 'Copied', exact: true }).waitFor();
+        assert.equal(await copyButton.isDisabled(), false);
+        assert.equal((await copyButton.boundingBox()).width, copyWidth, 'copy states keep a stable button width');
+        await page.emulateMedia({ reducedMotion: 'reduce' });
+        assert.equal(await copyButton.locator('svg').evaluate(node => getComputedStyle(node).animationName), 'none');
+        await page.emulateMedia({ reducedMotion: 'no-preference' });
+        if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `copy-success-${kind}-${width}.png`) });
+        await page.evaluate(() => { window.inlineCopyMode = 'reject'; });
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copy failed', exact: true }).waitFor();
+        assert.match(await preview.locator('.annotation-preview-status').innerText(), /Clipboard unavailable/);
+        assert.equal(await preview.locator('#annotation-copy-text').evaluate(node => node.selectionEnd - node.selectionStart), text.length);
+        if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `copy-failure-${kind}-${width}.png`) });
+        for (const outcome of ['resolve', 'reject']) {
+          await page.evaluate(() => { window.inlineCopyMode = 'hold'; });
+          await copyButton.click();
+          await preview.getByRole('button', { name: 'Close preview', exact: true }).click();
+          await page.locator('.annotation-panel').getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+          await page.evaluate(result => window.inlineCopyResult[result](), outcome);
+          assert.equal(await copyButton.innerText(), 'Copy Prompt', 'old clipboard result cannot change a reopened preview');
+          assert.equal(await preview.locator('.annotation-preview-status').innerText(), '1 annotation(s)');
+        }
+        await page.evaluate(() => { window.inlineCopyMode = ''; });
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copied', exact: true }).waitFor();
+        await preview.locator('#annotation-copy-text').evaluate(node => { node.value = 'x'.repeat(100001); });
+        const attempts = await page.evaluate(() => window.inlineCopyAttempts);
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copy manually', exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => window.inlineCopyAttempts), attempts, 'large prompt uses manual copy without a clipboard write');
+        assert.equal(await preview.locator('#annotation-copy-text').evaluate(node => node.selectionEnd - node.selectionStart), 100001);
+        await preview.locator('#annotation-copy-text').evaluate((node, value) => { node.value = value; }, text);
+        await page.evaluate(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined }); });
+        await copyButton.click();
+        await preview.getByRole('button', { name: 'Copy failed', exact: true }).waitFor();
+        assert.equal(await preview.locator('#annotation-copy-text').evaluate(node => node.selectionEnd - node.selectionStart), text.length, 'missing Clipboard API retains manual fallback');
         await preview.getByRole('button', { name: 'Close preview', exact: true }).click();
         await preview.waitFor({ state: 'hidden' });
         await page.reload();
