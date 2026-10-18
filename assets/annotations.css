@@ -27,6 +27,11 @@
 #pages-annotations .annotation-menu button { width: 100%; border-color: transparent; justify-content: flex-start; white-space: nowrap; }
 #pages-annotations .annotation-danger { color: var(--color-danger, #a13b25); }
 .annotation-item-actions { justify-content: flex-end; gap: 4px; flex-wrap: nowrap; }
+.annotation-confirmation { position: fixed; z-index: 5; box-sizing: border-box; width: min(280px, calc(100vw - 16px)); overflow: auto; padding: 14px; background: var(--color-panel, #fff); border: 1px solid var(--color-border-strong, #bbb); border-radius: 8px; box-shadow: 0 6px 24px #0003; }
+.annotation-confirmation p { margin: 0 0 14px; font-size: 14px; line-height: 1.5; font-weight: 600; overflow-wrap: anywhere; }
+.annotation-confirmation .annotation-actions { justify-content: flex-end; flex-wrap: nowrap; }
+#pages-annotations .annotation-delete-confirm { background: #b4232d; border-color: #b4232d; color: #fff; font-weight: 600; }
+#pages-annotations .annotation-delete-confirm:hover { background: #961e27; border-color: #961e27; }
 .annotation-heading h2 { font-size: 17px; margin: 0; white-space: nowrap; min-width: 0; flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; }
 .annotation-status { margin: 8px 0; font-size: 12px; color: var(--color-text-secondary, #666); overflow-wrap: anywhere; }
 .annotation-list { padding: 0; margin: 0; list-style: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

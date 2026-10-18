@@ -269,6 +269,70 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         assert.equal(await editor.isVisible(), true, 'scrolling repositions rather than dropping an open draft');
         assert.equal(await editor.locator('#annotation-comment').inputValue(), 'Draft retained while scrolling');
         await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+        const deletion = page.locator('.annotation-item').getByRole('button', { name: 'Delete', exact: true });
+        const confirmation = page.getByRole('dialog', { name: 'Delete this annotation?', exact: true });
+        for (const height of [900, 400]) {
+          await page.setViewportSize({ width, height });
+          for (const theme of ['light', 'dark']) {
+            await page.evaluate(theme => document.documentElement.setAttribute('data-theme', theme), theme);
+            const before = await page.locator('.annotation-list').boundingBox();
+            await deletion.click();
+            await confirmation.waitFor({ state: 'visible' });
+            await fits(page, confirmation, 'delete confirmation');
+            assert.deepEqual(await page.locator('.annotation-list').boundingBox(), before, 'floating confirmation does not shift the list');
+            assert.equal(await confirmation.getByRole('button', { name: 'Cancel', exact: true }).evaluate(node => node === document.activeElement), true, 'safe Cancel receives focus');
+            if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `delete-${kind}-${width}-${height}-${theme}.png`) });
+            await page.keyboard.press('Escape');
+            assert.equal(await confirmation.isVisible(), false);
+            assert.equal(await page.locator('.annotation-panel').isVisible(), true, 'Escape cancels without closing the list');
+            assert.equal(await deletion.evaluate(node => node === document.activeElement), true);
+            await count(page, 1);
+          }
+        }
+        await deletion.click();
+        await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await count(page, 1);
+        assert.equal(await deletion.evaluate(node => node === document.activeElement), true);
+        await deletion.click();
+        await page.mouse.click(2, 2);
+        assert.equal(await confirmation.isVisible(), false, 'outside click cancels');
+        await count(page, 1);
+        if (kind === 'html') {
+          await deletion.click();
+          await target.locator('body').click({ position: { x: 2, y: 310 } });
+          await confirmation.waitFor({ state: 'hidden' });
+          await count(page, 1);
+        }
+        await page.getByRole('button', { name: 'More actions', exact: true }).click();
+        await page.getByRole('button', { name: 'Clear all', exact: true }).click();
+        const clearConfirmation = page.locator('.annotation-confirmation');
+        await fits(page, clearConfirmation, 'clear all confirmation');
+        await clearConfirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        assert.equal(await page.getByRole('button', { name: 'More actions', exact: true }).evaluate(node => node === document.activeElement), true);
+        await count(page, 1);
+        await deletion.click();
+        await page.evaluate(() => {
+          const host = document.getElementById('pages-annotations');
+          const store = PagesAnnotationsCore.createStore(localStorage, {
+            baseNamespace: host.dataset.baseNamespace, viewerScope: host.dataset.viewerScope, pageId: host.dataset.pageId,
+          });
+          const record = store.read().records[0];
+          store.update(record.id, 'Changed while confirmation was open', record);
+        });
+        await confirmation.getByRole('button', { name: 'Delete', exact: true }).click();
+        assert.equal(await confirmation.isVisible(), true, 'stale confirmation cannot delete a changed record');
+        assert.match(await page.locator('.annotation-status[role="status"]').innerText(), /Changed in another tab/);
+        await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.reload();
+        await count(page, 1);
+        await page.locator('.annotation-launcher').click();
+        assert.equal(await page.locator('.annotation-comment').innerText(), 'Changed while confirmation was open');
+        await deletion.click();
+        await confirmation.getByRole('button', { name: 'Delete', exact: true }).click();
+        await count(page, 0);
+        await page.reload();
+        await count(page, 0);
+        await page.setViewportSize({ width, height: 900 });
       }
       assert.deepEqual(errors, [], `${width}px browser errors`);
       await context.close();

@@ -13,6 +13,10 @@ clear, and **Prompt**. Its header stays visible while long annotation lists scro
 inside the height-limited panel. Clicking a saved highlight opens the comment beside
 its original text with an Edit action. Overlapping annotations remain available
 in the summary. An unmatched saved quote can still be edited in the summary.
+Delete and Clear all open a small floating confirmation beside their action,
+without shifting the list. Cancel receives focus first; Escape or an outside
+click cancels and returns focus to the action. The red Delete or Delete all
+button applies the existing record/scope snapshot checks before removing data.
 
 Prompt first opens a full feedback preview. Copy Prompt copies exactly that
 preview, using compact Markdown: the document title, a safe document reference,

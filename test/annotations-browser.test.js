@@ -369,7 +369,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       assert.equal(await page.locator('.annotation-comment').innerText(), 'Changed in another tab');
       await shareContext.close();
       await page.getByRole('button', { name: 'Delete', exact: true }).click();
-      await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await page.locator('.annotation-confirmation').getByRole('button', { name: 'Delete', exact: true }).click();
       await count(page, 0);
       await page.reload();
       await count(page, 0);
@@ -424,7 +424,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       await snapshot(page, evidenceDir, `${label}-html-dark`);
       await page.getByRole('button', { name: 'More actions', exact: true }).click();
       await page.getByRole('button', { name: 'Clear all', exact: true }).click();
-      await page.getByRole('button', { name: 'Confirm', exact: true }).click();
+      await page.locator('.annotation-confirmation').getByRole('button', { name: 'Delete all', exact: true }).click();
       await count(page, 0);
       await page.goto(`${origin}/p/annotations-disabled`);
       await page.getByRole('button', { name: 'Annotations unavailable', exact: true }).waitFor();
