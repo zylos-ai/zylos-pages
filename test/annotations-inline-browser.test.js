@@ -71,6 +71,19 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
               });
             },
           });
+        } else {
+          window.inlineDeferredLocations = [];
+          const descriptor = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+          Object.defineProperty(MessagePort.prototype, 'onmessage', {
+            ...descriptor,
+            set(handler) {
+              descriptor.set.call(this, event => {
+                if (window.inlineHoldLocations && event.data?.type === 'locations') {
+                  window.inlineDeferredLocations.push(() => handler.call(this, event));
+                } else handler.call(this, event);
+              });
+            },
+          });
         }
         window.inlineCopies = [];
         window.inlineCopyAttempts = 0;
@@ -298,6 +311,26 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         assert.equal(await confirmation.isVisible(), false, 'outside click cancels');
         await count(page, 1);
         if (kind === 'html') {
+          for (const cancellation of ['escape', 'cancel']) {
+            for (const moveFocus of [false, true]) {
+              await page.evaluate(() => { window.inlineHoldLocations = true; });
+              await target.evaluate(() => window.dispatchEvent(new Event('resize')));
+              await page.waitForFunction(() => window.inlineDeferredLocations.length > 0);
+              await deletion.click();
+              if (cancellation === 'escape') await page.keyboard.press('Escape');
+              else await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+              assert.equal(await deletion.evaluate(node => node === document.activeElement), true, 'cancel restores focus before held locations are delivered');
+              const close = page.locator('.annotation-panel > .annotation-heading').getByRole('button', { name: 'Close', exact: true });
+              if (moveFocus) await close.focus();
+              await page.evaluate(() => {
+                window.inlineHoldLocations = false;
+                window.inlineDeferredLocations.splice(0).forEach(deliver => deliver());
+              });
+              assert.equal(await (moveFocus ? close : deletion).evaluate(node => node === document.activeElement), true,
+                moveFocus ? 'late locations cannot steal focus moved outside the list' : 'late locations preserve the restored current Delete action');
+              await count(page, 1);
+            }
+          }
           await deletion.click();
           await target.locator('body').click({ position: { x: 2, y: 310 } });
           await confirmation.waitFor({ state: 'hidden' });

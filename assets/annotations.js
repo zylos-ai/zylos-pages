@@ -244,6 +244,11 @@
     } catch (error) { report(error); }
   }
   function renderList() {
+    // Location replies may rebuild a row just after cancellation restored its focus.
+    const active = document.activeElement;
+    const focusedItem = list.contains(active) ? active.closest('.annotation-item') : null;
+    const focusedId = focusedItem?.dataset.annotationId;
+    const focusedAction = focusedItem ? active.getAttribute('aria-label') : null;
     list.replaceChildren();
     for (const record of records) {
       const item = element('li', 'annotation-item');
@@ -260,6 +265,11 @@
       item.append(quote, comment, controls); list.append(item);
     }
     if (!records.length) list.append(element('li', 'annotation-status', 'No annotations'));
+    if (focusedAction) {
+      const item = [...list.children].find(node => node.dataset.annotationId === focusedId);
+      const action = [...(item?.querySelectorAll('button') || [])].find(node => node.getAttribute('aria-label') === focusedAction && !node.disabled);
+      (action || closeButton).focus({ preventScroll: true });
+    }
   }
   function refresh() {
     if (!store) { copy.disabled = clear.disabled = true; return; }
