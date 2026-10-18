@@ -104,11 +104,16 @@ test('simple Markdown export preserves full multiline quote/comment and omits in
   const record = store.add(anchor(quote, quote), 'comment *bold*\nnext line');
   const prompt = core.exportMarkdown([record], 'https://example.com/pages/p/docs/test');
   assert.match(prompt, /文档：<https:\/\/example.com\/pages\/p\/docs\/test>/);
-  assert.match(prompt, /1\. 原文\n> first \\`code\\`\n> \\> second \\\[link\\\]/);
-  assert.match(prompt, /comment \\\*bold\\\*\n   next line/);
+  assert.match(prompt, /1\. 原文：first \\`code\\`\n   \\> second \\\[link\\\]/);
+  assert.match(prompt, /comment \\\*bold\\\*\n   > next line/);
+  assert.match(prompt, /逐条处理下面的批注并修改文档/);
+  assert.match(prompt, /有歧义的地方先向我确认/);
   assert.equal(prompt.includes(record.id), false);
   assert.equal(prompt.includes('contentRevision'), false);
-  assert.match(core.exportMarkdown([{ ...record, locationStatus: 'missing' }], '', '共享文档'), /^文档：共享文档\n\n1\. 原文（引用位置已变化）/);
+  assert.match(core.exportMarkdown([{ ...record, locationStatus: 'missing' }], '', '共享文档'), /^# 文档反馈：共享文档\n[\s\S]*1\. 原文（引用位置已变化）/);
+  const two = core.exportMarkdown([record, { ...record, id: 'second', createdAt: record.createdAt }], '', 'Title');
+  assert.match(two, /\n   > next line\n2\. 原文/);
+  assert.equal(two.includes('---'), false);
   for (const url of ['javascript:alert(1)', 'https://example.com/s/secret', 'https://example.com/share/secret',
     'https://example.com/p/doc?token=secret', 'https://example.com/p/doc#secret', 'https://user:password@example.com/p/doc']) {
     assert.throws(() => core.exportMarkdown([record], url), { code: 'url' });

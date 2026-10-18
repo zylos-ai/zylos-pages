@@ -175,13 +175,16 @@
     const safeUrl = url?.href.replace(/[<>\r\n]/g, character => encodeURIComponent(character));
     const escape = text => text.replace(/([\\`*_{}\[\]<>!#|])/g, '\\$1');
     const sorted = [...records].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    return (safeUrl ? `文档：<${safeUrl}>\n\n` : `文档：${escape(String(title).replace(/\s+/g, ' ').slice(0, 500))}\n\n`) + sorted.map((record, index) => {
+    const header = `# 文档反馈：${escape(String(title).replace(/\s+/g, ' ').slice(0, 500))}\n` +
+      (safeUrl ? `文档：<${safeUrl}>\n` : '') +
+      '\n请结合原文，逐条处理下面的批注并修改文档，简要说明处理结果；有歧义的地方先向我确认。\n\n## 批注\n';
+    return header + sorted.map((record, index) => {
       if (!validateAnchor(record) || typeof record.comment !== 'string' || record.comment.length > LIMITS.comment) fail('record', 'Invalid annotation');
-      const quote = record.quote.exact.split(/\r\n|\r|\n/).map(line => '> ' + escape(line)).join('\n');
-      const comment = escape(record.comment).replace(/\r\n|\r/g, '\n').split('\n').map(line => '   ' + line).join('\n');
+      const quote = escape(record.quote.exact).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   ');
+      const comment = escape(record.comment).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   > ');
       const mismatch = record.locationStatus && record.locationStatus !== 'matched' ? '（引用位置已变化）' : '';
-      return `${index + 1}. 原文${mismatch}\n${quote}\n\n   批注：\n${comment}`;
-    }).join('\n\n');
+      return `${index + 1}. 原文${mismatch}：${quote}\n   > 批注：${comment}`;
+    }).join('\n');
   }
   global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, rangeForAnchor, createStore, exportMarkdown });
 })(globalThis);

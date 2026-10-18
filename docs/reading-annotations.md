@@ -1,15 +1,26 @@
 # Reading annotations
 
 Markdown readers and script-enabled sandboxed HTML readers support local text
-annotations. Selecting text opens **Annotate**. The lower-right **Annotations**
+annotations. Selecting text reveals a compact **+ Note** button beside the
+selection. It opens an anchored editor with the selected quote, Save, Cancel
+and Close. Closing, canceling, Escape, clicking outside, switching to the
+summary, or selecting another passage discards an unsaved draft and releases
+the selection for the next annotation. Canceling an edit preserves its saved
+content. Storage errors and stale-edit conflicts retain the draft for recovery.
+The lower-right **Annotations**
 control shows the count and provides locate, edit, individual delete, confirmed
-clear, and **Copy Prompt**. Selecting an existing highlight opens its matching
-entries, including overlapping annotations.
+clear, and **Copy Prompt**. Clicking a saved highlight opens the comment beside
+its original text with an Edit action. Overlapping annotations remain available
+in the summary. An unmatched saved quote can still be edited in the summary.
 
-Copy Prompt uses simple Markdown: a document reference, numbered original quotes,
-and comments. Internal positions and record identifiers are not exported. Share
-readers export the title instead of a bearer URL. Clipboard rejection reveals
-the complete prompt for manual copying; long prompts are never truncated.
+Copy Prompt first opens a full feedback preview. Copy all copies exactly that
+preview, using compact Markdown: the document title, a safe document reference,
+an instruction to process each annotation and clarify ambiguity, then consecutive
+numbered quotes and comments. Multiline content is preserved without per-item
+headings or blank separators. Internal positions and record identifiers are not
+exported. Share readers export the title instead of a bearer URL. Clipboard
+rejection selects the complete preview for manual copying; long prompts are
+never truncated.
 
 ## Storage and recovery
 

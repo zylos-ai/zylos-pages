@@ -37,13 +37,17 @@
     return node;
   }
   const launcher = button('Annotations (0)', () => {
-    panel.hidden = !panel.hidden;
+    const opening = panel.hidden || !editor.hidden || !manual.hidden;
+    dismissEditor(); closePreview(); clearCandidate();
+    panel.hidden = !opening;
     launcher.setAttribute('aria-expanded', String(!panel.hidden));
     if (!panel.hidden) { refresh(); closeButton.focus(); }
   }, host, 'annotation-launcher');
   launcher.setAttribute('aria-expanded', 'false'); launcher.setAttribute('aria-controls', 'annotation-panel');
   decorate(launcher, 'comment', 'Annotations (0)', '0');
-  const add = button('Annotate', () => openEditor(candidate), host, 'annotation-add');
+  const add = button('+ Note', () => openEditor(candidate, null, candidateRect), host, 'annotation-add');
+  add.setAttribute('aria-label', 'Annotate');
+  add.title = 'Annotate';
   add.hidden = true;
   add.addEventListener('pointerdown', event => event.preventDefault());
   const panel = element('div', 'annotation-panel');
@@ -53,6 +57,7 @@
   const title = element('h2', '', 'Annotations · 0');
   heading.append(title);
   const closeButton = button('Close', () => {
+    dismissEditor(); closePreview(); clearCandidate();
     panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); launcher.focus();
   }, heading);
   closeButton.className = 'annotation-icon';
@@ -60,7 +65,7 @@
   const status = element('p', 'annotation-status', 'Saved in this browser');
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const actions = element('div', 'annotation-actions annotation-toolbar');
-  const copy = button('Copy Prompt', copyPrompt, actions, 'annotation-primary');
+  const copy = button('Copy Prompt', previewPrompt, actions, 'annotation-primary');
   decorate(copy, 'copy', 'Copy Prompt', 'Copy');
   const moreWrap = element('div', 'annotation-more'); actions.append(moreWrap);
   const more = button('More actions', () => {
@@ -80,23 +85,41 @@
   heading.insertBefore(actions, closeButton);
   const list = element('ol', 'annotation-list');
   const editor = element('form', 'annotation-editor'); editor.hidden = true;
+  editor.setAttribute('role', 'dialog'); editor.setAttribute('aria-label', 'Annotation editor');
+  const editorHeading = element('div', 'annotation-heading');
+  const editorTitle = element('h2', '', 'Add annotation'); editorHeading.append(editorTitle);
+  decorate(button('Close annotation editor', () => dismissEditor(), editorHeading, 'annotation-icon'), 'close', 'Close annotation editor');
   const selectedQuote = element('blockquote', 'annotation-quote');
+  const viewText = element('p', 'annotation-view'); viewText.hidden = true;
   const label = element('label', '', 'Comment'); label.htmlFor = 'annotation-comment';
   const input = element('textarea'); input.id = 'annotation-comment'; input.maxLength = core.LIMITS.comment;
   input.required = true;
   const editorActions = element('div', 'annotation-actions');
-  const save = element('button', '', 'Save'); save.type = 'submit'; editorActions.append(save);
-  button('Cancel', () => { editor.hidden = true; editing = null; refresh(); }, editorActions);
-  editor.append(selectedQuote, label, input, editorActions);
+  const save = element('button', 'annotation-primary', 'Save'); save.type = 'submit'; editorActions.append(save);
+  const cancelEdit = button('Cancel', () => { dismissEditor(); refresh(); }, editorActions);
+  const editSaved = button('Edit', () => {
+    if (editing?.record) openEditor(editing.anchor, editing.record, editorRect);
+  }, editorActions);
+  editor.append(editorHeading, selectedQuote, viewText, label, input, editorActions);
   const confirmation = element('div'); confirmation.hidden = true;
   const confirmText = element('p'); const confirmActions = element('div', 'annotation-actions');
   confirmation.append(confirmText, confirmActions);
-  const manual = element('div'); manual.hidden = true;
+  const manual = element('section', 'annotation-preview'); manual.hidden = true;
+  manual.setAttribute('role', 'dialog'); manual.setAttribute('aria-label', 'Feedback preview');
+  const previewHeading = element('div', 'annotation-heading');
+  previewHeading.append(element('h2', '', 'Feedback preview'));
+  decorate(button('Close preview', closePreview, previewHeading, 'annotation-icon'), 'close', 'Close preview');
   const manualLabel = element('label', '', 'Copy Prompt'); manualLabel.htmlFor = 'annotation-copy-text';
   const manualText = element('textarea', 'annotation-copy-text'); manualText.id = 'annotation-copy-text'; manualText.readOnly = true;
-  manual.append(manualLabel, manualText);
-  panel.append(heading, status, editor, confirmation, manual, list); host.append(panel);
-  let store, records = [], candidate = null, editing = null, index = null;
+  const previewStatus = element('p', 'annotation-preview-status'); previewStatus.setAttribute('role', 'status');
+  const previewActions = element('div', 'annotation-actions');
+  button('View annotations', () => { closePreview(); showPanel(); }, previewActions);
+  const copyAll = button('Copy all', copyPrompt, previewActions, 'annotation-primary');
+  manual.append(previewHeading, manualLabel, manualText, previewStatus, previewActions);
+  panel.append(heading, status, confirmation, list); host.append(panel, editor, manual);
+  let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
+  let editorRect = null, restorePanel = false, pendingLocate = null;
+  let frameSelectionId = null;
   let markdownObserver, mutationTimer;
   let port = null, generation = '', portReady = false, handshakeTimer, rateTime = 0, rateCount = 0;
   const locations = new Map();
@@ -128,32 +151,65 @@
   function setCandidate(anchor, rect) {
     if (!core.validateAnchor(anchor) || !rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) return;
     if (rect.width < 0 || rect.height < 0 || rect.y + rect.height < 0 || rect.y > innerHeight) return;
-    candidate = anchor;
-    add.hidden = !editor.hidden;
-    add.style.left = `${Math.max(8, Math.min(innerWidth - 110, rect.x))}px`;
-    // Place below selection, leaving the native selection menu above it.
-    add.style.top = `${Math.max(8, Math.min(innerHeight - 48, rect.y + rect.height + 10))}px`;
+    dismissEditor(); closePreview(); panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+    candidate = anchor; candidateRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+    place(add, candidateRect);
   }
-  function clearCandidate() { candidate = null; add.hidden = true; }
+  function place(node, rect) {
+    node.hidden = false;
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+    const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
+    node.style.maxHeight = `${Math.max(40, height - 16)}px`;
+    const box = node.getBoundingClientRect();
+    node.style.left = `${Math.max(left + 8, Math.min(left + width - box.width - 8, rect?.x ?? left + width / 2 - box.width / 2))}px`;
+    const below = (rect?.y ?? top + 30) + (rect?.height || 0) + 8;
+    const above = (rect?.y ?? top + 30) - box.height - 8;
+    node.style.top = `${Math.max(top + 8, Math.min(top + height - box.height - 8, below + box.height <= top + height - 8 ? below : above))}px`;
+  }
+  function clearCandidate() { candidate = null; candidateRect = null; add.hidden = true; }
   function showPanel() { panel.hidden = false; launcher.setAttribute('aria-expanded', 'true'); }
-  function openEditor(anchor, record = null) {
-    if (!core.validateAnchor(anchor)) return;
-    showPanel(); manual.hidden = true; confirmation.hidden = true;
-    editing = { anchor, record }; editor.hidden = false; add.hidden = true;
-    selectedQuote.textContent = anchor.quote.exact; input.value = record?.comment || '';
-    input.focus();
+  function dismissEditor() {
+    editor.hidden = true; editing = null; pendingLocate = null; editorRect = null;
+    panel.insertBefore(status, confirmation);
+    if (restorePanel) showPanel();
+    restorePanel = false; clearCandidate();
   }
+  function closePreview() { manual.hidden = true; }
+  function clearSelection() {
+    window.getSelection()?.removeAllRanges();
+    if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
+  }
+  function openEditor(anchor, record = null, rect = null, viewing = false) {
+    if (!core.validateAnchor(anchor)) return;
+    const returning = restorePanel || !panel.hidden;
+    dismissEditor(); closePreview(); confirmation.hidden = true; closeMenu();
+    restorePanel = returning; panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+    editing = { anchor, record }; editor.hidden = false; add.hidden = true;
+    editorRect = rect;
+    editorTitle.textContent = viewing ? 'Annotation' : record ? 'Edit annotation' : 'Add annotation';
+    selectedQuote.textContent = anchor.quote.exact; input.value = record?.comment || '';
+    viewText.textContent = record?.comment || ''; viewText.hidden = !viewing;
+    label.hidden = input.hidden = save.hidden = cancelEdit.hidden = viewing;
+    editSaved.hidden = !viewing;
+    status.textContent = 'Saved in this browser'; editor.insertBefore(status, editorActions);
+    save.disabled = !input.value.trim();
+    clearCandidate(); clearSelection(); place(editor, rect);
+    (viewing ? editSaved : input).focus({ preventScroll: true });
+  }
+  input.addEventListener('input', () => { save.disabled = !input.value.trim(); });
   editor.addEventListener('submit', event => {
     event.preventDefault();
     if (!editing || !store) { report(); return; }
     try {
       if (editing.record) store.update(editing.record.id, input.value, editing.record);
       else store.add(editing.anchor, input.value);
-      editor.hidden = true; editing = null; clearCandidate(); refresh();
+      dismissEditor(); clearSelection(); refresh();
       status.textContent = 'Saved in this browser';
     } catch (error) { report(error); }
   });
   function ask(text, action) {
+    dismissEditor(); closePreview(); clearCandidate();
     showPanel(); confirmText.textContent = text; confirmActions.replaceChildren(); confirmation.hidden = false;
     button('Confirm', () => {
       try { action(); confirmation.hidden = true; refresh(); }
@@ -180,7 +236,7 @@
       const matched = locations.get(record.id) === 'matched';
       if (!matched) item.append(element('p', 'annotation-unmatched', 'Original text changed or could not be located'));
       decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate').disabled = !matched;
-      decorate(button('Edit', () => openEditor(record, record), controls, 'annotation-icon'), 'edit', 'Edit');
+      decorate(button('Edit', () => locate(record, true), controls, 'annotation-icon'), 'edit', 'Edit');
       decorate(button('Delete', () => ask('Delete this annotation?', () => store.remove(record.id, record)), controls, 'annotation-icon'), 'delete', 'Delete');
       item.append(quote, comment, controls); list.append(item);
     }
@@ -212,38 +268,44 @@
       quote: record.quote, textPosition: record.textPosition, contentRevision: record.contentRevision,
     } })) });
   }
-  function locate(record) {
-    if (frame) { send({ type: 'locate', id: record.id }); return; }
+  function locate(record, edit = false) {
+    dismissEditor(); closePreview(); clearCandidate();
+    if (edit && locations.get(record.id) !== 'matched') { openEditor(record, record); return; }
+    if (frame) { pendingLocate = { record, edit }; send({ type: 'locate', id: record.id }); return; }
     index = markdownIndex();
     const range = core.rangeForAnchor(index, record);
-    if (!range) { refresh(); return; }
+    if (!range) { refresh(); if (edit) openEditor(record, record); return; }
     const target = range.startContainer.parentElement;
-    target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    if (edit) { openEditor(record, record, range.getBoundingClientRect()); return; }
     if (!window.CSS?.highlights) {
       const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
     }
   }
-  function activate(ids) {
+  function activate(ids, rect) {
     const known = new Set(records.map(record => record.id));
     if (!Array.isArray(ids) || ids.length > core.LIMITS.records || ids.some(id => !known.has(id))) return;
     activeIds = new Set(ids);
-    showPanel();
-    const active = [...list.children].filter(item => ids.includes(item.dataset.annotationId));
-    for (const item of list.children) item.classList.toggle('annotation-active', active.includes(item));
-    active[0]?.scrollIntoView({ block: 'nearest' });
+    const record = records.find(record => ids.includes(record.id));
+    if (record) openEditor(record, record, rect, true);
   }
-  async function copyPrompt() {
+  function previewPrompt() {
     try {
+      dismissEditor(); clearCandidate();
       const documentUrl = host.dataset.documentUrl
         ? new URL(host.dataset.documentUrl, location.origin).href : '';
       const text = core.exportMarkdown(records.map(record => ({ ...record, locationStatus: locations.get(record.id) })), documentUrl, document.title);
       manualText.value = text;
-      manual.hidden = false;
-      if (text.length > 100000) { status.textContent = 'Large prompt. Review and copy the full text below.'; manualText.focus(); manualText.select(); return; }
-      try {
-        await navigator.clipboard.writeText(text); manual.hidden = true; status.textContent = 'Prompt copied';
-      } catch { status.textContent = 'Clipboard unavailable. Select and copy the full prompt below.'; manualText.focus(); manualText.select(); }
+      previewStatus.textContent = `${records.length} annotation(s)`; copyAll.disabled = !records.length;
+      place(manual); manualText.focus({ preventScroll: true });
     } catch { status.textContent = 'Could not prepare a safe prompt.'; }
+  }
+  async function copyPrompt() {
+    const text = manualText.value;
+    if (text.length > 100000) { previewStatus.textContent = 'Large prompt. Select and copy the full text below.'; manualText.focus(); manualText.select(); return; }
+    try {
+      await navigator.clipboard.writeText(text); previewStatus.textContent = 'Prompt copied';
+    } catch { previewStatus.textContent = 'Clipboard unavailable. Select and copy the full prompt below.'; manualText.focus(); manualText.select(); }
   }
   function send(message) { if (port && portReady) port.postMessage({ ...message, version: 1, generation }); }
   function invalidateMarkdownIndex() {
@@ -259,7 +321,19 @@
   }
   function disconnect() {
     clearTimeout(handshakeTimer); port?.close(); port = null; portReady = false;
-    clearCandidate(); locations.clear();
+    frameSelectionId = null;
+    dismissEditor(); closePreview(); clearCandidate(); locations.clear();
+  }
+  function frameRect(rect, viewport) {
+    if (!rect || !viewport || ![rect.x, rect.y, rect.width, rect.height, viewport.width, viewport.height].every(Number.isFinite)) return null;
+    if (viewport.width <= 0 || viewport.height <= 0 || viewport.width > 100000 || viewport.height > 100000 ||
+        rect.width < 0 || rect.height < 0 || [rect.x, rect.y, rect.width, rect.height].some(value => Math.abs(value) > 10000000)) return null;
+    const x = Math.max(0, rect.x), y = Math.max(0, rect.y);
+    const right = Math.min(viewport.width, rect.x + rect.width), bottom = Math.min(viewport.height, rect.y + rect.height);
+    if (right <= x || bottom <= y) return null;
+    const bounds = frame.getBoundingClientRect();
+    const scaleX = bounds.width / viewport.width, scaleY = bounds.height / viewport.height;
+    return { x: bounds.x + x * scaleX, y: bounds.y + y * scaleY, width: (right - x) * scaleX, height: (bottom - y) * scaleY };
   }
   function connect() {
     if (!frame?.contentWindow) return;
@@ -277,19 +351,24 @@
       if (data.type === 'ready' && !portReady) {
         portReady = true; clearTimeout(handshakeTimer); refresh();
       } else if (data.type === 'selection' && portReady) {
-        const rect = data.rect, viewport = data.viewport;
-        if (!rect || !viewport || ![rect.x, rect.y, rect.width, rect.height, viewport.width, viewport.height].every(Number.isFinite)) return;
-        if (viewport.width <= 0 || viewport.height <= 0 || viewport.width > 100000 || viewport.height > 100000 ||
-            rect.width < 0 || rect.height < 0 || [rect.x, rect.y, rect.width, rect.height].some(value => Math.abs(value) > 10000000)) return;
-        const x = Math.max(0, rect.x), y = Math.max(0, rect.y);
-        const right = Math.min(viewport.width, rect.x + rect.width), bottom = Math.min(viewport.height, rect.y + rect.height);
-        if (right <= x || bottom <= y) return;
-        const bounds = frame.getBoundingClientRect();
-        const scaleX = bounds.width / viewport.width, scaleY = bounds.height / viewport.height;
-        setCandidate(data.anchor, { x: bounds.x + x * scaleX, y: bounds.y + y * scaleY, width: (right - x) * scaleX, height: (bottom - y) * scaleY });
-      } else if (data.type === 'selection-clear') clearCandidate();
-      else if (data.type === 'activate' && portReady) activate(data.ids);
-      else if (data.type === 'locations' && portReady && Array.isArray(data.items) && data.items.length <= core.LIMITS.records) {
+        const rect = frameRect(data.rect, data.viewport);
+        if (rect && core.validateAnchor(data.anchor) && Number.isSafeInteger(data.selectionId) && data.selectionId > 0) {
+          frameSelectionId = data.selectionId;
+          setCandidate(data.anchor, rect);
+        }
+      } else if (data.type === 'selection-clear' && (data.selectionId === undefined || data.selectionId === frameSelectionId)) clearCandidate();
+      else if (data.type === 'position' && portReady && !editor.hidden) {
+        const rect = frameRect(data.rect, data.viewport);
+        if (rect) { editorRect = rect; place(editor, rect); }
+      } else if (data.type === 'dismiss' && portReady) { dismissEditor(); closePreview(); clearCandidate(); }
+      else if (data.type === 'activate' && portReady) {
+        const rect = frameRect(data.rect, data.viewport);
+        if (rect) activate(data.ids, rect);
+      } else if (data.type === 'located' && portReady && pendingLocate?.record.id === data.id) {
+        const rect = frameRect(data.rect, data.viewport), pending = pendingLocate;
+        pendingLocate = null;
+        if (pending.edit) openEditor(pending.record, pending.record, rect);
+      } else if (data.type === 'locations' && portReady && Array.isArray(data.items) && data.items.length <= core.LIMITS.records) {
         const ids = new Set(records.map(record => record.id));
         for (const item of data.items) if (ids.has(item?.id) && ['matched', 'unmatched'].includes(item.status)) locations.set(item.id, item.status);
         renderList();
@@ -304,7 +383,6 @@
     function selectionChanged() {
       clearTimeout(selectionTimer);
       selectionTimer = setTimeout(() => {
-        if (!editor.hidden) return;
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed || selection.rangeCount !== 1 ||
             !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) { clearCandidate(); return; }
@@ -325,7 +403,10 @@
         const range = core.rangeForAnchor(index, record);
         return range && [...range.getClientRects()].some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom);
       }).map(record => record.id);
-      if (ids.length) activate(ids);
+      if (ids.length) {
+        const record = records.find(record => record.id === ids[0]);
+        activate(ids, core.rangeForAnchor(index, record).getBoundingClientRect());
+      }
     });
     markdownObserver = new MutationObserver(invalidateMarkdownIndex);
     markdownObserver.observe(root, { childList: true, characterData: true, attributes: true, subtree: true });
@@ -345,7 +426,30 @@
       refresh();
     }
   });
-  window.addEventListener('scroll', () => { if (candidate) add.hidden = true; }, { passive: true });
-  document.addEventListener('keydown', event => { if (event.key === 'Escape' && !panel.hidden) { panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); launcher.focus(); } });
+  document.addEventListener('pointerdown', event => {
+    if (!host.contains(event.target)) { dismissEditor(); closePreview(); clearCandidate(); }
+  });
+  function resizeTransient() {
+    clearCandidate();
+    if (!editor.hidden) place(editor, editorRect);
+    if (!manual.hidden) place(manual);
+  }
+  window.addEventListener('scroll', () => {
+    clearCandidate();
+    if (!editor.hidden && root && editing) {
+      const range = core.rangeForAnchor(markdownIndex(), editing.anchor);
+      if (range) { editorRect = range.getBoundingClientRect(); place(editor, editorRect); }
+    }
+  }, { passive: true });
+  window.addEventListener('resize', resizeTransient);
+  window.visualViewport?.addEventListener('resize', resizeTransient);
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    clearSelection();
+    if (!editor.hidden) { dismissEditor(); return; }
+    if (!manual.hidden) { closePreview(); return; }
+    clearCandidate();
+    if (!panel.hidden) { panel.hidden = true; launcher.setAttribute('aria-expanded', 'false'); launcher.focus(); }
+  });
   refresh();
 })();
