@@ -8,6 +8,7 @@
   let index = null;
   let entries = [];
   let ranges = new Map();
+  let activeRange = null;
   let selectionTimer = null;
   let refreshTimer = null;
   let overlay = null;
@@ -22,6 +23,10 @@
   function send(type, payload = {}) {
     if (!port || disposed) return;
     try { port.postMessage({ type, version: 1, generation, ...payload }); } catch {}
+  }
+  function rangePosition(range) {
+    const rect = range.getBoundingClientRect();
+    return { rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, viewport: { width: window.innerWidth, height: window.innerHeight } };
   }
 
   function currentIndex() {
@@ -98,6 +103,7 @@
       }
       const rect = selection.getRangeAt(0).getBoundingClientRect();
       if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) || rect.width < 0 || rect.height <= 0) return;
+      activeRange = selection.getRangeAt(0).cloneRange();
       send('selection', {
         anchor,
         rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -135,8 +141,10 @@
       const range = ranges.get(message.id);
       if (!range) return;
       const node = range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement;
-      node?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      node?.scrollIntoView({ block: 'center', behavior: 'instant' });
+      activeRange = range;
       queueRefresh();
+      send('located', { id: message.id, ...rangePosition(range) });
     } else if (message.type === 'selection-clear') {
       window.getSelection()?.removeAllRanges();
       send('selection-clear');
@@ -186,6 +194,10 @@
   document.addEventListener('pointerup', queueSelection);
   document.addEventListener('touchend', queueSelection, { passive: true });
   document.addEventListener('keyup', queueSelection);
+  document.addEventListener('pointerdown', () => send('dismiss'));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { window.getSelection()?.removeAllRanges(); send('dismiss'); }
+  });
   document.addEventListener('click', event => {
     if (disposed || !port || event.defaultPrevented || event.button !== 0 ||
         ![event.clientX, event.clientY].every(Number.isFinite) || !window.getSelection()?.isCollapsed) return;
@@ -195,9 +207,12 @@
           event.clientY >= rect.top && event.clientY <= rect.bottom)) ids.push(id);
       if (ids.length >= core.LIMITS.records) break;
     }
-    if (ids.length) send('activate', { ids });
+    if (ids.length) { activeRange = ranges.get(ids[0]); send('activate', { ids, ...rangePosition(activeRange) }); }
   });
-  window.addEventListener('scroll', () => { queueRefresh(); queueSelection(); }, { passive: true, capture: true });
+  window.addEventListener('scroll', () => {
+    queueRefresh(); queueSelection();
+    if (activeRange) send('position', rangePosition(activeRange));
+  }, { passive: true, capture: true });
   window.addEventListener('resize', () => { index = null; queueRefresh(); queueSelection(); });
   window.addEventListener('pagehide', () => {
     disposed = true;
@@ -210,6 +225,7 @@
     generation = null;
     entries = [];
     ranges.clear();
+    activeRange = null;
     index = null;
     clearPaint();
   });

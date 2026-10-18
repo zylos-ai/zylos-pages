@@ -57,12 +57,12 @@ test('annotation header keeps all controls inside narrow panels at 1, 10 and 200
           const panel = await page.locator('.annotation-panel').boundingBox();
           let right = panel.x;
           for (const selector of ['h2', '.annotation-primary', '.annotation-more > button', ':scope > button']) {
-            const box = await page.locator('.annotation-heading').locator(selector).boundingBox();
+            const box = await page.locator('.annotation-panel > .annotation-heading').locator(selector).boundingBox();
             assert.ok(box.x >= right && box.x + box.width <= panel.x + panel.width, `${width}px/${records}/${theme}: ${selector} inside panel and ordered`);
             assert.ok(box.y >= panel.y && box.y + box.height <= panel.y + panel.height, `${selector} inside panel vertically`);
             right = box.x + box.width;
           }
-          const heading = page.locator('.annotation-heading h2');
+          const heading = page.locator('.annotation-panel > .annotation-heading h2');
           assert.equal(await heading.innerText(), `Annotations · ${records}`);
           assert.equal(await heading.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'count remains visible');
           if (evidenceDir && records > 1) await page.screenshot({ path: path.join(evidenceDir, `header-${width}-${records}-${theme}.png`) });
@@ -137,6 +137,7 @@ test('Markdown annotation index is lazy, reused on long documents, and invalidat
     assert.equal(await builds(), 1, 'selection adjustment reuses the unchanged index');
     await saveSelection(page, 'Long document comment');
     await count(page, 1);
+    await page.locator('.annotation-launcher').click();
     await page.getByRole('button', { name: 'Locate', exact: true }).click();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.evaluate(() => window.getSelection().removeAllRanges());
@@ -336,6 +337,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       assert.equal(await sharePage.locator('.annotation-comment').innerText(), `Share-only comment ${label}`);
       await denyClipboard(sharePage);
       await sharePage.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+      await sharePage.getByRole('button', { name: 'Copy all', exact: true }).click();
       await sharePage.locator('#annotation-copy-text').waitFor({ state: 'visible' });
       const sharePrompt = await sharePage.locator('#annotation-copy-text').inputValue();
       assert.ok(sharePrompt.includes(`Share-only comment ${label}`));
@@ -376,13 +378,17 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       await page.waitForFunction(() => !document.querySelector('.annotation-item button')?.disabled);
       await page.getByRole('button', { name: 'Locate', exact: true }).click();
       assert.equal(await page.locator('.annotation-comment').innerText(), privateComment);
-      await page.locator('.annotation-heading').getByRole('button', { name: 'Close', exact: true }).click();
+      await page.locator('.annotation-panel > .annotation-heading').getByRole('button', { name: 'Close', exact: true }).click();
       await restoredFrame.locator('#quote').click({ position: { x: 25, y: 8 } });
-      await page.locator('.annotation-panel').waitFor({ state: 'visible' });
+      await page.getByRole('dialog', { name: 'Annotation editor', exact: true }).waitFor({ state: 'visible' });
+      assert.equal(await page.locator('.annotation-view').innerText(), privateComment);
+      await page.getByRole('button', { name: 'Close annotation editor', exact: true }).click();
+      await page.locator('.annotation-launcher').click();
       assert.equal(await page.locator('.annotation-item.annotation-active').count(), 1);
       // Force the tested clipboard fallback without relying on host clipboard permissions.
       await denyClipboard(page);
       await page.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+      await page.getByRole('button', { name: 'Copy all', exact: true }).click();
       await page.locator('#annotation-copy-text').waitFor({ state: 'visible' });
       const prompt = await page.locator('#annotation-copy-text').inputValue();
       assert.match(prompt, /Opaque sandbox text supports local annotations\./);
@@ -392,6 +398,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       assert.equal(childMessages.includes(privateComment), false);
       assert.ok(childMessages.includes('anchors'), 'frame should receive only location anchors');
       assert.deepEqual(bridgeRequests, []);
+      await page.getByRole('button', { name: 'Close preview', exact: true }).click();
       await snapshot(page, evidenceDir, `${label}-html`);
       await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
       await snapshot(page, evidenceDir, `${label}-html-dark`);
@@ -453,8 +460,8 @@ async function snapshot(page, directory, label) {
   const viewport = page.viewportSize();
   assert.ok(panel.x >= 0 && panel.x + panel.width <= viewport.width + 1, `${label} panel fits horizontally`);
   assert.ok(panel.y >= 0 && panel.y + panel.height <= viewport.height, `${label} panel fits vertically`);
-  assert.equal(await page.locator('.annotation-heading h2').innerText(), 'Annotations · 1');
-  const heading = page.locator('.annotation-heading');
+  assert.equal(await page.locator('.annotation-panel > .annotation-heading h2').innerText(), 'Annotations · 1');
+  const heading = page.locator('.annotation-panel > .annotation-heading');
   const title = await heading.locator('h2').boundingBox();
   const copy = await heading.getByRole('button', { name: 'Copy Prompt', exact: true }).boundingBox();
   const more = await heading.getByRole('button', { name: 'More actions', exact: true }).boundingBox();
@@ -491,7 +498,7 @@ async function multiCountHeader(page, directory, label) {
     await count(page, total);
     const panel = await page.locator('.annotation-panel').boundingBox();
     for (const name of ['Copy Prompt', 'More actions', 'Close']) {
-      const box = await page.locator('.annotation-heading').getByRole('button', { name, exact: true }).boundingBox();
+      const box = await page.locator('.annotation-panel > .annotation-heading').getByRole('button', { name, exact: true }).boundingBox();
       assert.ok(box.x >= panel.x && box.x + box.width <= panel.x + panel.width, `${total} records: ${name} stays inside real page panel`);
     }
     await page.screenshot({ path: path.join(directory, `${label}-${total}-records.png`) });

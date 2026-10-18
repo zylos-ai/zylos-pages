@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reading annotations use a compact selection button and an editor beside the
+  original passage. Dismissing an unsaved draft releases the next selection;
+  canceling an edit keeps the saved comment. Scroll and viewport resize keep
+  the editor positioned without dropping its draft.
+- Copy Prompt opens a complete feedback preview before copying. The compact
+  Markdown includes document context, Agent instructions, and consecutive
+  numbered quotes/comments with multiline content preserved.
+
 ### Added
 
 - Local reading annotations for Markdown and script-enabled sandboxed HTML:

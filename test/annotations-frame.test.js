@@ -13,6 +13,7 @@ function fixture() {
   const parent = { postMessage() {} };
   const range = {
     startContainer: { nodeType: 1, scrollIntoView() { scrolls++; } },
+    getBoundingClientRect: () => ({ x: 10, y: 20, width: 70, height: 20 }),
     getClientRects: () => [{ left: 10, right: 80, top: 20, bottom: 40 }]
   };
   const selection = { isCollapsed: true, removeAllRanges() {} };
@@ -24,7 +25,7 @@ function fixture() {
     rangeForAnchor: (_index, anchor) => anchor.found ? range : null
   };
   const window = {
-    parent, PagesAnnotationsCore: core,
+    parent, PagesAnnotationsCore: core, innerWidth: 390, innerHeight: 844,
     CSS: { highlights: new Map() }, Highlight: class {},
     addEventListener: (name, listener) => listeners.set(name, listener),
     getSelection: () => selection
@@ -113,6 +114,11 @@ test('frame resolves bounded valid anchors and rejects malformed or stale reques
   assert.equal(f.scrolls(), 0);
   f.send(port, { type: 'locate', id: 'a' });
   assert.equal(f.scrolls(), 1);
+  const located = port.messages.find(message => message.type === 'located');
+  assert.equal(located.id, 'a');
+  assert.equal(located.rect.x, 10);
+  assert.equal(located.viewport.width, 390);
+  assert.equal(JSON.stringify(located).includes('comment'), false);
   const before = port.messages.length;
   f.send(port, { type: 'anchors', items: [{ id: 'bad', anchor: {} }] });
   f.send(port, { type: 'anchors', items: new Array(201).fill({ id: 'a', anchor: { valid: true } }) });
