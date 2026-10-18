@@ -58,6 +58,20 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
     for (const width of [1280, 390, 320]) {
       const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width < 500, hasTouch: width < 500 });
       await context.addInitScript(() => {
+        if (window !== window.parent) {
+          window.inlineDeferredClears = [];
+          const descriptor = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage');
+          Object.defineProperty(MessagePort.prototype, 'onmessage', {
+            ...descriptor,
+            set(handler) {
+              descriptor.set.call(this, event => {
+                if (window.inlineHoldClear && event.data?.type === 'selection-clear') {
+                  window.inlineDeferredClears.push(() => handler.call(this, event));
+                } else handler.call(this, event);
+              });
+            },
+          });
+        }
         window.inlineCopies = [];
         Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
           writeText: async text => { window.inlineCopies.push(text); },
@@ -74,6 +88,29 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         await count(page, 0);
         let target = await documentFrame(page, kind);
         const editor = page.getByRole('dialog', { name: 'Annotation editor', exact: true });
+        if (kind === 'html') {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            await select(target, quote);
+            await page.locator('.annotation-add').waitFor({ state: 'visible' });
+            await target.evaluate(() => { window.inlineHoldClear = true; });
+            await page.locator('.annotation-add').click();
+            await editor.waitFor({ state: 'visible' });
+            await target.waitForFunction(() => window.inlineDeferredClears.length === 1);
+            await select(target, secondQuote);
+            await target.evaluate(() => {
+              window.inlineHoldClear = false;
+              window.inlineDeferredClears.splice(0).forEach(deliver => deliver());
+            });
+            assert.equal(await target.evaluate(() => getSelection().toString()), secondQuote,
+              'late editor clear preserves the immediately replaced native selection');
+            await page.locator('.annotation-add').waitFor({ state: 'visible' });
+            await editor.waitFor({ state: 'hidden' });
+            await page.locator('.annotation-add').click();
+            await editor.waitFor({ state: 'visible' });
+            assert.equal(await editor.locator('.annotation-quote').innerText(), secondQuote);
+            await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+          }
+        }
         await select(target, quote);
         await page.locator('.annotation-add').waitFor({ state: 'visible' });
         await target.locator('body').press('Escape');
@@ -123,6 +160,7 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         await page.reload();
         await count(page, 1);
         target = await documentFrame(page, kind);
+        if (kind === 'html') await target.waitForFunction(() => [...CSS.highlights.values()].some(highlight => highlight.size > 0));
         await target.evaluate(() => getSelection().removeAllRanges());
         await target.locator('p').filter({ hasText: quote }).click({ position: { x: 15, y: 8 } });
         await editor.waitFor({ state: 'visible' });

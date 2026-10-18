@@ -10,13 +10,17 @@ function fixture() {
   const timers = new Map();
   let nextTimer = 0;
   let scrolls = 0;
+  let clears = 0;
   const parent = { postMessage() {} };
   const range = {
+    startOffset: 0, endOffset: 5, endContainer: {},
+    cloneRange() { return { ...this }; },
     startContainer: { nodeType: 1, scrollIntoView() { scrolls++; } },
     getBoundingClientRect: () => ({ x: 10, y: 20, width: 70, height: 20 }),
     getClientRects: () => [{ left: 10, right: 80, top: 20, bottom: 40 }]
   };
-  const selection = { isCollapsed: true, removeAllRanges() {} };
+  const selection = { isCollapsed: true, rangeCount: 0, getRangeAt: () => range,
+    removeAllRanges() { clears++; this.rangeCount = 0; } };
   const core = {
     LIMITS: { records: 200 },
     buildTextIndex: () => ({}),
@@ -53,8 +57,31 @@ function fixture() {
     timers.clear();
     pending.forEach(callback => callback());
   }
-  return { port, init, send, flush, listeners, selection, scrolls: () => scrolls };
+  return { port, init, send, flush, listeners, selection, core, range, clears: () => clears, scrolls: () => scrolls };
 }
+
+test('selection clear rejects stale requests and changed native ranges, and clears only its reported selection', () => {
+  const f = fixture();
+  const port = f.port();
+  f.core.selectionAnchor = () => ({ valid: true });
+  f.selection.rangeCount = 1;
+  f.init(port);
+  f.flush();
+  const first = port.messages.find(message => message.type === 'selection');
+  f.range.endOffset = 6;
+  f.send(port, { type: 'selection-clear', selectionId: first.selectionId });
+  assert.equal(f.clears(), 0, 'an old clear cannot erase a new range before selectionchange is reported');
+  f.listeners.get('document:selectionchange')();
+  f.flush();
+  const second = port.messages.filter(message => message.type === 'selection').at(-1);
+  assert.notEqual(second.selectionId, first.selectionId);
+  f.send(port, { type: 'selection-clear', selectionId: first.selectionId });
+  f.send(port, { type: 'selection-clear' });
+  assert.equal(f.clears(), 0, 'old and unscoped clear requests are ignored');
+  f.send(port, { type: 'selection-clear', selectionId: second.selectionId });
+  assert.equal(f.clears(), 1, 'the matching current range is cleared');
+  assert.equal(port.messages.at(-1).selectionId, second.selectionId);
+});
 
 test('frame only accepts a parent handshake with bounded generation', () => {
   const f = fixture();

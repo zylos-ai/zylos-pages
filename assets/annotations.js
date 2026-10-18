@@ -119,6 +119,7 @@
   panel.append(heading, status, confirmation, list); host.append(panel, editor, manual);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
   let editorRect = null, restorePanel = false, pendingLocate = null;
+  let frameSelectionId = null;
   let markdownObserver, mutationTimer;
   let port = null, generation = '', portReady = false, handshakeTimer, rateTime = 0, rateCount = 0;
   const locations = new Map();
@@ -177,7 +178,7 @@
   function closePreview() { manual.hidden = true; }
   function clearSelection() {
     window.getSelection()?.removeAllRanges();
-    if (frame) send({ type: 'selection-clear' });
+    if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
   }
   function openEditor(anchor, record = null, rect = null, viewing = false) {
     if (!core.validateAnchor(anchor)) return;
@@ -320,6 +321,7 @@
   }
   function disconnect() {
     clearTimeout(handshakeTimer); port?.close(); port = null; portReady = false;
+    frameSelectionId = null;
     dismissEditor(); closePreview(); clearCandidate(); locations.clear();
   }
   function frameRect(rect, viewport) {
@@ -350,8 +352,11 @@
         portReady = true; clearTimeout(handshakeTimer); refresh();
       } else if (data.type === 'selection' && portReady) {
         const rect = frameRect(data.rect, data.viewport);
-        if (rect) setCandidate(data.anchor, rect);
-      } else if (data.type === 'selection-clear') clearCandidate();
+        if (rect && core.validateAnchor(data.anchor) && Number.isSafeInteger(data.selectionId) && data.selectionId > 0) {
+          frameSelectionId = data.selectionId;
+          setCandidate(data.anchor, rect);
+        }
+      } else if (data.type === 'selection-clear' && (data.selectionId === undefined || data.selectionId === frameSelectionId)) clearCandidate();
       else if (data.type === 'position' && portReady && !editor.hidden) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) { editorRect = rect; place(editor, rect); }

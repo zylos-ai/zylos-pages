@@ -9,6 +9,8 @@
   let entries = [];
   let ranges = new Map();
   let activeRange = null;
+  let selectionId = 0;
+  let reportedSelection = null;
   let selectionTimer = null;
   let refreshTimer = null;
   let overlay = null;
@@ -104,7 +106,9 @@
       const rect = selection.getRangeAt(0).getBoundingClientRect();
       if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) || rect.width < 0 || rect.height <= 0) return;
       activeRange = selection.getRangeAt(0).cloneRange();
+      reportedSelection = activeRange.cloneRange();
       send('selection', {
+        selectionId: ++selectionId,
         anchor,
         rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
         viewport: { width: window.innerWidth, height: window.innerHeight }
@@ -146,8 +150,15 @@
       queueRefresh();
       send('located', { id: message.id, ...rangePosition(range) });
     } else if (message.type === 'selection-clear') {
-      window.getSelection()?.removeAllRanges();
-      send('selection-clear');
+      const selection = window.getSelection();
+      if (message.selectionId !== selectionId || !reportedSelection || selection?.rangeCount !== 1) return;
+      const range = selection.getRangeAt(0);
+      // A newer native selection may exist before its debounced report is sent.
+      if (range.startContainer !== reportedSelection.startContainer || range.startOffset !== reportedSelection.startOffset ||
+          range.endContainer !== reportedSelection.endContainer || range.endOffset !== reportedSelection.endOffset) return;
+      selection.removeAllRanges();
+      reportedSelection = null;
+      send('selection-clear', { selectionId });
     }
   }
 
@@ -165,6 +176,7 @@
     clearPaint();
     entries = [];
     ranges.clear();
+    reportedSelection = null;
     generation = message.generation;
     const receivingPort = event.ports[0];
     port = receivingPort;
@@ -226,6 +238,7 @@
     entries = [];
     ranges.clear();
     activeRange = null;
+    reportedSelection = null;
     index = null;
     clearPaint();
   });
