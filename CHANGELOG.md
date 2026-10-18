@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.16.0] - 2026-10-18
 
 ### Changed
 
@@ -11,6 +11,20 @@
 - Copy Prompt opens a complete feedback preview before copying. The compact
   Markdown includes document context, Agent instructions, and consecutive
   numbered quotes/comments with multiline content preserved.
+- Share dialogs keep links and password controls in their corresponding active
+  share rows, highlight newly generated links, and use readable URLs in both
+  themes. Password warnings appear beside the relevant protection settings.
+
+### Fixed
+
+- Mobile annotation activation survives selection collapse, and tapping outside
+  dismisses the annotation summary. Annotation lists scroll within their bounds;
+  deletion confirmation stays near its action and dialog buttons use consistent
+  primary, secondary, and destructive styles.
+- Clipboard rejection preserves manual selection of share links and passwords.
+  Failed share-list refreshes preserve newly generated results and known links;
+  successful password, permission, and revoke operations reconcile cached state
+  before refresh so obsolete protection or revoked links cannot reappear.
 
 ### Added
 
