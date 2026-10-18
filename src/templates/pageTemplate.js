@@ -108,24 +108,17 @@ export function pageTemplate({ title, description, date, tags, bodyHtml, tocItem
             <label><input type="radio" name="share-password-mode" value="provided"> Provide a password</label>
             <input type="password" class="share-provided-password" minlength="4" maxlength="1024" autocomplete="new-password" placeholder="4–1024 bytes" hidden>
           </div>
+          <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make that link private.</div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
-        <div class="share-result" hidden>
-          <label>Share link:</label>
-          <div class="share-link-row">
-            <input type="text" class="share-link-input" readonly>
-            <button class="share-copy-btn">Copy</button>
-          </div>
-          <div class="share-created-password" hidden>
-            <label>Password (secret):</label>
-            <div class="share-password-secret">
-              <code>••••••••••••••••••••••</code>
-              <button class="share-copy-btn share-created-password-reveal">Reveal</button>
-              <button class="share-copy-btn share-created-password-copy">Copy password</button>
-            </div>
+        <div class="share-created-password" hidden>
+          <label>Password (secret):</label>
+          <div class="share-password-secret">
+            <code>••••••••••••••••••••••</code>
+            <button class="share-copy-btn share-created-password-reveal">Reveal</button>
+            <button class="share-copy-btn share-created-password-copy">Copy password</button>
           </div>
         </div>
-        <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make the page private through that link.</div>
         <div class="share-list">
           <h4>Active shares</h4>
           <div class="share-list-items"></div>
@@ -253,24 +246,17 @@ export function htmlArtifactTemplate({
             <label><input type="radio" name="share-password-mode" value="provided"> Provide a password</label>
             <input type="password" class="share-provided-password" minlength="4" maxlength="1024" autocomplete="new-password" placeholder="4–1024 bytes" hidden>
           </div>
+          <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make that link private.</div>
           <button class="share-generate-btn">Generate Link</button>
         </div>
-        <div class="share-result" hidden>
-          <label>Share link:</label>
-          <div class="share-link-row">
-            <input type="text" class="share-link-input" readonly>
-            <button class="share-copy-btn">Copy</button>
-          </div>
-          <div class="share-created-password" hidden>
-            <label>Password (secret):</label>
-            <div class="share-password-secret">
-              <code>••••••••••••••••••••••</code>
-              <button class="share-copy-btn share-created-password-reveal">Reveal</button>
-              <button class="share-copy-btn share-created-password-copy">Copy password</button>
-            </div>
+        <div class="share-created-password" hidden>
+          <label>Password (secret):</label>
+          <div class="share-password-secret">
+            <code>••••••••••••••••••••••</code>
+            <button class="share-copy-btn share-created-password-reveal">Reveal</button>
+            <button class="share-copy-btn share-created-password-copy">Copy password</button>
           </div>
         </div>
-        <div class="share-security-warning" role="status" hidden>This page still has an active unprotected share. Password-protecting another link does not make the page private through that link.</div>
         <div class="share-list">
           <h4>Active shares</h4>
           <div class="share-list-items"></div>

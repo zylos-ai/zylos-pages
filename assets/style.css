@@ -1679,9 +1679,28 @@ svg { display: block; }
   font-family: var(--font-mono);
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: var(--color-code-bg);
+  background: var(--color-bg);
   color: var(--color-text);
   min-width: 0;
+  width: 100%;
+}
+
+#share-modal .share-created-password {
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+#share-modal .share-security-warning { margin: 8px 0 12px; }
+
+#share-modal .share-item.is-new {
+  border-left: 3px solid var(--color-link);
+  padding-left: 10px;
+}
+
+.share-item-new {
+  color: var(--color-link);
+  font-weight: 600;
+  margin-bottom: 4px;
 }
 
 .share-copy-btn {
