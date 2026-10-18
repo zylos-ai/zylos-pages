@@ -9,11 +9,12 @@ the selection for the next annotation. Canceling an edit preserves its saved
 content. Storage errors and stale-edit conflicts retain the draft for recovery.
 The lower-right **Annotations**
 control shows the count and provides locate, edit, individual delete, confirmed
-clear, and **Copy Prompt**. Clicking a saved highlight opens the comment beside
+clear, and **Prompt**. Its header stays visible while long annotation lists scroll
+inside the height-limited panel. Clicking a saved highlight opens the comment beside
 its original text with an Edit action. Overlapping annotations remain available
 in the summary. An unmatched saved quote can still be edited in the summary.
 
-Copy Prompt first opens a full feedback preview. Copy all copies exactly that
+Prompt first opens a full feedback preview. Copy Prompt copies exactly that
 preview, using compact Markdown: the document title, a safe document reference,
 an instruction to process each annotation and clarify ambiguity, then consecutive
 numbered quotes and comments. Multiline content is preserved without per-item
