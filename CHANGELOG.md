@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.1] - 2026-10-19
+
+### Fixed
+
+- Copy Prompt answers annotation questions directly, applies explicit edit
+  requests, and asks for confirmation when intent or a design choice is unclear,
+  instead of treating every annotation as a document modification request.
+
 ## [0.16.0] - 2026-10-18
 
 ### Changed
