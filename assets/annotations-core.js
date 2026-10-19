@@ -177,7 +177,7 @@
     const sorted = [...records].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
     const header = `# 文档反馈：${escape(String(title).replace(/\s+/g, ' ').slice(0, 500))}\n` +
       (safeUrl ? `文档：<${safeUrl}>\n` : '') +
-      '\n请结合原文，逐条处理下面的批注并修改文档，简要说明处理结果；有歧义的地方先向我确认。\n\n## 批注\n';
+      '\n请结合原文逐条回应以下批注：问询请直接回答；明确提出修改要求的，请按要求修改并简要说明；意图不明确或涉及方案取舍的，先向我确认。\n\n## 批注\n';
     return header + sorted.map((record, index) => {
       if (!validateAnchor(record) || typeof record.comment !== 'string' || record.comment.length > LIMITS.comment) fail('record', 'Invalid annotation');
       const quote = escape(record.quote.exact).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   ');
