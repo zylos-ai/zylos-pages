@@ -167,13 +167,45 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         const comment = 'First comment line\nSecond comment line';
         await select(target, quote);
         await page.locator('.annotation-add').click();
-        await editor.locator('#annotation-comment').fill(comment);
+        const commentInput = editor.locator('#annotation-comment');
+        await commentInput.fill('   ');
+        await commentInput.press('Enter');
+        assert.equal(await commentInput.inputValue(), '   ', 'empty Enter neither saves nor inserts a newline');
+        await count(page, 0);
+        await commentInput.fill('First comment line');
+        await commentInput.press('Shift+Enter');
+        assert.equal(await commentInput.inputValue(), 'First comment line\n', 'Shift+Enter inserts a native newline');
+        assert.equal(await editor.isVisible(), true, 'Shift+Enter keeps the draft open');
+        await page.keyboard.insertText('Second comment line');
+        assert.equal(await commentInput.inputValue(), comment);
+        for (const init of [{ isComposing: true }, { keyCode: 229 }, { repeat: true }]) {
+          await commentInput.dispatchEvent('keydown', { key: 'Enter', ...init });
+          assert.equal(await editor.isVisible(), true, 'IME confirmation and repeated Enter do not save');
+          await count(page, 0);
+        }
+        await commentInput.dispatchEvent('compositionstart');
+        await commentInput.dispatchEvent('keydown', { key: 'Enter' });
+        assert.equal(await editor.isVisible(), true, 'active composition does not save even without isComposing');
+        await commentInput.dispatchEvent('compositionend');
+        await page.evaluate(() => {
+          window.inlineOriginalSetItem = Storage.prototype.setItem;
+          Storage.prototype.setItem = () => { throw new DOMException('Test quota exceeded', 'QuotaExceededError'); };
+        });
+        try {
+          await commentInput.press('Enter');
+          assert.equal(await editor.isVisible(), true, 'failed keyboard save keeps the editor open');
+          assert.equal(await commentInput.inputValue(), comment, 'failed keyboard save preserves the complete draft');
+          assert.match(await editor.locator('.annotation-status').innerText(), /Could not save changes/);
+          await count(page, 0);
+        } finally {
+          await page.evaluate(() => { Storage.prototype.setItem = window.inlineOriginalSetItem; });
+        }
         for (const theme of ['light', 'dark']) {
           await page.evaluate(value => document.documentElement.setAttribute('data-theme', value), theme);
           await fits(page, editor, `${kind}/${width}/${theme} editor`);
           if (evidenceDir) await page.screenshot({ path: path.join(evidenceDir, `inline-${kind}-${width}-${theme}.png`) });
         }
-        await editor.getByRole('button', { name: 'Save', exact: true }).click();
+        await commentInput.press('Enter');
         await count(page, 1);
         await editor.waitFor({ state: 'hidden' });
         await page.reload();
@@ -191,7 +223,7 @@ test('inline editor dismisses drafts, preserves edits, and previews the full cop
         assert.equal(await page.locator('.annotation-comment').innerText(), comment, 'cancel preserves stored comment');
         await page.locator('.annotation-item').getByRole('button', { name: 'Edit', exact: true }).click();
         await editor.locator('#annotation-comment').fill(`${comment}\nSaved third line`);
-        await editor.getByRole('button', { name: 'Save', exact: true }).click();
+        await editor.locator('#annotation-comment').press('Enter');
         const saved = `${comment}\nSaved third line`;
         await page.locator('.annotation-panel').waitFor({ state: 'visible' });
         assert.equal(await page.locator('.annotation-comment').innerText(), saved);
