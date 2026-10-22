@@ -244,7 +244,17 @@
     clearCandidate(); clearSelection(); place(editor, rect);
     (viewing ? editSaved : input).focus({ preventScroll: true });
   }
+  let composingComment = false;
+  input.addEventListener('compositionstart', () => { composingComment = true; });
+  input.addEventListener('compositionend', () => { composingComment = false; });
+  input.addEventListener('blur', () => { composingComment = false; });
   input.addEventListener('input', () => { save.disabled = !input.value.trim(); });
+  input.addEventListener('keydown', event => {
+    // Some IMEs end composition before the confirming Enter (keyCode 229).
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || composingComment || event.keyCode === 229) return;
+    event.preventDefault();
+    if (!event.repeat && !editor.hidden && !save.disabled) editor.requestSubmit(save);
+  });
   editor.addEventListener('submit', event => {
     event.preventDefault();
     if (!editing || !store) { report(); return; }
