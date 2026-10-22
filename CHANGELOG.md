@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.2] - 2026-10-22
+
+### Changed
+
+- Annotation comments save with Enter and insert a newline with Shift+Enter,
+  both when adding and editing. Input method composition and repeated Enter
+  events do not trigger a save; failed saves preserve the draft.
+
 ## [0.16.1] - 2026-10-19
 
 ### Fixed
