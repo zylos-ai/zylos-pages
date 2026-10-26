@@ -91,6 +91,18 @@
     return { quote: { exact, prefix: index.text.slice(Math.max(0, start - 32), start), suffix: index.text.slice(end, end + 32) },
       textPosition: { start, end, indexVersion: 1 }, contentRevision: index.contentRevision };
   }
+  function selectionEndRect(selection) {
+    if (!selection || selection.rangeCount !== 1) return null;
+    const rects = [...selection.getRangeAt(0).getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+    if (!rects.length) return null;
+    let backward = false;
+    if (selection.anchorNode === selection.focusNode) backward = selection.focusOffset < selection.anchorOffset;
+    else if (selection.anchorNode && selection.focusNode) {
+      backward = !!(selection.anchorNode.compareDocumentPosition(selection.focusNode) & 2);
+    }
+    const rect = backward ? rects[0] : rects[rects.length - 1];
+    return { x: backward ? rect.left : Math.max(rect.left, rect.right - 1), y: rect.top, width: 1, height: rect.height };
+  }
   function rangeForAnchor(index, anchor) {
     const match = resolveAnchor(index, anchor);
     if (match.status !== 'matched') return null;
@@ -186,5 +198,5 @@
       return `${index + 1}. 原文${mismatch}：${quote}\n   > 批注：${comment}`;
     }).join('\n');
   }
-  global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, rangeForAnchor, createStore, exportMarkdown });
+  global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, selectionEndRect, rangeForAnchor, createStore, exportMarkdown });
 })(globalThis);
