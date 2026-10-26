@@ -91,6 +91,28 @@
     return { quote: { exact, prefix: index.text.slice(Math.max(0, start - 32), start), suffix: index.text.slice(end, end + 32) },
       textPosition: { start, end, indexVersion: 1 }, contentRevision: index.contentRevision };
   }
+  // An element boundary has no caret or text direction of its own; step inward from it to the nearest
+  // selected text that is actually rendered (hidden nodes have no rects, displayed spaces do).
+  function textBoundary(range, node, offset, atEnd) {
+    if (node.nodeType === 3) return { node, offset };
+    const doc = range.startContainer.ownerDocument, probe = doc.createRange();
+    const walker = doc.createTreeWalker(range.commonAncestorContainer, 4);
+    // Start at the child on the selected side of the boundary; with none, step out of the element.
+    let start = node.childNodes[atEnd ? offset - 1 : offset], edge = node;
+    if (start && atEnd) while (start.lastChild) start = start.lastChild;
+    if (!start && !atEnd) while (edge.lastChild) edge = edge.lastChild;
+    walker.currentNode = start || edge;
+    const step = () => atEnd ? walker.previousNode() : walker.nextNode();
+    let text = start?.nodeType === 3 ? start : step();
+    for (; text && range.intersectsNode(text); text = step()) {
+      const from = text === range.startContainer ? range.startOffset : 0;
+      const to = text === range.endContainer ? range.endOffset : text.length;
+      if (to <= from) continue;
+      probe.setStart(text, from); probe.setEnd(text, to);
+      if ([...probe.getClientRects()].some(rect => rect.width > 0 && rect.height > 0)) return { node: text, offset: atEnd ? to : from };
+    }
+    return { node, offset };
+  }
   // The point where the pointer released the selection (its focus), as a 1px-wide rect.
   function selectionEndRect(selection) {
     try {
@@ -101,13 +123,14 @@
       const origin = doc.createRange(); origin.setStart(selection.anchorNode, selection.anchorOffset);
       const backward = origin.comparePoint(selection.focusNode, selection.focusOffset) < 0;
       const fragment = backward ? fragments[0] : fragments[fragments.length - 1];
-      const caret = doc.createRange(); caret.setStart(selection.focusNode, selection.focusOffset);
+      const focus = textBoundary(range, selection.focusNode, selection.focusOffset, !backward);
+      const caret = doc.createRange(); caret.setStart(focus.node, focus.offset);
       const point = [...caret.getClientRects()].find(rect => rect.height > 0 && Number.isFinite(rect.left));
       // A caret at a soft wrap or on an empty line sits on another line than the selected text; stay by the text.
       if (point && point.top < fragment.bottom && point.bottom > fragment.top) {
         return { x: point.left, y: fragment.top, width: 1, height: fragment.height };
       }
-      const element = selection.focusNode.nodeType === 1 ? selection.focusNode : selection.focusNode.parentElement;
+      const element = focus.node.nodeType === 1 ? focus.node : focus.node.parentElement;
       const rtl = !!element && doc.defaultView?.getComputedStyle(element).direction === 'rtl';
       const left = backward !== rtl;
       return { x: left ? fragment.left : Math.max(fragment.left, fragment.right - 1), y: fragment.top, width: 1, height: fragment.height };
