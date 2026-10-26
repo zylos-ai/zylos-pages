@@ -91,6 +91,28 @@
     return { quote: { exact, prefix: index.text.slice(Math.max(0, start - 32), start), suffix: index.text.slice(end, end + 32) },
       textPosition: { start, end, indexVersion: 1 }, contentRevision: index.contentRevision };
   }
+  // The point where the pointer released the selection (its focus), as a 1px-wide rect.
+  function selectionEndRect(selection) {
+    try {
+      if (!selection || selection.rangeCount !== 1 || selection.isCollapsed) return null;
+      const range = selection.getRangeAt(0), doc = range.startContainer.ownerDocument;
+      const fragments = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+      if (!fragments.length) return null;
+      const origin = doc.createRange(); origin.setStart(selection.anchorNode, selection.anchorOffset);
+      const backward = origin.comparePoint(selection.focusNode, selection.focusOffset) < 0;
+      const fragment = backward ? fragments[0] : fragments[fragments.length - 1];
+      const caret = doc.createRange(); caret.setStart(selection.focusNode, selection.focusOffset);
+      const point = [...caret.getClientRects()].find(rect => rect.height > 0 && Number.isFinite(rect.left));
+      // A caret at a soft wrap or on an empty line sits on another line than the selected text; stay by the text.
+      if (point && point.top < fragment.bottom && point.bottom > fragment.top) {
+        return { x: point.left, y: fragment.top, width: 1, height: fragment.height };
+      }
+      const element = selection.focusNode.nodeType === 1 ? selection.focusNode : selection.focusNode.parentElement;
+      const rtl = !!element && doc.defaultView?.getComputedStyle(element).direction === 'rtl';
+      const left = backward !== rtl;
+      return { x: left ? fragment.left : Math.max(fragment.left, fragment.right - 1), y: fragment.top, width: 1, height: fragment.height };
+    } catch { return null; }
+  }
   function rangeForAnchor(index, anchor) {
     const match = resolveAnchor(index, anchor);
     if (match.status !== 'matched') return null;
@@ -186,5 +208,5 @@
       return `${index + 1}. 原文${mismatch}：${quote}\n   > 批注：${comment}`;
     }).join('\n');
   }
-  global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, rangeForAnchor, createStore, exportMarkdown });
+  global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, selectionEndRect, rangeForAnchor, createStore, exportMarkdown });
 })(globalThis);

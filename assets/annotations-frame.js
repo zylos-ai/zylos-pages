@@ -111,6 +111,7 @@
         selectionId: ++selectionId,
         anchor,
         rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        end: core.selectionEndRect?.(selection) || undefined,
         viewport: { width: window.innerWidth, height: window.innerHeight }
       });
     } catch { send('selection-clear'); }

@@ -162,12 +162,15 @@
         : error?.code === 'limit' ? 'This page has reached its annotation limit.'
           : 'Could not save changes. Your draft is kept. Browser storage may be unavailable or full.';
   }
-  function setCandidate(anchor, rect) {
-    if (!core.validateAnchor(anchor) || !rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) return;
-    if (rect.width < 0 || rect.height < 0 || rect.y + rect.height < 0 || rect.y > innerHeight) return;
+  function visibleRect(rect) {
+    return !!rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) &&
+      rect.width >= 0 && rect.height >= 0 && rect.y + rect.height >= 0 && rect.y <= innerHeight;
+  }
+  function setCandidate(anchor, rect, end) {
+    if (!core.validateAnchor(anchor) || !visibleRect(rect)) return;
     dismissEditor(); closePreview(); panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
     candidate = anchor; candidateRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
-    place(add, candidateRect);
+    place(add, visibleRect(end) ? end : candidateRect);
   }
   function place(node, rect) {
     node.hidden = false;
@@ -456,7 +459,7 @@
         const rect = frameRect(data.rect, data.viewport);
         if (rect && core.validateAnchor(data.anchor) && Number.isSafeInteger(data.selectionId) && data.selectionId > 0) {
           frameSelectionId = data.selectionId;
-          setCandidate(data.anchor, rect);
+          setCandidate(data.anchor, rect, data.end && frameRect(data.end, data.viewport));
         }
       } else if (data.type === 'selection-clear' && !addTouch && (data.selectionId === undefined || data.selectionId === frameSelectionId)) clearCandidate();
       else if (data.type === 'position' && portReady && !editor.hidden) {
@@ -494,7 +497,7 @@
         const anchor = core.selectionAnchor(index, selection);
         if (!anchor) { clearCandidate(); return; }
         const rect = selection.getRangeAt(0).getBoundingClientRect();
-        setCandidate(anchor, rect);
+        setCandidate(anchor, rect, core.selectionEndRect(selection));
       }, 120);
     }
     document.addEventListener('selectionchange', selectionChanged);
