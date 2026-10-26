@@ -91,22 +91,27 @@
     return { quote: { exact, prefix: index.text.slice(Math.max(0, start - 32), start), suffix: index.text.slice(end, end + 32) },
       textPosition: { start, end, indexVersion: 1 }, contentRevision: index.contentRevision };
   }
-  // An element boundary has no caret or text direction of its own; use the selected text next to it.
+  // An element boundary has no caret or text direction of its own; step inward from it to the nearest
+  // selected text that is actually rendered (hidden nodes have no rects, displayed spaces do).
   function textBoundary(range, node, offset, atEnd) {
     if (node.nodeType === 3) return { node, offset };
-    const doc = range.startContainer.ownerDocument, root = range.commonAncestorContainer;
-    if (root.nodeType === 3) return { node: root, offset: atEnd ? range.endOffset : range.startOffset };
-    const walker = doc.createTreeWalker(root, 4);
-    let found = null;
-    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
-      if (!text.data.trim() || !range.intersectsNode(text)) continue;
-      found = text;
-      if (!atEnd) break;
+    const doc = range.startContainer.ownerDocument, probe = doc.createRange();
+    const walker = doc.createTreeWalker(range.commonAncestorContainer, 4);
+    // Start at the child on the selected side of the boundary; with none, step out of the element.
+    let start = node.childNodes[atEnd ? offset - 1 : offset], edge = node;
+    if (start && atEnd) while (start.lastChild) start = start.lastChild;
+    if (!start && !atEnd) while (edge.lastChild) edge = edge.lastChild;
+    walker.currentNode = start || edge;
+    const step = () => atEnd ? walker.previousNode() : walker.nextNode();
+    let text = start?.nodeType === 3 ? start : step();
+    for (; text && range.intersectsNode(text); text = step()) {
+      const from = text === range.startContainer ? range.startOffset : 0;
+      const to = text === range.endContainer ? range.endOffset : text.length;
+      if (to <= from) continue;
+      probe.setStart(text, from); probe.setEnd(text, to);
+      if ([...probe.getClientRects()].some(rect => rect.width > 0 && rect.height > 0)) return { node: text, offset: atEnd ? to : from };
     }
-    if (!found) return { node, offset };
-    const start = found === range.startContainer ? range.startOffset : 0;
-    const end = found === range.endContainer ? range.endOffset : found.length;
-    return { node: found, offset: atEnd ? end : start };
+    return { node, offset };
   }
   // The point where the pointer released the selection (its focus), as a 1px-wide rect.
   function selectionEndRect(selection) {
