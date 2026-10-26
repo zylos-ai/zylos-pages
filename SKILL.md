@@ -1,6 +1,6 @@
 ---
 name: pages
-version: 0.16.2
+version: 0.16.3
 description: >
   Registered Markdown, HTML, and downloadable file pages for zylos. Use for styled
   documents or when a local file should be exposed as a safe attachment page.

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.16.3] - 2026-10-27
+
+### Changed
+
+- The `+ Note` button appears where the selection ends (where the pointer was
+  released) instead of at the left edge of the selection, so the pointer barely
+  has to move. Backward selections, right-to-left and mixed-direction text,
+  soft wraps and selections ending on an element boundary are handled; HTML
+  pages in the sandboxed frame report the same end point (#187, #188).
+
 ## [0.16.2] - 2026-10-22
 
 ### Changed
