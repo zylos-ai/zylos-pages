@@ -91,6 +91,23 @@
     return { quote: { exact, prefix: index.text.slice(Math.max(0, start - 32), start), suffix: index.text.slice(end, end + 32) },
       textPosition: { start, end, indexVersion: 1 }, contentRevision: index.contentRevision };
   }
+  // An element boundary has no caret or text direction of its own; use the selected text next to it.
+  function textBoundary(range, node, offset, atEnd) {
+    if (node.nodeType === 3) return { node, offset };
+    const doc = range.startContainer.ownerDocument, root = range.commonAncestorContainer;
+    if (root.nodeType === 3) return { node: root, offset: atEnd ? range.endOffset : range.startOffset };
+    const walker = doc.createTreeWalker(root, 4);
+    let found = null;
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      if (!text.data.trim() || !range.intersectsNode(text)) continue;
+      found = text;
+      if (!atEnd) break;
+    }
+    if (!found) return { node, offset };
+    const start = found === range.startContainer ? range.startOffset : 0;
+    const end = found === range.endContainer ? range.endOffset : found.length;
+    return { node: found, offset: atEnd ? end : start };
+  }
   // The point where the pointer released the selection (its focus), as a 1px-wide rect.
   function selectionEndRect(selection) {
     try {
@@ -101,13 +118,14 @@
       const origin = doc.createRange(); origin.setStart(selection.anchorNode, selection.anchorOffset);
       const backward = origin.comparePoint(selection.focusNode, selection.focusOffset) < 0;
       const fragment = backward ? fragments[0] : fragments[fragments.length - 1];
-      const caret = doc.createRange(); caret.setStart(selection.focusNode, selection.focusOffset);
+      const focus = textBoundary(range, selection.focusNode, selection.focusOffset, !backward);
+      const caret = doc.createRange(); caret.setStart(focus.node, focus.offset);
       const point = [...caret.getClientRects()].find(rect => rect.height > 0 && Number.isFinite(rect.left));
       // A caret at a soft wrap or on an empty line sits on another line than the selected text; stay by the text.
       if (point && point.top < fragment.bottom && point.bottom > fragment.top) {
         return { x: point.left, y: fragment.top, width: 1, height: fragment.height };
       }
-      const element = selection.focusNode.nodeType === 1 ? selection.focusNode : selection.focusNode.parentElement;
+      const element = focus.node.nodeType === 1 ? focus.node : focus.node.parentElement;
       const rtl = !!element && doc.defaultView?.getComputedStyle(element).direction === 'rtl';
       const left = backward !== rtl;
       return { x: left ? fragment.left : Math.max(fragment.left, fragment.right - 1), y: fragment.top, width: 1, height: fragment.height };

@@ -21,7 +21,8 @@ test('the + Note button follows the end of the selection where the pointer was r
     <script src="/annotations-core.js"></script><script src="/annotations.js" defer></script></head>
     <body><main class="markdown-body"><p id="ltr" style="width:420px">${'Annotation placement text. '.repeat(12)}</p>
     <p id="rtl" dir="rtl" style="width:420px">${'טקסט לבדיקת מיקום הכפתור. '.repeat(3)}</p>
-    <p id="nested" style="width:420px"><span>Nested span text for an ancestor endpoint.</span></p></main>
+    <p id="nested" style="width:420px"><span>Nested span text for an ancestor endpoint.</span></p>
+    <p id="mixed" dir="ltr" style="width:420px;margin-left:100px"><span dir="rtl">טקסט עברי בתוך פסקה משמאל לימין</span></p></main>
     <section id="pages-annotations" data-base-namespace="/" data-viewer-scope="owner" data-page-id="add-position"></section></body></html>`;
   const server = http.createServer((request, response) => {
     const asset = assets.get(request.url);
@@ -55,12 +56,25 @@ test('the + Note button follows the end of the selection where the pointer was r
         const button = document.querySelector('.annotation-add');
         return !button.hidden && JSON.stringify(button.getBoundingClientRect()) !== before;
       }, before);
-      await page.waitForTimeout(200);
+      // The debounced update may move the button more than once; wait until two checks 150 ms apart agree.
+      let previous = null;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        const current = await page.evaluate(() => JSON.stringify(document.querySelector('.annotation-add').getBoundingClientRect()));
+        if (current === previous) break;
+        previous = current; await page.waitForTimeout(150);
+      }
       const button = await page.evaluate(() => {
         const rect = document.querySelector('.annotation-add').getBoundingClientRect();
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
       });
       return { first: fragments[0], last: fragments.at(-1), lines: fragments.length, button };
+    };
+    // Waits for the debounced placement to reach `expected`, then asserts with the final position.
+    const settledAt = async (expected, message) => {
+      await page.waitForFunction(expected => Math.abs(document.querySelector('.annotation-add').getBoundingClientRect().left - expected) <= 2,
+        expected, { timeout: 3000 }).catch(() => {});
+      const left = await page.evaluate(() => document.querySelector('.annotation-add').getBoundingClientRect().left);
+      assert.ok(Math.abs(left - expected) <= 2, `${message}: ${left} vs ${expected}`);
     };
     const near = (actual, expected, message) => assert.ok(Math.abs(actual - expected) <= 2, `${message}: ${actual} vs ${expected}`);
 
@@ -103,6 +117,17 @@ test('the + Note button follows the end of the selection where the pointer was r
     });
     await page.waitForFunction(right => Math.abs(document.querySelector('.annotation-add').getBoundingClientRect().left - right) <= 2,
       nested.right);
+
+    // RTL text inside an LTR paragraph, focus on the paragraph: the text ends at its left edge.
+    const mixed = await page.evaluate(() => {
+      const paragraph = document.getElementById('mixed'), text = paragraph.firstChild.firstChild;
+      const selection = getSelection(); selection.removeAllRanges();
+      selection.collapse(text, 0); selection.extend(paragraph, 1);
+      document.dispatchEvent(new Event('selectionchange'));
+      const rects = [...selection.getRangeAt(0).getClientRects()].filter(rect => rect.width > 0);
+      return { left: Math.min(...rects.map(rect => rect.left)), right: Math.max(...rects.map(rect => rect.right)) };
+    });
+    await settledAt(mixed.left, 'mixed direction: button starts at the left end of the RTL text');
   } finally {
     await browser.close();
     await new Promise(resolve => server.close(resolve));
