@@ -8,6 +8,9 @@
   let index = null;
   let entries = [];
   let ranges = new Map();
+  let elements = new Map();
+  let picker = null;
+  let pickFrame = 0;
   let activeRange = null;
   let selectionId = 0;
   let reportedSelection = null;
@@ -19,7 +22,8 @@
   let messageCount = 0;
   const style = document.createElement('style');
   style.dataset.pagesAnnotations = '';
-  style.textContent = '::highlight(pages-annotations){background-color:rgba(255,210,56,.34);color:inherit}';
+  style.textContent = '::highlight(pages-annotations){background-color:rgba(255,210,56,.34);color:inherit}' +
+    'html[data-pages-picking] body *{cursor:crosshair!important;user-select:none!important;-webkit-user-select:none!important;-webkit-touch-callout:none!important}';
   (document.head || document.documentElement).appendChild(style);
 
   function send(type, payload = {}) {
@@ -73,9 +77,16 @@
     if (!port || disposed) return;
     const locations = [];
     ranges = new Map();
+    elements = new Map();
     try {
       const textIndex = currentIndex();
       for (const entry of entries) {
+        if (entry.anchor.element) {
+          const node = core.resolveElement(document.body, entry.anchor);
+          if (node) elements.set(entry.id, node);
+          locations.push({ id: entry.id, status: node ? 'matched' : 'unmatched' });
+          continue;
+        }
         const range = core.rangeForAnchor(textIndex, entry.anchor);
         if (range) ranges.set(entry.id, range);
         locations.push({ id: entry.id, status: range ? 'matched' : 'unmatched' });
@@ -85,6 +96,7 @@
     } catch {
       clearPaint();
       ranges.clear();
+      elements.clear();
       send('locations', { items: entries.map(entry => ({ id: entry.id, status: 'unmatched' })) });
     }
   }
@@ -122,6 +134,27 @@
     selectionTimer = setTimeout(reportSelection, 120);
   }
 
+  function elementPicker() {
+    picker ||= core.createElementPicker(document.body, {
+      onSelect(node, info) {
+        const anchor = core.describeElement(document.body, node);
+        if (!anchor || !info.rect) return;
+        send('pick-candidate', { anchor, canParent: info.canParent, canChild: info.canChild,
+          rect: { x: info.rect.x, y: info.rect.y, width: info.rect.width, height: info.rect.height },
+          viewport: { width: window.innerWidth, height: window.innerHeight } });
+      },
+      onCancel() { send('pick-cancel'); }
+    });
+    return picker;
+  }
+  function reportPickPosition() {
+    pickFrame = 0;
+    if (!picker?.selected) return;
+    // A collapsed element reports no rect; the shell then hides its toolbar.
+    const rect = picker.refresh();
+    send('pick-position', { rect: rect && { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, viewport: { width: window.innerWidth, height: window.innerHeight } });
+  }
+
   function validId(id) {
     return typeof id === 'string' && id.length > 0 && id.length <= 100;
   }
@@ -137,11 +170,24 @@
       if (!Array.isArray(message.items) || message.items.length > core.LIMITS.records) return;
       const ids = new Set();
       for (const item of message.items) {
-        if (!item || !validId(item.id) || ids.has(item.id) || !core.validateAnchor(item.anchor)) return;
+        if (!item || !validId(item.id) || ids.has(item.id) || !core.validateAny(item.anchor)) return;
         ids.add(item.id);
       }
       entries = message.items.map(({ id, anchor }) => ({ id, anchor }));
       queueRefresh();
+    } else if (message.type === 'locate' && validId(message.id) && elements.has(message.id)) {
+      const node = elements.get(message.id);
+      node.scrollIntoView({ block: 'center', behavior: 'instant' });
+      const rect = elementPicker().flash(node) || node.getBoundingClientRect();
+      send('located', { id: message.id, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, viewport: { width: window.innerWidth, height: window.innerHeight } });
+    } else if (message.type === 'pick-start') {
+      window.getSelection()?.removeAllRanges();
+      elementPicker().start();
+    } else if (message.type === 'pick-stop') {
+      picker?.stop();
+    } else if (message.type === 'pick-level' && picker?.active) {
+      if (message.direction === 'parent') picker.parent();
+      else if (message.direction === 'child') picker.child();
     } else if (message.type === 'locate' && validId(message.id)) {
       const range = ranges.get(message.id);
       if (!range) return;
@@ -177,6 +223,8 @@
     clearPaint();
     entries = [];
     ranges.clear();
+    elements.clear();
+    picker?.stop();
     reportedSelection = null;
     generation = message.generation;
     const receivingPort = event.ports[0];
@@ -225,6 +273,8 @@
   window.addEventListener('scroll', () => {
     queueRefresh(); queueSelection();
     if (activeRange) send('position', rangePosition(activeRange));
+    // The shell drops messages past 30 a second; ten position updates leave room for the rest.
+    if (picker?.selected && !pickFrame) pickFrame = setTimeout(reportPickPosition, 100);
   }, { passive: true, capture: true });
   window.addEventListener('resize', () => { index = null; queueRefresh(); queueSelection(); });
   window.addEventListener('pagehide', () => {
@@ -238,6 +288,8 @@
     generation = null;
     entries = [];
     ranges.clear();
+    elements.clear();
+    picker?.stop();
     activeRange = null;
     reportedSelection = null;
     index = null;

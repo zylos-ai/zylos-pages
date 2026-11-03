@@ -26,6 +26,7 @@ function fixture() {
     buildTextIndex: () => ({}),
     selectionAnchor: () => null,
     validateAnchor: anchor => anchor?.valid === true,
+    validateAny: anchor => anchor?.valid === true,
     rangeForAnchor: (_index, anchor) => anchor.found ? range : null
   };
   const window = {

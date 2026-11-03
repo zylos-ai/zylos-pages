@@ -18,6 +18,119 @@
       anchor.textPosition.indexVersion === 1 && typeof anchor.contentRevision === 'string' &&
       anchor.contentRevision.length <= 100;
   }
+  // Element annotations describe a picked element by what an Agent needs to find it in the source.
+  const ELEMENT_ATTRS = ['id', 'class', 'src', 'alt', 'href', 'title', 'aria-label', 'role', 'name', 'type'];
+  const clip = (text, max) => (text.length > max ? text.slice(0, max - 1) + '…' : text);
+  const elementText = node => clip(normalizeText(node.innerText ?? node.textContent ?? ''), 200);
+  // Layout-independent fingerprint used to find the element again; innerText changes with CSS.
+  const textKey = node => revisionOf(normalizeText(node.textContent || ''));
+  // Signed asset links carry exp/sig/access in the query and share links a token in the path:
+  // keep only the asset's own `path` parameter so neither storage nor the Prompt holds credentials.
+  function safeUrl(value) {
+    const text = normalizeText(value);
+    const scheme = /^(data|blob|javascript|vbscript):/i.exec(text);
+    if (scheme) return scheme[1].toLowerCase() + ':…';
+    const [main, query = ''] = text.split('#')[0].split(/\?(.*)/s);
+    let asset = null;
+    try { asset = new URLSearchParams(query).get('path'); } catch {}
+    const base = main.replace(/(^|\/)(s|share)\/[^/]+/gi, '$1$2/…');
+    return asset ? `${base}?path=${asset}` : base;
+  }
+  const URL_ATTRS = new Set(['src', 'href', 'poster', 'action', 'formaction', 'xlink:href', 'background', 'cite']);
+  // Saved text is shown in a one-line Prompt item, so line breaks or controls could forge new items.
+  const oneLine = text => typeof text === 'string' && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(text);
+  function validateElement(anchor) {
+    const item = anchor?.element;
+    if (!item || typeof item.tag !== 'string' || !/^[a-z][a-z0-9-]{0,39}$/.test(item.tag)) return false;
+    if (!item.attrs || typeof item.attrs !== 'object' || Array.isArray(item.attrs) ||
+        Object.entries(item.attrs).some(([name, value]) => !ELEMENT_ATTRS.includes(name) || !oneLine(value) || value.length > 120)) return false;
+    return Array.isArray(item.section) && item.section.length <= 6 && item.section.every(text => oneLine(text) && text.length <= 80) &&
+      oneLine(item.text) && item.text.length <= 200 && oneLine(item.html) && item.html.length <= 300 &&
+      typeof item.textKey === 'string' && /^v1-\d+-[0-9a-f]+$/.test(item.textKey) && item.textKey.length <= 40 &&
+      oneLine(item.path) && item.path.length <= 1000 && Number.isSafeInteger(item.ordinal) && item.ordinal >= 1 &&
+      Number.isSafeInteger(item.count) && item.count >= item.ordinal;
+  }
+  const validateAny = anchor => validateAnchor(anchor) || validateElement(anchor);
+  function elementPath(root, node) {
+    const parts = [];
+    for (; node && node !== root; node = node.parentElement) {
+      if (node.id && /^[A-Za-z][\w-]*$/.test(node.id) && root.querySelectorAll('#' + node.id).length === 1) { parts.unshift('#' + node.id); break; }
+      let position = 1;
+      for (let sibling = node.previousElementSibling; sibling; sibling = sibling.previousElementSibling) if (sibling.localName === node.localName) position++;
+      parts.unshift(`${node.localName}:nth-of-type(${position})`);
+    }
+    const path = (parts[0]?.startsWith('#') ? '' : ':scope > ') + parts.join(' > ');
+    return path.length <= 1000 ? path : '';
+  }
+  // Headings the element sits under, outermost first: ["2 定价", "2.2 功能对比"].
+  function sectionPath(root, node) {
+    const chain = [];
+    for (const heading of root.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+      if (heading === node || !(heading.compareDocumentPosition(node) & 4)) break;
+      const level = Number(heading.tagName[1]);
+      while (chain.length && chain[chain.length - 1].level >= level) chain.pop();
+      chain.push({ level, text: clip(normalizeText(heading.textContent), 80) });
+    }
+    return chain.slice(-6).map(entry => entry.text);
+  }
+  function snippet(node) {
+    const copy = node.cloneNode(true);
+    for (const part of [copy, ...copy.querySelectorAll('*')]) {
+      for (const attribute of [...part.attributes]) {
+        const name = attribute.name.toLowerCase();
+        if (name === 'style' || name.startsWith('on') || name === 'srcset' || name === 'imagesrcset') part.removeAttribute(attribute.name);
+        else if (URL_ATTRS.has(name) || /^(data|blob|javascript):/i.test(attribute.value.trim())) part.setAttribute(attribute.name, clip(safeUrl(attribute.value), 80));
+        else if (attribute.value.length > 80) part.setAttribute(attribute.name, clip(attribute.value, 80));
+      }
+    }
+    return clip(normalizeText(copy.outerHTML), 300);
+  }
+  function describeElement(root, node) {
+    if (!node || node.nodeType !== 1 || node === root || !root.contains(node)) return null;
+    const attrs = {};
+    for (const name of ELEMENT_ATTRS) {
+      const value = attributeValue(node, name);
+      if (value) attrs[name] = value;
+    }
+    const tag = node.localName.toLowerCase(), text = elementText(node), all = root.getElementsByTagName(node.localName);
+    const anchor = { element: { tag, attrs, section: sectionPath(root, node), text, html: text ? '' : snippet(node),
+      textKey: textKey(node), path: elementPath(root, node), ordinal: [...all].indexOf(node) + 1, count: all.length } };
+    return validateElement(anchor) ? anchor : null;
+  }
+  function attributeValue(node, name) {
+    let value = normalizeText(node.getAttribute(name) || '');
+    if (!value) return '';
+    if (name === 'class') value = value.split(' ').slice(0, 3).join(' ');
+    if (URL_ATTRS.has(name) || /^(data|blob|javascript):/i.test(value)) value = safeUrl(value);
+    return clip(value, 120);
+  }
+  function resolveElement(root, anchor) {
+    if (!validateElement(anchor)) return null;
+    const item = anchor.element;
+    const same = node => ['id', 'src', 'alt', 'href'].every(name => (item.attrs[name] ?? '') === attributeValue(node, name)) &&
+      textKey(node) === item.textKey;
+    const all = root.getElementsByTagName(item.tag);
+    const candidates = [...all].filter(same);
+    if (candidates.length === 1) return candidates[0];
+    // Several look identical (empty cells, rules, repeated labels): trust the saved position only
+    // while the document still has as many of these elements, otherwise report it as changed.
+    if (!candidates.length || all.length !== item.count) return null;
+    let found = null;
+    try { found = item.path ? root.querySelector(item.path) : null; } catch {}
+    if (candidates.includes(found)) return found;
+    const byOrder = all[item.ordinal - 1];
+    return candidates.includes(byOrder) ? byOrder : null;
+  }
+  function elementLabel(item) {
+    const shown = ['id', 'class', 'alt', 'title', 'aria-label', 'role', 'name', 'type'].filter(name => item.attrs[name])
+      .map(name => ` ${name}="${item.attrs[name]}"`);
+    const source = item.attrs.src || item.attrs.href;
+    if (source && !/^[a-z]+:…$/.test(source)) {
+      const asset = /[?&]path=([^&#]*)/.exec(source)?.[1];
+      shown.push(` ${item.attrs.src ? 'src' : 'href'}="${clip((asset ?? source.split(/[?#]/)[0]).split('/').pop() || source, 60)}"`);
+    }
+    return `<${item.tag}${shown.join('')}>`;
+  }
   function resolveAnchor(index, anchor) {
     if (!validateAnchor(anchor)) return { status: 'missing' };
     const text = typeof index === 'string' ? index : index.text;
@@ -152,7 +265,7 @@
     const prefix = 'zylos-pages:annotations:v1:' + ['baseNamespace', 'viewerScope', 'pageId'].map(name => encodeURIComponent(identity[name])).join(':') + ':';
     const run = fn => { try { return fn(); } catch (error) { if (error.annotationError) throw error; fail('storage', 'Browser annotation storage is unavailable or full'); } };
     const validRecord = record => record?.schemaVersion === 1 && typeof record.id === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(record.id) &&
-      record.pageId === identity.pageId && validateAnchor(record) && typeof record.comment === 'string' && !!record.comment.trim() &&
+      record.pageId === identity.pageId && (record.kind === 'element' ? validateElement(record) : record.kind === undefined && validateAnchor(record)) && typeof record.comment === 'string' && !!record.comment.trim() &&
       record.comment.length <= LIMITS.comment && typeof record.createdAt === 'string' && Number.isFinite(Date.parse(record.createdAt)) &&
       typeof record.updatedAt === 'string' && Number.isFinite(Date.parse(record.updatedAt));
     function snapshot() {
@@ -183,12 +296,15 @@
     }
     return { prefix, read, snapshot,
       add(anchor, comment) {
-        checkComment(comment); if (!validateAnchor(anchor)) fail('anchor', 'Invalid selected text');
+        checkComment(comment);
+        const element = validateElement(anchor);
+        if (!element && !validateAnchor(anchor)) fail('anchor', 'Invalid selected text');
         if (snapshot().length >= LIMITS.records) fail('limit', 'This page has reached its annotation limit');
         const id = global.crypto?.randomUUID?.() || `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         const now = new Date().toISOString();
         const record = { schemaVersion: 1, id, pageId: identity.pageId, createdAt: now, updatedAt: now,
-          quote: { ...anchor.quote }, textPosition: { ...anchor.textPosition }, contentRevision: anchor.contentRevision, comment };
+          ...(element ? { kind: 'element', element: JSON.parse(JSON.stringify(anchor.element)) }
+            : { quote: { ...anchor.quote }, textPosition: { ...anchor.textPosition }, contentRevision: anchor.contentRevision }), comment };
         run(() => { if (storage.getItem(prefix + id) !== null) fail('conflict', 'Annotation identity collision'); storage.setItem(prefix + id, JSON.stringify(record)); });
         return record;
       },
@@ -224,12 +340,87 @@
       (safeUrl ? `文档：<${safeUrl}>\n` : '') +
       '\n请结合原文逐条回应以下批注：问询请直接回答；明确提出修改要求的，请按要求修改并简要说明；意图不明确或涉及方案取舍的，先向我确认。\n\n## 批注\n';
     return header + sorted.map((record, index) => {
-      if (!validateAnchor(record) || typeof record.comment !== 'string' || record.comment.length > LIMITS.comment) fail('record', 'Invalid annotation');
-      const quote = escape(record.quote.exact).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   ');
+      const element = record.kind === 'element';
+      if (!(element ? validateElement(record) : validateAnchor(record)) || typeof record.comment !== 'string' || record.comment.length > LIMITS.comment) fail('record', 'Invalid annotation');
       const comment = escape(record.comment).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   > ');
+      if (element) {
+        const item = record.element, code = text => '`' + normalizeText(text).replace(/`/g, "'") + '`';
+        const moved = record.locationStatus && record.locationStatus !== 'matched' ? '（元素位置已变化）' : '';
+        const where = item.section.length ? `（位于「${escape(normalizeText(item.section.join(' › ')))}」）` : '';
+        const detail = item.text ? `内容：${escape(clip(normalizeText(item.text), 80))}` : item.html ? `HTML：${code(item.html)}` : '';
+        return `${index + 1}. 元素${moved}：${code(elementLabel(item))}${where}\n` + (detail ? `   ${detail}\n` : '') + `   > 批注：${comment}`;
+      }
+      const quote = escape(record.quote.exact).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   ');
       const mismatch = record.locationStatus && record.locationStatus !== 'matched' ? '（引用位置已变化）' : '';
       return `${index + 1}. 原文${mismatch}：${quote}\n   > 批注：${comment}`;
     }).join('\n');
   }
-  global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, selectionEndRect, rangeForAnchor, createStore, exportMarkdown });
+  // Pick an element under root: hover highlights with a mouse, a tap or click selects, and
+  // parent()/child() walk the ancestors of the first chosen element. Clicks inside root are
+  // swallowed while picking so links and buttons in the document do not react.
+  function createElementPicker(root, { onSelect, onCancel } = {}) {
+    const doc = root.ownerDocument, win = doc.defaultView;
+    const box = doc.createElement('div');
+    box.dataset.pagesAnnotations = ''; box.setAttribute('aria-hidden', 'true');
+    box.style.cssText = 'position:fixed;display:none;pointer-events:none;z-index:2147483646;box-sizing:border-box;' +
+      'border:2px solid #6366f1;background:rgba(99,102,241,.12);border-radius:3px;';
+    let active = false, selected = null, trail = [], press = null, flashTimer = null;
+    const eligible = node => !!node && node.nodeType === 1 && node !== root && root.contains(node) &&
+      !node.closest('[data-pages-annotations],#pages-annotations');
+    const pointAt = (x, y) => { const node = doc.elementFromPoint(x, y); return eligible(node) ? node : null; };
+    function outline(node) {
+      const rect = node?.getBoundingClientRect();
+      if (!rect || (!rect.width && !rect.height)) { box.style.display = 'none'; return null; }
+      if (!box.isConnected) doc.documentElement.appendChild(box);
+      Object.assign(box.style, { display: 'block', left: `${rect.left - 2}px`, top: `${rect.top - 2}px`, width: `${rect.width + 4}px`, height: `${rect.height + 4}px` });
+      return rect;
+    }
+    function choose(node) {
+      selected = node;
+      const at = trail.indexOf(node);
+      onSelect?.(node, { rect: outline(node), canParent: at >= 0 && at < trail.length - 1, canChild: at > 0 });
+    }
+    function cancel() { stop(); onCancel?.(); }
+    function stop() {
+      active = false; selected = null; trail = []; press = null;
+      box.style.display = 'none'; doc.documentElement.removeAttribute('data-pages-picking');
+    }
+    const insideRoot = event => eligible(event.target) || event.target === root;
+    doc.addEventListener('pointermove', event => { if (active && !selected && event.pointerType === 'mouse') outline(pointAt(event.clientX, event.clientY)); }, true);
+    doc.addEventListener('pointerdown', event => {
+      if (!active || !insideRoot(event)) return;
+      press = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      if (event.pointerType === 'mouse') event.preventDefault();
+    }, true);
+    doc.addEventListener('pointerup', event => {
+      if (!active || press?.id !== event.pointerId) return;
+      const moved = Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10;
+      press = null;
+      const node = moved ? null : pointAt(event.clientX, event.clientY);
+      if (!node) return;
+      trail = [];
+      for (let part = node; part && part !== root; part = part.parentElement) trail.push(part);
+      choose(node);
+    }, true);
+    doc.addEventListener('click', event => { if (active && insideRoot(event)) { event.preventDefault(); event.stopImmediatePropagation(); } }, true);
+    doc.addEventListener('keydown', event => { if (active && event.key === 'Escape') { event.preventDefault(); cancel(); } }, true);
+    return {
+      get active() { return active; },
+      get selected() { return selected; },
+      start() { stop(); active = true; doc.documentElement.setAttribute('data-pages-picking', ''); },
+      stop, cancel,
+      parent() { const at = trail.indexOf(selected); if (at >= 0 && at < trail.length - 1) choose(trail[at + 1]); },
+      child() { const at = trail.indexOf(selected); if (at > 0) choose(trail[at - 1]); },
+      // Keep the outline on the element while the page scrolls; returns its current rect.
+      refresh() { return selected ? outline(selected) : null; },
+      flash(node) {
+        clearTimeout(flashTimer);
+        if (!outline(node)) return null;
+        flashTimer = win.setTimeout(() => { if (!active) box.style.display = 'none'; else outline(selected); }, 1400);
+        return node.getBoundingClientRect();
+      }
+    };
+  }
+  global.PagesAnnotationsCore = Object.freeze({ LIMITS, normalizeText, revisionOf, validateAnchor, resolveAnchor, buildTextIndex, selectionAnchor, selectionEndRect, rangeForAnchor, createStore, exportMarkdown,
+    validateElement, validateAny, describeElement, resolveElement, elementLabel, createElementPicker });
 })(globalThis);
