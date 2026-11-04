@@ -27,6 +27,7 @@
     locate: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     edit: '<path d="m16 3 5 5-12 12-6 1 1-6ZM14 5l5 5"/>',
     delete: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
+    pick: '<path d="M4 4h5M4 4v5M20 4h-5M20 4v5M4 20h5M4 20v-5"/><path d="m12 11 8 3-3.5 1.5L15 19Z"/>',
   };
   function decorate(node, name, label, text) {
     // Match the reader's existing inline stroke-icon convention.
@@ -40,13 +41,17 @@
   }
   const launcher = button('Annotations (0)', () => {
     const opening = panel.hidden || !editor.hidden || !manual.hidden;
-    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate();
+    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate(); stopPicking();
     panel.hidden = !opening;
     launcher.setAttribute('aria-expanded', String(!panel.hidden));
     if (!panel.hidden) { refresh(); closeButton.focus(); }
   }, host, 'annotation-launcher');
   launcher.setAttribute('aria-expanded', 'false'); launcher.setAttribute('aria-controls', 'annotation-panel');
   decorate(launcher, 'comment', 'Annotations (0)', '0');
+  // Beside the launcher so an element can be picked without opening the panel first.
+  const pick = button('Select element', () => { if (picking) stopPicking(); else startPicking(); }, host, 'annotation-pick-launcher');
+  decorate(pick, 'pick', 'Select element');
+  pick.setAttribute('aria-pressed', 'false');
   const add = button('+ Note', () => openEditor(candidate, null, candidateRect), host, 'annotation-add');
   add.setAttribute('aria-label', 'Annotate');
   add.title = 'Annotate';
@@ -128,12 +133,30 @@
   const copyAll = button('Copy Prompt', copyPrompt, previewActions, 'annotation-primary annotation-copy-button');
   let copyGeneration = 0, copyPending = false;
   manual.append(previewHeading, manualText, previewStatus, previewActions);
-  panel.append(heading, status, list); host.append(panel, editor, manual, confirmation);
+  // Picking toolbar: follows the chosen element, so the next step is always next to it.
+  const pickBar = element('div', 'annotation-pickbar'); pickBar.hidden = true;
+  pickBar.setAttribute('role', 'toolbar'); pickBar.setAttribute('aria-label', 'Select element');
+  const pickLabel = element('span', 'annotation-pick-label');
+  pickLabel.setAttribute('role', 'status'); pickLabel.setAttribute('aria-live', 'polite');
+  const pickParent = button('Parent', () => pickLevel('parent'), pickBar);
+  const pickChild = button('Child', () => pickLevel('child'), pickBar);
+  const pickNote = button('+ Note', () => {
+    const anchor = pickAnchor, rect = pickRect;
+    stopPicking(); if (anchor) openEditor(anchor, null, rect);
+  }, pickBar, 'annotation-primary');
+  const pickCancel = button('Cancel', () => stopPicking(), pickBar);
+  pickBar.prepend(pickLabel);
+  panel.append(heading, status, list); host.append(panel, editor, manual, confirmation, pickBar);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
   let addTouch = null, touchClickPending = false;
   setCopyState('idle');
   let editorRect = null, restorePanel = false, pendingLocate = null;
   let frameSelectionId = null;
+  let picking = false, pickAnchor = null, pickRect = null, locateFailed = false;
+  const picker = root ? core.createElementPicker(root, {
+    onSelect: (node, info) => { const anchor = core.describeElement(root, node); if (anchor && info.rect) showPick(anchor, info.rect, info); },
+    onCancel: () => stopPicking(),
+  }) : null;
   let markdownObserver, mutationTimer;
   let port = null, generation = '', portReady = false, handshakeTimer, rateTime = 0, rateCount = 0;
   const locations = new Map();
@@ -146,6 +169,7 @@
       pageId: host.dataset.pageId,
     });
   } catch {
+    pick.hidden = true;
     status.textContent = unavailable
       ? 'Annotations unavailable for this document configuration.'
       : 'Browser storage unavailable. Annotations cannot be saved.';
@@ -230,15 +254,20 @@
     window.getSelection()?.removeAllRanges();
     if (frame && frameSelectionId !== null) send({ type: 'selection-clear', selectionId: frameSelectionId });
   }
+  function anchorText(anchor) {
+    if (!anchor.element) return anchor.quote.exact;
+    const item = anchor.element;
+    return core.elementLabel(item) + (item.text ? `\n${item.text}` : '');
+  }
   function openEditor(anchor, record = null, rect = null, viewing = false) {
-    if (!core.validateAnchor(anchor)) return;
+    if (!core.validateAny(anchor)) return;
     const returning = restorePanel || !panel.hidden;
     dismissEditor(); closePreview(); closeConfirmation(false); closeMenu();
     restorePanel = returning; panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
     editing = { anchor, record }; editor.hidden = false; add.hidden = true;
     editorRect = rect;
     editorTitle.textContent = viewing ? 'Annotation' : record ? 'Edit annotation' : 'Add annotation';
-    selectedQuote.textContent = anchor.quote.exact; input.value = record?.comment || '';
+    selectedQuote.textContent = anchorText(anchor); input.value = record?.comment || '';
     viewText.textContent = record?.comment || ''; viewText.hidden = !viewing;
     label.hidden = input.hidden = save.hidden = cancelEdit.hidden = viewing;
     editSaved.hidden = !viewing;
@@ -307,25 +336,41 @@
       const item = element('li', 'annotation-item');
       item.dataset.annotationId = record.id;
       item.classList.toggle('annotation-active', activeIds.has(record.id));
-      const quote = element('blockquote', 'annotation-quote', record.quote.exact);
+      const quote = element('blockquote', 'annotation-quote', anchorText(record));
       const comment = element('p', 'annotation-comment', record.comment);
       const controls = element('div', 'annotation-actions annotation-item-actions');
-      const matched = locations.get(record.id) === 'matched';
-      if (!matched) item.append(element('p', 'annotation-unmatched', 'Original text changed or could not be located'));
-      decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate').disabled = !matched;
+      decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate');
       decorate(button('Edit', () => locate(record, true), controls, 'annotation-icon'), 'edit', 'Edit');
       decorate(button('Delete', event => ask('Delete this annotation?', () => store.remove(record.id, record), event.currentTarget), controls, 'annotation-icon'), 'delete', 'Delete');
       item.append(quote, comment, controls); list.append(item);
     }
     if (!records.length) list.append(element('li', 'annotation-status', 'No annotations'));
+    showLocations();
     if (focusedAction) {
       const item = [...list.children].find(node => node.dataset.annotationId === focusedId);
       const action = [...(item?.querySelectorAll('button') || [])].find(node => node.getAttribute('aria-label') === focusedAction && !node.disabled);
       (action || closeButton).focus({ preventScroll: true });
     }
   }
+  // Location results arrive asynchronously (HTML documents report them over the MessagePort, also
+  // while scrolling), so update each row in place: rebuilding would replace a button mid-click.
+  function showLocations() {
+    for (const item of list.querySelectorAll('.annotation-item')) {
+      const record = records.find(record => record.id === item.dataset.annotationId);
+      if (!record) continue;
+      const status = locations.get(record.id), matched = status === 'matched';
+      // An HTML document reports positions after the list renders; until then it is not "missing".
+      const note = !status && frame && !locateFailed ? ['annotation-locating', 'Locating…']
+        : !matched ? ['annotation-unmatched', record.kind === 'element' ? 'Original element changed or could not be located' : 'Original text changed or could not be located'] : null;
+      const current = item.querySelector(':scope > .annotation-locating, :scope > .annotation-unmatched');
+      if (note && current?.className === note[0] && current.textContent === note[1]) { /* unchanged */ }
+      else { current?.remove(); if (note) item.prepend(element('p', note[0], note[1])); }
+      const locateButton = item.querySelector('button[aria-label="Locate"]');
+      if (locateButton) locateButton.disabled = !matched;
+    }
+  }
   function refresh() {
-    if (!store) { copy.disabled = clear.disabled = true; return; }
+    if (!store) { copy.disabled = clear.disabled = pick.disabled = true; return; }
     try {
       const result = store.read(); records = result.records;
       status.textContent = result.corrupt.length ? 'Some saved records could not be read. They have been preserved.' : 'Saved in this browser';
@@ -341,12 +386,13 @@
       index = markdownIndex();
       const ranges = [];
       for (const record of records) {
+        if (record.kind === 'element') { locations.set(record.id, core.resolveElement(root, record) ? 'matched' : 'unmatched'); continue; }
         const range = core.rangeForAnchor(index, record);
         locations.set(record.id, range ? 'matched' : 'unmatched');
         if (range) ranges.push(range);
       }
       if (window.CSS?.highlights && window.Highlight) CSS.highlights.set('pages-annotations', new Highlight(...ranges));
-    } else send({ type: 'anchors', items: records.map(record => ({ id: record.id, anchor: {
+    } else send({ type: 'anchors', items: records.map(record => ({ id: record.id, anchor: record.kind === 'element' ? { element: record.element } : {
       quote: record.quote, textPosition: record.textPosition, contentRevision: record.contentRevision,
     } })) });
   }
@@ -354,6 +400,14 @@
     dismissEditor(); closePreview(); clearCandidate();
     if (edit && locations.get(record.id) !== 'matched') { openEditor(record, record); return; }
     if (frame) { pendingLocate = { record, edit }; send({ type: 'locate', id: record.id }); return; }
+    if (record.kind === 'element') {
+      const node = core.resolveElement(root, record);
+      if (!node) { refresh(); if (edit) openEditor(record, record); return; }
+      node.scrollIntoView({ block: 'center', behavior: 'instant' });
+      const rect = picker.flash(node) || node.getBoundingClientRect();
+      if (edit) openEditor(record, record, rect);
+      return;
+    }
     index = markdownIndex();
     const range = core.rangeForAnchor(index, record);
     if (!range) { refresh(); if (edit) openEditor(record, record); return; }
@@ -370,6 +424,41 @@
     activeIds = new Set(ids);
     const record = records.find(record => ids.includes(record.id));
     if (record) openEditor(record, record, rect, true);
+  }
+  function startPicking() {
+    if (!store || (frame && !portReady)) return;
+    closeConfirmation(false); dismissEditor(); closePreview(); clearCandidate(); closeMenu(); clearSelection();
+    panel.hidden = true; launcher.setAttribute('aria-expanded', 'false');
+    picking = true; pickAnchor = pickRect = null; pick.setAttribute('aria-pressed', 'true');
+    pickLabel.textContent = 'Click or tap an element to annotate';
+    pickParent.hidden = pickChild.hidden = pickNote.hidden = true;
+    place(pickBar);
+    if (picker) picker.start(); else send({ type: 'pick-start' });
+    pickCancel.focus({ preventScroll: true });
+  }
+  function showPick(anchor, rect, { canParent, canChild }) {
+    if (!picking || !core.validateElement(anchor) || !visibleRect(rect)) return;
+    pickAnchor = anchor; pickRect = rect;
+    const item = anchor.element;
+    pickLabel.textContent = core.elementLabel(item) + (item.text ? ` · ${item.text.slice(0, 40)}` : '');
+    pickParent.hidden = pickChild.hidden = pickNote.hidden = false;
+    pickParent.disabled = !canParent; pickChild.disabled = !canChild;
+    place(pickBar, rect);
+  }
+  // Hide the toolbar while its element is scrolled out of view, rather than leave it pointing at nothing.
+  function movePick(rect) {
+    if (!picking || !pickAnchor) return;
+    if (!visibleRect(rect)) { pickBar.hidden = true; return; }
+    pickRect = rect; place(pickBar, rect);
+  }
+  function pickLevel(direction) {
+    if (!picking || !pickAnchor) return;
+    if (picker) { if (direction === 'parent') picker.parent(); else picker.child(); } else send({ type: 'pick-level', direction });
+  }
+  function stopPicking() {
+    if (!picking) return;
+    picking = false; pickAnchor = pickRect = null; pickBar.hidden = true; pick.setAttribute('aria-pressed', 'false');
+    if (picker) picker.stop(); else send({ type: 'pick-stop' });
   }
   function previewPrompt() {
     try {
@@ -416,7 +505,7 @@
   function invalidateMarkdownIndex() {
     index = null;
     clearTimeout(mutationTimer);
-    mutationTimer = setTimeout(() => { updateLocations(); renderList(); }, 200);
+    mutationTimer = setTimeout(() => { updateLocations(); showLocations(); }, 200);
   }
   function markdownIndex() {
     // Drain pending mutations too, so synchronous selection/locate never uses stale nodes.
@@ -425,6 +514,7 @@
     return index;
   }
   function disconnect() {
+    if (frame) { picking = false; pickAnchor = pickRect = null; pickBar.hidden = true; pick.setAttribute('aria-pressed', 'false'); }
     clearTimeout(handshakeTimer); port?.close(); port = null; portReady = false;
     frameSelectionId = null;
     dismissEditor(); closePreview(); clearCandidate(); locations.clear();
@@ -443,7 +533,7 @@
   function connect() {
     if (!frame?.contentWindow) return;
     disconnect(); generation = window.crypto?.randomUUID?.() || `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    rateTime = Date.now(); rateCount = 0;
+    rateTime = Date.now(); rateCount = 0; locateFailed = false;
     const channel = new MessageChannel(); port = channel.port1;
     const current = port;
     port.onmessage = event => {
@@ -454,7 +544,7 @@
       if (now - rateTime > 1000) { rateTime = now; rateCount = 0; }
       if (++rateCount > 30) return;
       if (data.type === 'ready' && !portReady) {
-        portReady = true; clearTimeout(handshakeTimer); refresh();
+        portReady = true; clearTimeout(handshakeTimer); pick.hidden = !store; refresh();
       } else if (data.type === 'selection' && portReady) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect && core.validateAnchor(data.anchor) && Number.isSafeInteger(data.selectionId) && data.selectionId > 0) {
@@ -465,7 +555,13 @@
       else if (data.type === 'position' && portReady && !editor.hidden) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) { editorRect = rect; place(editor, rect); }
-      } else if (data.type === 'dismiss' && portReady) dismissOutside();
+      } else if (data.type === 'pick-candidate' && portReady) {
+        const rect = frameRect(data.rect, data.viewport);
+        if (rect) showPick(data.anchor, rect, { canParent: data.canParent === true, canChild: data.canChild === true });
+      } else if (data.type === 'pick-position' && portReady) {
+        movePick(frameRect(data.rect, data.viewport));
+      } else if (data.type === 'pick-cancel' && portReady) stopPicking();
+      else if (data.type === 'dismiss' && portReady) dismissOutside();
       else if (data.type === 'activate' && portReady) {
         const rect = frameRect(data.rect, data.viewport);
         if (rect) activate(data.ids, rect);
@@ -476,12 +572,12 @@
       } else if (data.type === 'locations' && portReady && Array.isArray(data.items) && data.items.length <= core.LIMITS.records) {
         const ids = new Set(records.map(record => record.id));
         for (const item of data.items) if (ids.has(item?.id) && ['matched', 'unmatched'].includes(item.status)) locations.set(item.id, item.status);
-        renderList();
+        showLocations();
       }
     };
     port.start();
     frame.contentWindow.postMessage({ type: 'pages-annotations:init', version: 1, generation }, '*', [channel.port2]);
-    handshakeTimer = setTimeout(() => { if (!portReady) { status.textContent = 'Annotations unavailable in this document'; } }, 5000);
+    handshakeTimer = setTimeout(() => { if (!portReady) { status.textContent = 'Annotations unavailable in this document'; pick.hidden = true; locateFailed = true; showLocations(); } }, 5000);
   }
   if (root && !unavailable) {
     let selectionTimer;
@@ -545,23 +641,35 @@
   });
   function resizeTransient() {
     clearCandidate();
+    if (picker?.selected) movePick(picker.refresh());
+    else if (frame && picking && pickAnchor) send({ type: 'pick-refresh' });
+    else if (picking && !pickAnchor) place(pickBar);
     if (!editor.hidden) place(editor, editorRect);
     if (!manual.hidden) place(manual);
     closeConfirmation();
   }
+  let scrollFrame = 0;
+  // Re-finding the annotated text or element is not cheap, so do it at most once per frame.
+  function followScroll() {
+    scrollFrame = 0;
+    if (!editor.hidden && root && editing) {
+      const target = editing.anchor.element ? core.resolveElement(root, editing.anchor) : core.rangeForAnchor(markdownIndex(), editing.anchor);
+      if (target) { editorRect = target.getBoundingClientRect(); place(editor, editorRect); }
+    }
+    if (picker?.selected) movePick(picker.refresh());
+    else if (frame && picking && pickAnchor) send({ type: 'pick-refresh' });
+  }
   window.addEventListener('scroll', () => {
     closeConfirmation();
     clearCandidate();
-    if (!editor.hidden && root && editing) {
-      const range = core.rangeForAnchor(markdownIndex(), editing.anchor);
-      if (range) { editorRect = range.getBoundingClientRect(); place(editor, editorRect); }
-    }
+    if (!scrollFrame) scrollFrame = requestAnimationFrame(followScroll);
   }, { passive: true });
   window.addEventListener('resize', resizeTransient);
   window.visualViewport?.addEventListener('resize', resizeTransient);
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     if (!confirmation.hidden) { event.preventDefault(); closeConfirmation(); return; }
+    if (picking) { event.preventDefault(); stopPicking(); return; }
     clearSelection();
     if (!editor.hidden) { dismissEditor(); return; }
     if (!manual.hidden) { closePreview(); return; }
