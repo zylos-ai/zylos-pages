@@ -185,6 +185,8 @@
       elementPicker().start();
     } else if (message.type === 'pick-stop') {
       picker?.stop();
+    } else if (message.type === 'pick-refresh') {
+      if (picker?.selected && !pickFrame) pickFrame = setTimeout(reportPickPosition, 0);
     } else if (message.type === 'pick-level' && picker?.active) {
       if (message.direction === 'parent') picker.parent();
       else if (message.direction === 'child') picker.child();
@@ -276,7 +278,10 @@
     // The shell drops messages past 30 a second; ten position updates leave room for the rest.
     if (picker?.selected && !pickFrame) pickFrame = setTimeout(reportPickPosition, 100);
   }, { passive: true, capture: true });
-  window.addEventListener('resize', () => { index = null; queueRefresh(); queueSelection(); });
+  window.addEventListener('resize', () => {
+    index = null; queueRefresh(); queueSelection();
+    if (picker?.selected && !pickFrame) pickFrame = setTimeout(reportPickPosition, 100);
+  });
   window.addEventListener('pagehide', () => {
     disposed = true;
     clearTimeout(selectionTimer);

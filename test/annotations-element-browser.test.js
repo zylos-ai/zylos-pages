@@ -125,22 +125,36 @@ test('element annotations pick, walk ancestors, save, export and relocate in Mar
         await count(page, 1);
 
         await page.locator('.annotation-launcher').click();
-        assert.equal(await page.locator('.annotation-unmatched').count(), 0);
+        await located(page);
         await page.getByRole('button', { name: 'Copy Prompt', exact: true }).first().click();
         const prompt = await page.locator('.annotation-copy-text').inputValue();
         // Markdown lifts the H1 into the page title (already in the prompt header); opaque HTML keeps it in the body.
         const section = kind === 'html' ? 'Pawly plans › 2 Pricing › 2\\.2 Compare' : '2 Pricing › 2\\.2 Compare';
-        assert.match(prompt, new RegExp(`1\\. 元素：\`<table[^\`]*>\`（位于「${section}」）\\n   内容：Feature Basic Pro Pets 1 3\\n   > 批注：Drop the pets row`));
+        assert.match(prompt, new RegExp(`1\\. 「${section}」里的表格 \`<table[^\`]*>\`，文字为"Feature Basic Pro Pets 1 3"\\n   > 批注：Drop the pets row`));
         assert.equal(prompt.includes('nth-of-type'), false, 'internal paths stay out of the prompt');
 
         await page.reload();
-        await documentFrame(page, kind);
+        const reloaded = await documentFrame(page, kind);
         await count(page, 1);
         await page.locator('.annotation-launcher').click();
-        await page.waitForTimeout(300);
+        // HTML documents answer over the MessagePort, so the list first says it is still locating.
+        await located(page);
         assert.equal(await page.locator('.annotation-unmatched').count(), 0, `${kind}/${width}: element relocated after reload`);
         await page.getByRole('button', { name: 'Locate', exact: true }).click();
         await page.waitForTimeout(200);
+        if (kind === 'html') {
+          // Location replies (here triggered by scrolling the document) must not rebuild the row under a click.
+          if (!await page.locator('.annotation-panel').isVisible()) await page.locator('.annotation-launcher').click();
+          const box = await page.locator('.annotation-item').getByRole('button', { name: 'Delete', exact: true }).boundingBox();
+          await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+          await page.mouse.down();
+          await reloaded.evaluate(() => scrollBy(0, 300));
+          await page.waitForTimeout(500);
+          await page.mouse.up();
+          const confirmation = page.getByRole('dialog', { name: 'Delete this annotation?', exact: true });
+          await confirmation.waitFor({ state: 'visible', timeout: 3000 });
+          await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+        }
         await page.evaluate(() => localStorage.clear());
       }
       assert.deepEqual(errors, [], `${width}px browser errors`);
@@ -166,4 +180,9 @@ async function documentFrame(page, kind) {
 
 async function count(page, expected) {
   await page.waitForFunction(expected => document.querySelector('.annotation-launcher')?.getAttribute('aria-label') === `Annotations (${expected})`, expected);
+}
+
+async function located(page) {
+  await page.waitForFunction(() => !document.querySelector('.annotation-locating') &&
+    !document.querySelector('.annotation-item button[aria-label="Locate"]')?.disabled);
 }

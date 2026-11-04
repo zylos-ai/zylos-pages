@@ -166,6 +166,10 @@ test('element records share storage with text records and reject malformed eleme
   storage.setItem(store.prefix + 'mixed', JSON.stringify({ ...text, id: 'mixed', kind: 'other' }));
   assert.deepEqual(Array.from(store.read().corrupt).sort(), [store.prefix + 'broken', store.prefix + 'mixed']);
   assert.throws(() => store.add(element({ tag: '' }), 'note'), { code: 'anchor' });
+  // A hostile frame cannot pad saved records with unknown fields.
+  const padded = store.add({ element: { ...element().element, junk: 'x'.repeat(100000) } }, 'padded');
+  assert.equal(JSON.stringify(padded).includes('junk'), false);
+  assert.ok(storage.getItem(store.prefix + padded.id).length < 2000);
 });
 
 test('element prompts give section, short label, and text or HTML without internal paths', () => {
@@ -179,14 +183,16 @@ test('element prompts give section, short label, and text or HTML without intern
   // Records made in the same millisecond sort by random id; pin creation order.
   const ordered = [table, image, inline].map((record, index) => ({ ...record, createdAt: `2026-01-01T00:00:0${index}.000Z` }));
   const prompt = core.exportMarkdown(ordered, '', 'Title');
-  assert.match(prompt, /1\. 元素：`<table class="pricing">`（位于「2 Pricing › 2\.2 Compare」）\n   内容：Feature Basic Pro\n   > 批注：Drop the pets row/);
-  assert.match(prompt, /2\. 元素：`<img alt="Arch 'v2'" src="diagram\.png">`\n   HTML：`<img alt="Arch" src="https:\/\/cdn\.example\.com\/a\/diagram\.png">`\n   > 批注：Too small/);
-  assert.match(prompt, /3\. 元素：`<img>`（位于/);
+  assert.match(prompt, /1\. 「2 Pricing › 2\.2 Compare」里的表格 `<table class="pricing">`，文字为"Feature Basic Pro"\n   > 批注：Drop the pets row/);
+  assert.match(prompt, /2\. 图片 `<img alt="Arch 'v2'" src="diagram\.png">`，HTML：`<img alt="Arch" src="https:\/\/cdn\.example\.com\/a\/diagram\.png">`\n   > 批注：Too small/);
+  assert.match(prompt, /3\. 「2 Pricing › 2\.2 Compare」里的图片 `<img>`，HTML：/);
   assert.equal(prompt.includes('nth-of-type'), false);
   assert.equal(prompt.includes('sig=1'), false);
-  assert.match(core.exportMarkdown([{ ...table, locationStatus: 'missing' }], '', 'T'), /1\. 元素（元素位置已变化）：/);
+  assert.match(core.exportMarkdown([{ ...table, locationStatus: 'missing' }], '', 'T'), /1\. （元素位置已变化）「2 Pricing/);
   const long = store.add(element({ text: 'w'.repeat(200) }), 'n');
-  assert.match(core.exportMarkdown([long], '', 'T'), new RegExp(`内容：w{79}…\\n`));
+  assert.match(core.exportMarkdown([long], '', 'T'), new RegExp(`，文字以"w{40}…"开头\\n`));
+  assert.match(core.exportMarkdown([store.add(element({ tag: 'section' }), 'n')], '', 'T'), /里的区块 `<section/);
+  assert.match(core.exportMarkdown([store.add(element({ tag: 'my-widget' }), 'n')], '', 'T'), /里的元素 `<my-widget/);
 });
 
 const playwrightPath = process.env.PAGES_PLAYWRIGHT_CORE_PATH;
@@ -263,5 +269,43 @@ test('browser element descriptions strip credentials and only relocate verifiabl
     // Identical rules cannot be told apart once one is removed, so none claims a confident match.
     assert.deepEqual(result.afterDelete, [false, false, false]);
     assert.equal(result.afterInsert, false);
+  } finally { await browser.close(); }
+});
+
+test('browser element descriptions drop inner CSS and data attributes, controls, and disguised schemes', {
+  skip: playwrightPath && chromiumPath && existsSync(playwrightPath) && existsSync(chromiumPath) ? false : 'set PAGES_PLAYWRIGHT_CORE_PATH and PAGES_CHROMIUM_PATH for DOM coverage',
+}, async () => {
+  const require = createRequire(import.meta.url);
+  const { chromium } = require(playwrightPath);
+  const browser = await chromium.launch({ executablePath: chromiumPath, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<article><h2>Chart</h2>' +
+      '<div id="chart"><style>.a{background:url(/pages/assets/docs/plan?path=bg.png&exp=9&sig=STYLESIG)}</style>' +
+      '<img alt="" width="10" height="10" data-src="/pages/assets/docs/plan?path=c.png&exp=9&sig=DATASIG" src="/pages/assets/docs/plan?path=c.png&exp=9&sig=SRCSIG"></div>' +
+      '<svg id="diagram" width="120" height="40"><style>.node{fill:#eee}</style><text x="5" y="20">Start</text><foreignObject x="60" y="0" width="50" height="30"><div>Box</div></foreignObject></svg>' +
+      '<a id="tabbed" href="java\tscript:alert(1)">x</a><p id="ctl" title="a\u0001b">bell\u0007text</p></article>');
+    await page.evaluate(() => {
+      document.querySelector('#tabbed').setAttribute('href', 'java\tscript:alert(1)');
+      document.querySelector('#ctl').setAttribute('title', 'a\u0001b');
+      document.querySelector('#ctl').textContent = 'bell\u0007text';
+    });
+    await page.addScriptTag({ path: new URL('../assets/annotations-core.js', import.meta.url).pathname });
+    const result = await page.evaluate(() => {
+      const core = globalThis.PagesAnnotationsCore, root = document.querySelector('article');
+      const describe = selector => core.describeElement(root, root.querySelector(selector));
+      const foreign = describe('foreignObject');
+      return { chart: describe('#chart'), svg: describe('#diagram'), tabbed: describe('#tabbed'), ctl: describe('#ctl'),
+        foreign, foreignBack: core.resolveElement(root, foreign) === root.querySelector('foreignObject') };
+    });
+    assert.ok(result.chart, 'text-less wrapper can be described');
+    for (const secret of ['STYLESIG', 'DATASIG', 'SRCSIG', 'exp=', 'data-src', '<style']) assert.equal(result.chart.element.html.includes(secret), false, secret);
+    assert.equal(result.svg.element.text, 'Start Box');
+    assert.equal(result.tabbed.element.attrs.href, 'javascript:…');
+    assert.ok(result.ctl, 'elements with control characters can still be picked');
+    assert.equal(result.ctl.element.attrs.title, 'ab');
+    assert.equal(result.ctl.element.text, 'belltext');
+    assert.equal(result.foreign.element.tag, 'foreignobject');
+    assert.equal(result.foreignBack, true, 'camelCase SVG elements are found again');
   } finally { await browser.close(); }
 });

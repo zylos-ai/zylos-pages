@@ -21,14 +21,27 @@
   // Element annotations describe a picked element by what an Agent needs to find it in the source.
   const ELEMENT_ATTRS = ['id', 'class', 'src', 'alt', 'href', 'title', 'aria-label', 'role', 'name', 'type'];
   const clip = (text, max) => (text.length > max ? text.slice(0, max - 1) + '…' : text);
-  const elementText = node => clip(normalizeText(node.innerText ?? node.textContent ?? ''), 200);
+  // Element fields are shown on one Prompt line: collapse whitespace and drop other control characters.
+  const cleanText = value => normalizeText(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, '');
+  // SVG elements have no innerText; skip their <style>/<script> so a diagram is not described by its CSS.
+  function visibleText(node) {
+    if (typeof node.innerText === 'string') return node.innerText;
+    const parts = [], walker = node.ownerDocument.createTreeWalker(node, 4);
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      if (!text.parentElement?.closest('style,script')) parts.push(text.data);
+    }
+    return parts.join(' ');
+  }
+  const elementText = node => clip(cleanText(visibleText(node)), 200);
   // Layout-independent fingerprint used to find the element again; innerText changes with CSS.
   const textKey = node => revisionOf(normalizeText(node.textContent || ''));
   // Signed asset links carry exp/sig/access in the query and share links a token in the path:
   // keep only the asset's own `path` parameter so neither storage nor the Prompt holds credentials.
+  // Browsers ignore tabs, newlines and controls inside a URL, so `java<Tab>script:` is still javascript:.
+  const compactUrl = value => String(value).replace(/[\u0000-\u0020\u007f-\u009f]/g, '');
   function safeUrl(value) {
-    const text = normalizeText(value);
-    const scheme = /^(data|blob|javascript|vbscript):/i.exec(text);
+    const text = cleanText(value);
+    const scheme = /^(data|blob|javascript|vbscript):/i.exec(compactUrl(value));
     if (scheme) return scheme[1].toLowerCase() + ':…';
     const [main, query = ''] = text.split('#')[0].split(/\?(.*)/s);
     let asset = null;
@@ -37,6 +50,9 @@
     return asset ? `${base}?path=${asset}` : base;
   }
   const URL_ATTRS = new Set(['src', 'href', 'poster', 'action', 'formaction', 'xlink:href', 'background', 'cite']);
+  // Any value that could be a link (a scheme, a path, or a signed query) is cleaned like a URL.
+  const urlLike = (name, value) => URL_ATTRS.has(name) || /^(?:[a-z][a-z0-9+.-]*:|\/|\.\.?\/)/i.test(compactUrl(value)) ||
+    /[?&](?:sig|exp|token|access|key|signature)=/i.test(value);
   // Saved text is shown in a one-line Prompt item, so line breaks or controls could forge new items.
   const oneLine = text => typeof text === 'string' && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(text);
   function validateElement(anchor) {
@@ -51,6 +67,11 @@
       Number.isSafeInteger(item.count) && item.count >= item.ordinal;
   }
   const validateAny = anchor => validateAnchor(anchor) || validateElement(anchor);
+  // Tags are saved lowercase; SVG keeps camelCase names (foreignObject), which a tag lookup misses.
+  function elementsOf(root, tag) {
+    const fast = root.getElementsByTagName(tag);
+    return fast.length ? [...fast] : [...root.getElementsByTagName('*')].filter(node => node.localName.toLowerCase() === tag);
+  }
   function elementPath(root, node) {
     const parts = [];
     for (; node && node !== root; node = node.parentElement) {
@@ -69,21 +90,23 @@
       if (heading === node || !(heading.compareDocumentPosition(node) & 4)) break;
       const level = Number(heading.tagName[1]);
       while (chain.length && chain[chain.length - 1].level >= level) chain.pop();
-      chain.push({ level, text: clip(normalizeText(heading.textContent), 80) });
+      chain.push({ level, text: clip(cleanText(heading.textContent), 80) });
     }
     return chain.slice(-6).map(entry => entry.text);
   }
   function snippet(node) {
     const copy = node.cloneNode(true);
+    // Inline CSS can carry signed asset URLs; it is also noise for an Agent reading the source.
+    for (const part of copy.querySelectorAll('style,script')) part.remove();
     for (const part of [copy, ...copy.querySelectorAll('*')]) {
       for (const attribute of [...part.attributes]) {
         const name = attribute.name.toLowerCase();
-        if (name === 'style' || name.startsWith('on') || name === 'srcset' || name === 'imagesrcset') part.removeAttribute(attribute.name);
-        else if (URL_ATTRS.has(name) || /^(data|blob|javascript):/i.test(attribute.value.trim())) part.setAttribute(attribute.name, clip(safeUrl(attribute.value), 80));
+        if (name === 'style' || name.startsWith('on') || name.startsWith('data-') || name === 'srcset' || name === 'imagesrcset') part.removeAttribute(attribute.name);
+        else if (urlLike(name, attribute.value)) part.setAttribute(attribute.name, clip(safeUrl(attribute.value), 80));
         else if (attribute.value.length > 80) part.setAttribute(attribute.name, clip(attribute.value, 80));
       }
     }
-    return clip(normalizeText(copy.outerHTML), 300);
+    return clip(cleanText(copy.outerHTML), 300);
   }
   function describeElement(root, node) {
     if (!node || node.nodeType !== 1 || node === root || !root.contains(node)) return null;
@@ -92,16 +115,16 @@
       const value = attributeValue(node, name);
       if (value) attrs[name] = value;
     }
-    const tag = node.localName.toLowerCase(), text = elementText(node), all = root.getElementsByTagName(node.localName);
+    const tag = node.localName.toLowerCase(), text = elementText(node), all = elementsOf(root, tag);
     const anchor = { element: { tag, attrs, section: sectionPath(root, node), text, html: text ? '' : snippet(node),
-      textKey: textKey(node), path: elementPath(root, node), ordinal: [...all].indexOf(node) + 1, count: all.length } };
+      textKey: textKey(node), path: elementPath(root, node), ordinal: all.indexOf(node) + 1, count: all.length } };
     return validateElement(anchor) ? anchor : null;
   }
   function attributeValue(node, name) {
-    let value = normalizeText(node.getAttribute(name) || '');
+    let value = cleanText(node.getAttribute(name) || '');
     if (!value) return '';
     if (name === 'class') value = value.split(' ').slice(0, 3).join(' ');
-    if (URL_ATTRS.has(name) || /^(data|blob|javascript):/i.test(value)) value = safeUrl(value);
+    if (urlLike(name, node.getAttribute(name))) value = safeUrl(node.getAttribute(name));
     return clip(value, 120);
   }
   function resolveElement(root, anchor) {
@@ -109,8 +132,8 @@
     const item = anchor.element;
     const same = node => ['id', 'src', 'alt', 'href'].every(name => (item.attrs[name] ?? '') === attributeValue(node, name)) &&
       textKey(node) === item.textKey;
-    const all = root.getElementsByTagName(item.tag);
-    const candidates = [...all].filter(same);
+    const all = elementsOf(root, item.tag);
+    const candidates = all.filter(same);
     if (candidates.length === 1) return candidates[0];
     // Several look identical (empty cells, rules, repeated labels): trust the saved position only
     // while the document still has as many of these elements, otherwise report it as changed.
@@ -121,6 +144,12 @@
     const byOrder = all[item.ordinal - 1];
     return candidates.includes(byOrder) ? byOrder : null;
   }
+  const ELEMENT_KINDS = { table: '表格', thead: '表头', tbody: '表格', tr: '表格行', td: '单元格', th: '单元格', img: '图片', picture: '图片',
+    svg: '图形', canvas: '图形', video: '视频', audio: '音频', figure: '图', figcaption: '图注', a: '链接', button: '按钮',
+    h1: '标题', h2: '标题', h3: '标题', h4: '标题', h5: '标题', h6: '标题', p: '段落', ul: '列表', ol: '列表', li: '列表项',
+    dl: '列表', pre: '代码块', code: '代码', blockquote: '引用', input: '输入框', textarea: '输入框', select: '下拉框', form: '表单',
+    nav: '导航', header: '页头', footer: '页脚', section: '区块', article: '区块', aside: '侧栏', div: '区块', span: '文字', hr: '分隔线' };
+  const elementKind = tag => ELEMENT_KINDS[tag] || '元素';
   function elementLabel(item) {
     const shown = ['id', 'class', 'alt', 'title', 'aria-label', 'role', 'name', 'type'].filter(name => item.attrs[name])
       .map(name => ` ${name}="${item.attrs[name]}"`);
@@ -258,6 +287,13 @@
     range.setStart(first.node, first.offset); range.setEnd(last.node, last.end);
     return range;
   }
+  // Keep only known fields: the HTML frame is untrusted and could otherwise pad records to fill storage.
+  function elementFields(item) {
+    const attrs = {};
+    for (const name of ELEMENT_ATTRS) if (typeof item.attrs[name] === 'string') attrs[name] = item.attrs[name];
+    return { tag: item.tag, attrs, section: [...item.section], text: item.text, html: item.html, textKey: item.textKey,
+      path: item.path, ordinal: item.ordinal, count: item.count };
+  }
   function createStore(storage, identity) {
     for (const name of ['baseNamespace', 'viewerScope', 'pageId']) {
       if (typeof identity?.[name] !== 'string' || !identity[name] || identity[name].length > 1024) fail('identity', 'Invalid annotation scope');
@@ -303,7 +339,7 @@
         const id = global.crypto?.randomUUID?.() || `a-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
         const now = new Date().toISOString();
         const record = { schemaVersion: 1, id, pageId: identity.pageId, createdAt: now, updatedAt: now,
-          ...(element ? { kind: 'element', element: JSON.parse(JSON.stringify(anchor.element)) }
+          ...(element ? { kind: 'element', element: elementFields(anchor.element) }
             : { quote: { ...anchor.quote }, textPosition: { ...anchor.textPosition }, contentRevision: anchor.contentRevision }), comment };
         run(() => { if (storage.getItem(prefix + id) !== null) fail('conflict', 'Annotation identity collision'); storage.setItem(prefix + id, JSON.stringify(record)); });
         return record;
@@ -344,11 +380,15 @@
       if (!(element ? validateElement(record) : validateAnchor(record)) || typeof record.comment !== 'string' || record.comment.length > LIMITS.comment) fail('record', 'Invalid annotation');
       const comment = escape(record.comment).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   > ');
       if (element) {
+        // Plan v2 format, one line: 「2 定价 › 2.2 功能对比」里的表格 `<table class="pricing">`，文字以"功能 基础版…"开头
         const item = record.element, code = text => '`' + normalizeText(text).replace(/`/g, "'") + '`';
         const moved = record.locationStatus && record.locationStatus !== 'matched' ? '（元素位置已变化）' : '';
-        const where = item.section.length ? `（位于「${escape(normalizeText(item.section.join(' › ')))}」）` : '';
-        const detail = item.text ? `内容：${escape(clip(normalizeText(item.text), 80))}` : item.html ? `HTML：${code(item.html)}` : '';
-        return `${index + 1}. 元素${moved}：${code(elementLabel(item))}${where}\n` + (detail ? `   ${detail}\n` : '') + `   > 批注：${comment}`;
+        const kind = elementKind(item.tag), what = `${kind} ${code(elementLabel(item))}`;
+        const where = item.section.length ? `「${escape(normalizeText(item.section.join(' › ')))}」里的${what}` : what;
+        const text = normalizeText(item.text);
+        const detail = text ? (text.length > 40 ? `，文字以"${escape(text.slice(0, 40))}…"开头` : `，文字为"${escape(text)}"`)
+          : item.html ? `，HTML：${code(item.html)}` : '';
+        return `${index + 1}. ${moved}${where}${detail}\n   > 批注：${comment}`;
       }
       const quote = escape(record.quote.exact).replace(/\r\n|\r/g, '\n').replace(/\n/g, '\n   ');
       const mismatch = record.locationStatus && record.locationStatus !== 'matched' ? '（引用位置已变化）' : '';

@@ -152,7 +152,7 @@
   setCopyState('idle');
   let editorRect = null, restorePanel = false, pendingLocate = null;
   let frameSelectionId = null;
-  let picking = false, pickAnchor = null, pickRect = null;
+  let picking = false, pickAnchor = null, pickRect = null, locateFailed = false;
   const picker = root ? core.createElementPicker(root, {
     onSelect: (node, info) => { const anchor = core.describeElement(root, node); if (anchor && info.rect) showPick(anchor, info.rect, info); },
     onCancel: () => stopPicking(),
@@ -339,18 +339,34 @@
       const quote = element('blockquote', 'annotation-quote', anchorText(record));
       const comment = element('p', 'annotation-comment', record.comment);
       const controls = element('div', 'annotation-actions annotation-item-actions');
-      const matched = locations.get(record.id) === 'matched';
-      if (!matched) item.append(element('p', 'annotation-unmatched', record.kind === 'element' ? 'Original element changed or could not be located' : 'Original text changed or could not be located'));
-      decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate').disabled = !matched;
+      decorate(button('Locate', () => locate(record), controls, 'annotation-icon'), 'locate', 'Locate');
       decorate(button('Edit', () => locate(record, true), controls, 'annotation-icon'), 'edit', 'Edit');
       decorate(button('Delete', event => ask('Delete this annotation?', () => store.remove(record.id, record), event.currentTarget), controls, 'annotation-icon'), 'delete', 'Delete');
       item.append(quote, comment, controls); list.append(item);
     }
     if (!records.length) list.append(element('li', 'annotation-status', 'No annotations'));
+    showLocations();
     if (focusedAction) {
       const item = [...list.children].find(node => node.dataset.annotationId === focusedId);
       const action = [...(item?.querySelectorAll('button') || [])].find(node => node.getAttribute('aria-label') === focusedAction && !node.disabled);
       (action || closeButton).focus({ preventScroll: true });
+    }
+  }
+  // Location results arrive asynchronously (HTML documents report them over the MessagePort, also
+  // while scrolling), so update each row in place: rebuilding would replace a button mid-click.
+  function showLocations() {
+    for (const item of list.querySelectorAll('.annotation-item')) {
+      const record = records.find(record => record.id === item.dataset.annotationId);
+      if (!record) continue;
+      const status = locations.get(record.id), matched = status === 'matched';
+      // An HTML document reports positions after the list renders; until then it is not "missing".
+      const note = !status && frame && !locateFailed ? ['annotation-locating', 'Locating…']
+        : !matched ? ['annotation-unmatched', record.kind === 'element' ? 'Original element changed or could not be located' : 'Original text changed or could not be located'] : null;
+      const current = item.querySelector(':scope > .annotation-locating, :scope > .annotation-unmatched');
+      if (note && current?.className === note[0] && current.textContent === note[1]) { /* unchanged */ }
+      else { current?.remove(); if (note) item.prepend(element('p', note[0], note[1])); }
+      const locateButton = item.querySelector('button[aria-label="Locate"]');
+      if (locateButton) locateButton.disabled = !matched;
     }
   }
   function refresh() {
@@ -489,7 +505,7 @@
   function invalidateMarkdownIndex() {
     index = null;
     clearTimeout(mutationTimer);
-    mutationTimer = setTimeout(() => { updateLocations(); renderList(); }, 200);
+    mutationTimer = setTimeout(() => { updateLocations(); showLocations(); }, 200);
   }
   function markdownIndex() {
     // Drain pending mutations too, so synchronous selection/locate never uses stale nodes.
@@ -517,7 +533,7 @@
   function connect() {
     if (!frame?.contentWindow) return;
     disconnect(); generation = window.crypto?.randomUUID?.() || `g-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    rateTime = Date.now(); rateCount = 0;
+    rateTime = Date.now(); rateCount = 0; locateFailed = false;
     const channel = new MessageChannel(); port = channel.port1;
     const current = port;
     port.onmessage = event => {
@@ -556,12 +572,12 @@
       } else if (data.type === 'locations' && portReady && Array.isArray(data.items) && data.items.length <= core.LIMITS.records) {
         const ids = new Set(records.map(record => record.id));
         for (const item of data.items) if (ids.has(item?.id) && ['matched', 'unmatched'].includes(item.status)) locations.set(item.id, item.status);
-        renderList();
+        showLocations();
       }
     };
     port.start();
     frame.contentWindow.postMessage({ type: 'pages-annotations:init', version: 1, generation }, '*', [channel.port2]);
-    handshakeTimer = setTimeout(() => { if (!portReady) { status.textContent = 'Annotations unavailable in this document'; pick.hidden = true; } }, 5000);
+    handshakeTimer = setTimeout(() => { if (!portReady) { status.textContent = 'Annotations unavailable in this document'; pick.hidden = true; locateFailed = true; showLocations(); } }, 5000);
   }
   if (root && !unavailable) {
     let selectionTimer;
@@ -626,6 +642,7 @@
   function resizeTransient() {
     clearCandidate();
     if (picker?.selected) movePick(picker.refresh());
+    else if (frame && picking && pickAnchor) send({ type: 'pick-refresh' });
     else if (picking && !pickAnchor) place(pickBar);
     if (!editor.hidden) place(editor, editorRect);
     if (!manual.hidden) place(manual);
@@ -640,6 +657,7 @@
       if (target) { editorRect = target.getBoundingClientRect(); place(editor, editorRect); }
     }
     if (picker?.selected) movePick(picker.refresh());
+    else if (frame && picking && pickAnchor) send({ type: 'pick-refresh' });
   }
   window.addEventListener('scroll', () => {
     closeConfirmation();
