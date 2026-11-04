@@ -21,7 +21,9 @@ export function injectAnnotations(html, { baseUrl, pageId, uri, share, enabled =
 }
 
 export function injectAnnotationReporter(html, baseUrl) {
-  const scripts = `<script src="${baseUrl}/_assets/annotations-core.js?v=${ASSET_VERSION}"></script><script src="${baseUrl}/_assets/annotations-frame.js?v=${ASSET_VERSION}" defer></script>`;
+  const scripts = `<script src="${baseUrl}/_assets/annotations-core.js?v=${ASSET_VERSION}"></script><script src="${baseUrl}/_assets/annotations-frame.js?v=${ASSET_VERSION}" defer></script>` +
+    // The image viewer runs inside the sandboxed frame, so nothing it shows reaches the shell.
+    `<script src="${baseUrl}/_assets/image-zoom.js?v=${ASSET_VERSION}" data-root="body" defer></script>`;
   const result = html.replace(/<head([^>]*)>/i, `<head$1>${scripts}`);
   return result === html ? scripts + html : result;
 }

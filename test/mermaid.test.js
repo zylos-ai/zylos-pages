@@ -39,7 +39,7 @@ test('page template includes mermaid scripts only when mermaid blocks present', 
   });
   assert.match(withMermaid, /mermaid\.min\.js/);
   assert.match(withMermaid, /mermaid-init\.js/);
-  assert.match(withMermaid, /mermaid-zoom\.js/);
+  assert.match(withMermaid, /image-zoom\.js/);
 
   const withoutMermaid = pageTemplate({
     title: 'Test', description: '', date: '', tags: [],
@@ -48,5 +48,6 @@ test('page template includes mermaid scripts only when mermaid blocks present', 
   });
   assert.doesNotMatch(withoutMermaid, /mermaid\.min\.js/);
   assert.doesNotMatch(withoutMermaid, /mermaid-init\.js/);
-  assert.doesNotMatch(withoutMermaid, /mermaid-zoom\.js/);
+  // Every Markdown page can zoom its images, with or without diagrams.
+  assert.match(withoutMermaid, /image-zoom\.js/);
 });
