@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.17.0] - 2026-11-04
+
+### Added
+
+- Element annotations: besides selecting text, readers can pick a whole element
+  (hover and click on desktop, tap on touch), move to its parent or child, and
+  add a note from a toolbar beside it. Element notes share the list, count,
+  delete and clear actions with text notes, are found again after reload, and
+  appear in Copy Prompt as the element's tag and key attributes, its heading
+  section and a short text excerpt. HTML pages work through the in-frame
+  script (#190).
+- Click to zoom: images, inline SVG and Mermaid diagrams in Markdown pages and
+  in script-enabled HTML pages open in a viewer that zooms with the wheel,
+  pinch or the −/+ buttons, pans by dragging, fits with 1:1 and closes with
+  Esc, the close button or a click outside. Bitmaps never open above their
+  original size. Images inside links, buttons and other controls, page-handled
+  clicks, modifier-key clicks and clicks while text is selected keep their
+  usual behaviour. In HTML pages the viewer runs inside the sandboxed frame;
+  sandbox, CSP and outbound blocking are unchanged. Replaces the
+  Mermaid-only zoom (#191).
+
+### Fixed
+
+- `npm test` runs only `test/*.test.js`, so helper files under `test/helpers`
+  are no longer counted as tests (#192).
+
 ## [0.16.3] - 2026-10-27
 
 ### Changed
