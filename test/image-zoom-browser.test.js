@@ -14,6 +14,14 @@ const svgFile = (width, height, fill) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><rect width="${width}" height="${height}" fill="${fill}"/></svg>`;
 const dataImage = (width, height) => `data:image/svg+xml,${encodeURIComponent(svgFile(width, height, '#6366f1'))}`;
 
+// Integration case: the image viewer in a real browser against the real page routes.
+// Covers: Markdown images, Mermaid and inline SVG open and zoom at 1280px and 390px touch; zoomed SVG keeps
+// its #id-based styles; HTML pages show the viewer only inside the sandboxed frame, the shell makes no
+// requests, and an outbound-denied page makes none either; links, icons, page-handled images and element
+// picking do not zoom.
+// Run when changing assets/image-zoom.js, the page or frame templates that load it, the HTML sandbox/CSP,
+// or the annotation picker. Skipped automatically without PAGES_PLAYWRIGHT_CORE_PATH / PAGES_CHROMIUM_PATH.
+// Isolation: data and content live in mkdtemp dirs under TMPDIR; the server listens on 127.0.0.1:0.
 test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markdown and sandboxed HTML', {
   skip: available ? false : 'set browser paths for browser coverage', timeout: 240_000,
 }, async () => {
@@ -43,7 +51,7 @@ test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markd
       '```mermaid\ngraph TD\n  Start --> End\n```\n\n' + 'Background passage.\n\n'.repeat(20)],
     html: ['zoom.html', '<!doctype html><html><head><title>Zoom</title><style>img{max-width:100%}</style></head><body><h1>Zoom</h1>' +
       `<img id="photo" alt="Photo" src="${dataImage(800, 400)}">` +
-      '<svg id="drawing" width="300" height="150" viewBox="0 0 300 150"><circle cx="75" cy="75" r="60" fill="#22c55e"/><text x="160" y="80">Label</text></svg>' +
+      '<style>#drawing circle{fill:#22c55e;stroke:#15803d;stroke-width:4px}</style><svg id="drawing" width="300" height="150" viewBox="0 0 300 150"><circle cx="75" cy="75" r="60"/><text x="160" y="80">Label</text></svg>' +
       `<p style="margin:160px 0">Icon <img id="icon" alt="Icon" src="${dataImage(16, 16)}"> inline.</p>` +
       `<a href="#linked"><img id="linked" alt="Linked" src="${dataImage(400, 200)}"></a>` +
       `<img id="own" alt="Own handler" style="cursor:pointer" src="${dataImage(400, 200)}">` +
@@ -128,6 +136,11 @@ test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markd
       await press(md.locator('.mermaid'));
       const diagram = await openViewer(page, `${label} mermaid`);
       assert.equal(await diagram.locator('svg.pz-item').count(), 1);
+      // Mermaid styles nodes and edges through the diagram's #id, so the copy must keep it.
+      assert.deepEqual(await paintOf(diagram.locator('svg.pz-item .node').first()), await paintOf(md.locator('.mermaid svg .node').first()),
+        `${label}: zoomed Mermaid nodes keep their colours`);
+      assert.deepEqual(await paintOf(diagram.locator('svg.pz-item .flowchart-link').first()), await paintOf(md.locator('.mermaid svg .flowchart-link').first()),
+        `${label}: zoomed Mermaid edges keep their stroke`);
       await diagram.getByRole('button', { name: 'Close (Esc)', exact: true }).click();
       assert.equal(await isOpen(page), false);
 
@@ -159,6 +172,8 @@ test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markd
       await press(frame.locator('#drawing circle'));
       const drawing = await openViewer(frame, `${label} inline svg`);
       assert.equal(await drawing.locator('svg.pz-item').count(), 1);
+      assert.deepEqual(await paintOf(drawing.locator('svg.pz-item circle')), await paintOf(frame.locator('#drawing circle').first()),
+        `${label}: inline SVG styled through its #id keeps its colours`);
       // A click on the dark area closes the viewer.
       const stage = await drawing.locator('.pz-stage').boundingBox();
       if (touch) await page.touchscreen.tap(stage.x + 8, stage.y + stage.height - 8);
@@ -215,6 +230,15 @@ async function openViewer(target, label) {
     return content && content.style.transform && !/^translate\(0px, ?0px\)/.test(content.style.transform);
   }, null, { timeout: 5000 }).catch(() => assert.fail(`${label}: viewer did not open`));
   return target.locator('#pages-image-zoom');
+}
+
+// Computed paint of a shape, or of the first shape inside a group such as a Mermaid node.
+async function paintOf(locator) {
+  return locator.evaluate(node => {
+    const shape = node.matches('rect,circle,ellipse,polygon,path,line') ? node : node.querySelector('rect,circle,ellipse,polygon,path');
+    const style = getComputedStyle(shape);
+    return { fill: style.fill, stroke: style.stroke, strokeWidth: style.strokeWidth };
+  });
 }
 
 async function isOpen(target) {

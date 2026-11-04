@@ -121,8 +121,9 @@
       var width = node.naturalWidth || rect.width, height = node.naturalHeight || rect.height;
       copy.width = Math.round(width); copy.height = Math.round(height);
     } else {
+      // Keep the id: Mermaid and many pages style SVG through #id selectors. The viewer is
+      // appended after the page, so getElementById still finds the original first.
       copy = node.cloneNode(true);
-      copy.removeAttribute('id');
       copy.setAttribute('width', rect.width);
       copy.setAttribute('height', rect.height);
       copy.style.width = rect.width + 'px';
@@ -198,9 +199,6 @@
     document.addEventListener('keydown', function (event) {
       if (!overlay.classList.contains('pz-open')) return;
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
-      else if (event.key === '+' || event.key === '=') zoomBy(STEP);
-      else if (event.key === '-') zoomBy(1 / STEP);
-      else if (event.key === '0') fit();
     }, true);
     stage.addEventListener('wheel', function (event) {
       event.preventDefault();
@@ -265,5 +263,6 @@
     }, { passive: true });
   }
 
-  window.PagesImageZoom = Object.freeze({ open: function (node) { if (node) open(node); }, close: close });
+  // Marks the viewer as loaded so a second copy of the script does nothing.
+  window.PagesImageZoom = Object.freeze({});
 })();
