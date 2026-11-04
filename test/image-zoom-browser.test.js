@@ -17,8 +17,10 @@ const dataImage = (width, height) => `data:image/svg+xml,${encodeURIComponent(sv
 // Integration case: the image viewer in a real browser against the real page routes.
 // Covers: Markdown images, Mermaid and inline SVG open and zoom at 1280px and 390px touch; zoomed SVG keeps
 // its #id-based styles; HTML pages show the viewer only inside the sandboxed frame, the shell makes no
-// requests, and an outbound-denied page makes none either; links, icons, page-handled images and element
-// picking do not zoom.
+// requests, and an outbound-denied page makes none either; images in links, buttons, labels, summaries,
+// role=button/link and annotation UI, page-handled or default-prevented clicks, modifier clicks, clicks while
+// text is selected, icons and element picking do not zoom; raster images are not enlarged past their pixels;
+// pinch zooms; a drag that ends on the dark area does not close.
 // Run when changing assets/image-zoom.js, the page or frame templates that load it, the HTML sandbox/CSP,
 // or the annotation picker. Skipped automatically without PAGES_PLAYWRIGHT_CORE_PATH / PAGES_CHROMIUM_PATH.
 // Isolation: data and content live in mkdtemp dirs under TMPDIR; the server listens on 127.0.0.1:0.
@@ -56,10 +58,23 @@ test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markd
       `<a href="#linked"><img id="linked" alt="Linked" src="${dataImage(400, 200)}"></a>` +
       `<img id="own" alt="Own handler" style="cursor:pointer" src="${dataImage(400, 200)}">` +
       '<script src="own.js"></script>' + '<p>Background passage.</p>'.repeat(20) + '</body></html>'],
+    guards: ['guards.html', '<!doctype html><html><head><title>Guards</title><style>img{max-width:100%;display:block}' +
+      '.gap{margin:120px 0}a,button,label,summary,[role]{cursor:default}</style></head><body>' +
+      `<p id="text">Selectable passage of text.</p><img id="plain" alt="Plain" src="${dataImage(300, 150)}">` +
+      `<div class="gap"><a href="#plain-link"><img id="in-link" alt="In link" src="${dataImage(300, 150)}"></a></div>` +
+      `<div class="gap"><button type="button"><img id="in-button" alt="In button" src="${dataImage(300, 150)}"></button></div>` +
+      `<div class="gap"><label><img id="in-label" alt="In label" src="${dataImage(300, 150)}"><input type="checkbox"></label></div>` +
+      `<div class="gap"><details><summary><img id="in-summary" alt="In summary" src="${dataImage(300, 150)}"></summary><p>More</p></details></div>` +
+      `<div class="gap" role="button"><img id="in-role-button" alt="In role button" src="${dataImage(300, 150)}"></div>` +
+      `<div class="gap"><span role="link"><img id="in-role-link" alt="In role link" src="${dataImage(300, 150)}"></span></div>` +
+      `<div class="gap" data-pages-annotations><img id="in-annotations" alt="In annotation UI" src="${dataImage(300, 150)}"></div>` +
+      `<div class="gap"><img id="prevented" alt="Page prevents default" src="${dataImage(300, 150)}"></div>` +
+      '<script src="prevent.js"></script></body></html>'],
     denied: ['denied.html', '<!doctype html><html><head><title>Denied</title><style>img{max-width:100%}</style></head><body>' +
       `<img id="local" alt="Local" src="${dataImage(600, 300)}"><p style="margin:160px 0"><img id="remote" alt="Remote" width="200" height="100" src="https://example.com/remote.png"></p>` +
       '</body></html>'],
   };
+  await writeFile(path.join(contentDir, 'prevent.js'), "document.getElementById('prevented').addEventListener('click', event => event.preventDefault());");
   await writeFile(path.join(contentDir, 'own.js'), "document.getElementById('own').addEventListener('click', () => { document.body.dataset.ownClicks = String(Number(document.body.dataset.ownClicks || 0) + 1); });");
   for (const [kind, [file, source]] of Object.entries(pages)) {
     const sourcePath = path.join(contentDir, file);
@@ -129,6 +144,13 @@ test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markd
         assert.ok(after.x - before.x > 70 && after.y - before.y > 30, `${label}: dragging pans`);
         assert.equal(await isOpen(page), true, 'ending a drag does not close the viewer');
       }
+      if (touch) {
+        // Two fingers moving apart zoom in around their midpoint.
+        const box = await viewer.locator('.pz-stage').boundingBox();
+        const before = await scaleOf(viewer);
+        await pinch(page, box.x + box.width / 2, box.y + box.height / 2, 30, 120);
+        assert.ok(await scaleOf(viewer) > before * 2, `${label}: pinching apart zooms in`);
+      }
       await page.keyboard.press('Escape');
       assert.equal(await isOpen(page), false, `${label}: Esc closes`);
       assert.equal(await page.evaluate(() => document.body.style.overflow), '', 'scrolling is restored');
@@ -188,6 +210,50 @@ test('images, inline SVG and Mermaid diagrams open in a zoomable viewer in Markd
       await frame.waitForURL(/#linked$/);
       assert.equal(await isOpen(frame), false, `${label}: icons, page-handled and linked images do not zoom`);
 
+      // Guards: only plain content images zoom, and the browser keeps its own click behaviours.
+      await page.goto(`${origin}/p/zoom-guards`);
+      const guards = await documentFrame(page);
+      for (const id of ['in-link', 'in-button', 'in-label', 'in-summary', 'in-role-button', 'in-role-link', 'in-annotations', 'prevented']) {
+        await press(guards.locator(`#${id}`));
+        await page.waitForTimeout(150);
+        assert.equal(await isOpen(guards), false, `${label}: #${id} does not open the viewer`);
+      }
+      assert.match(guards.url(), /#plain-link$/, 'the link image still navigates');
+      // A selection in the page means the reader is selecting text, not opening images.
+      await guards.evaluate(() => getSelection().selectAllChildren(document.getElementById('text')));
+      await guards.locator('#plain').dispatchEvent('click', { button: 0 });
+      assert.equal(await isOpen(guards), false, `${label}: no zoom while text is selected`);
+      await guards.evaluate(() => getSelection().removeAllRanges());
+      await guards.locator('#plain').dispatchEvent('click', { button: 0 });
+      const plain = await openViewer(guards, `${label} plain image`);
+      // A 300x150 raster image is shown at its own size at most, even with room to spare.
+      assert.equal(await scaleOf(plain), 1, `${label}: raster images are not enlarged past their pixels`);
+      await page.keyboard.press('Escape');
+      if (!touch) {
+        for (const modifier of ['Shift', 'Control', 'Alt', 'Meta']) {
+          await guards.locator('#plain').click({ modifiers: [modifier] });
+          await page.waitForTimeout(150);
+          assert.equal(await isOpen(guards), false, `${label}: ${modifier}+click keeps the browser default`);
+        }
+        // Pressing on the image and releasing over the dark area ends a drag; it does not close.
+        await guards.locator('#plain').click();
+        const zoomed = await openViewer(guards, `${label} drag`);
+        const item = await zoomed.locator('.pz-item').boundingBox();
+        const area = await zoomed.locator('.pz-stage').boundingBox();
+        await page.mouse.move(item.x + item.width / 2, item.y + item.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(area.x + 10, area.y + area.height - 10, { steps: 6 });
+        await page.mouse.up();
+        assert.equal(await isOpen(guards), true, `${label}: a drag that ends on the dark area does not close`);
+        // Grabbing the dark area itself pans too; releasing there is the end of a drag, not a click.
+        await page.mouse.move(area.x + 10, area.y + 10);
+        await page.mouse.down();
+        await page.mouse.move(area.x + 60, area.y + 50, { steps: 6 });
+        await page.mouse.up();
+        assert.equal(await isOpen(guards), true, `${label}: dragging on the dark area does not close`);
+        await page.keyboard.press('Escape');
+      }
+
       // Pages that deny outbound requests stay closed while the viewer is used: the page's own
       // external image is blocked, and using the viewer adds no request outside the origin.
       await page.goto(`${origin}/p/zoom-denied`);
@@ -239,6 +305,18 @@ async function paintOf(locator) {
     const style = getComputedStyle(shape);
     return { fill: style.fill, stroke: style.stroke, strokeWidth: style.strokeWidth };
   });
+}
+
+// Two touch points start `from` pixels apart and move to `to` pixels apart, centred on (x, y).
+async function pinch(page, x, y, from, to) {
+  const session = await page.context().newCDPSession(page);
+  const points = gap => [{ x: x - gap / 2, y, id: 1 }, { x: x + gap / 2, y, id: 2 }];
+  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: points(from) });
+  for (let step = 1; step <= 6; step++) {
+    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: points(from + (to - from) * step / 6) });
+  }
+  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await session.detach();
 }
 
 async function isOpen(target) {

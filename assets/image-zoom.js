@@ -162,7 +162,8 @@
   function zoomable(target) {
     var area = root();
     if (!area || !target || target.nodeType !== 1 || !area.contains(target)) return null;
-    if (target.closest('#' + ID + ',#pages-annotations,[data-pages-annotations]')) return null;
+    // Annotation UI placed inside the document (as in HTML frames) is not page content.
+    if (target.closest('[data-pages-annotations]')) return null;
     var node = null, diagram = ROOT === 'body' ? null : target.closest('.mermaid');
     if (diagram && area.contains(diagram)) node = diagram.querySelector('svg');
     if (!node) {
@@ -184,7 +185,6 @@
 
   document.addEventListener('click', function (event) {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (document.documentElement.hasAttribute('data-pages-picking')) return;
     if (overlay && overlay.classList.contains('pz-open')) return;
     var selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
