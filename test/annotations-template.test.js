@@ -50,6 +50,7 @@ test('reporter loads core before the deferred reporter without capability bridge
   assert.ok(html.indexOf('annotations-core.js') < html.indexOf('annotations-frame.js'));
   assert.match(html, /annotations-frame\.js\?v=\d+" defer/);
   assert.equal(html.includes('bridge-client.js'), false);
+  assert.match(html, /image-zoom\.js\?v=\d+" data-root="body" defer/);
   const noHead = injectAnnotationReporter('<p>HTML fragment</p>', '/pages');
   assert.match(noHead, /^<script src="\/pages\/_assets\/annotations-core\.js/);
   assert.ok(noHead.endsWith('<p>HTML fragment</p>'));
