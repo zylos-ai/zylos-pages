@@ -135,8 +135,12 @@ delivery of short-lived sensitive values. It is zero-retention and fails closed
 on restart. A create request may declare 1–4 named `text` / `password` fields,
 which are submitted and consumed atomically under the existing 4 KiB limit;
 omitting them preserves the original single-value contract. A create request
-may instead set `accept: "file"` to collect one file (1 MiB by default, up to
-5 MiB with `maxBytes`), which is consumed once as base64 with a filename hint.
+may instead set `accept: "file"` to collect files (up to 5 by default, 1–10
+with `maxFiles`; 5 MiB in total, lowerable with `maxBytes`), which are consumed
+once as a base64 list with filename hints. In the other direction, an agent can
+deposit a short value or 1–10 files (5 MiB in total) for a one-time reveal: the
+human opens the link and reads the value, or clicks to download the files (one
+file as itself, several as a ZIP), and the link is used up.
 Separate local clients reach the daemon over a `0600` Unix socket; no
 management endpoint is exposed through Caddy. **When Pages is served behind
 a reverse proxy, `publicBaseUrl` is required** and must be the externally

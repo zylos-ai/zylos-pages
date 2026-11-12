@@ -68,4 +68,21 @@
       if (typeof el.select === 'function') { el.select(); }
     });
   });
+
+  // One-time download: the POST answers with the file itself, so the page
+  // stays put. Mark the link as used so a second click is not mistaken for a
+  // retry; without this script a second click simply shows "unavailable".
+  document.addEventListener('submit', function (ev) {
+    var form = ev.target;
+    if (!form || !form.hasAttribute || !form.hasAttribute('data-handoff-download')) return;
+    window.setTimeout(function () {
+      var button = form.querySelector('button[type="submit"]');
+      if (button) { button.disabled = true; button.textContent = 'Download started'; }
+      var hint = document.querySelector('[data-handoff-download-hint]');
+      if (hint) {
+        hint.textContent = 'This link is now used up. Save the download, then close this window. '
+          + 'If nothing was downloaded, ask the sender for a new link.';
+      }
+    }, 0);
+  });
 })();

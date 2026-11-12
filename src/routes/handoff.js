@@ -1,6 +1,7 @@
 import Busboy from 'busboy';
+import { zipFiles } from '../handoff/zip.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
-import { HANDOFF_MAX_VALUE_BYTES, handoffStore } from '../handoff/handoff-store.js';
+import { HANDOFF_MAX_VALUE_BYTES, fitFilename, handoffStore } from '../handoff/handoff-store.js';
 import { handoffFormHtml, handoffResultHtml, handoffRevealHtml, handoffRevealedHtml, handoffUnavailableHtml } from '../templates/handoffTemplate.js';
 
 // Form encoding can expand each UTF-8 byte to a three-byte %XX sequence.
@@ -92,36 +93,40 @@ function readForm(req) {
   });
 }
 
-// File handoffs accept exactly one `csrf` field and one `file` part; any other
-// or repeated part is rejected by the parser limits. The file is
-// buffered in memory only, capped at the session's maxBytes, and never touches
-// disk. Every malformed or oversized request is rejected without retaining it.
-function readFileForm(req, maxBytes) {
+// File handoffs accept exactly one `csrf` field and 1..maxFiles parts named
+// `file`; any other part, or one file too many, is rejected by the parser
+// limits. Files are buffered in memory only, capped at the session's total
+// maxBytes, and never touch disk. Every malformed or oversized request is
+// rejected without retaining it.
+function readFileForm(req, { maxBytes, maxFiles }) {
   return new Promise((resolve, reject) => {
     let csrf = null;
-    const chunks = [];
-    let file = null;
-    let fileDone = false;
+    const files = [];
+    let openFiles = 0;
     let parserDone = false;
     let settled = false;
     let bytes = 0;
+    let fileBytes = 0;
     let busboy;
 
     function fail(err) {
       if (settled) return;
       settled = true;
-      chunks.length = 0;
+      for (const file of files) file.chunks.length = 0;
+      files.length = 0;
       if (busboy) req.unpipe(busboy);
       req.resume();
       reject(err);
     }
 
     function finishIfReady() {
-      if (settled || !parserDone || (file && !fileDone)) return;
+      if (settled || !parserDone || openFiles > 0) return;
       settled = true;
-      if (file) file.data = Buffer.concat(chunks);
-      chunks.length = 0;
-      resolve({ csrf, file });
+      resolve({
+        csrf,
+        files: files.map(file => ({ filename: file.filename, contentType: file.contentType, data: Buffer.concat(file.chunks) })),
+      });
+      files.length = 0;
     }
 
     const invalid = () => Object.assign(new Error('Invalid multipart request'), { statusCode: 400 });
@@ -133,8 +138,9 @@ function readFileForm(req, maxBytes) {
         // Browsers send non-ASCII filenames as raw UTF-8.
         defParamCharset: 'utf8',
         // Busboy reports `limit` once a file reaches fileSize, so allow one
-        // extra byte to accept a file of exactly maxBytes.
-        limits: { fieldNameSize: 100, fieldSize: 1024, fields: 1, files: 1, fileSize: maxBytes + 1 },
+        // extra byte to accept a single file of exactly maxBytes. The total
+        // across files is enforced below.
+        limits: { fieldNameSize: 100, fieldSize: 1024, fields: 1, files: maxFiles, fileSize: maxBytes + 1 },
       });
     } catch {
       reject(invalid());
@@ -152,16 +158,23 @@ function readFileForm(req, maxBytes) {
       csrf = value;
     });
     busboy.on('file', (name, stream, info) => {
-      if (name !== 'file' || file) {
+      if (name !== 'file' || settled) {
         stream.resume();
         return fail(invalid());
       }
-      file = { filename: info.filename, contentType: info.mimeType, data: null };
-      stream.on('data', chunk => { if (!settled) chunks.push(chunk); });
+      const file = { filename: info.filename, contentType: info.mimeType, chunks: [] };
+      files.push(file);
+      openFiles++;
+      stream.on('data', chunk => {
+        if (settled) return;
+        fileBytes += chunk.length;
+        if (fileBytes > maxBytes) return fail(tooLarge());
+        file.chunks.push(chunk);
+      });
       stream.on('limit', () => fail(tooLarge()));
       stream.on('error', () => fail(invalid()));
       stream.on('end', () => {
-        fileDone = true;
+        openFiles--;
         finishIfReady();
       });
     });
@@ -177,12 +190,43 @@ function readFileForm(req, maxBytes) {
   });
 }
 
+// RFC 6266 / 5987: an ASCII fallback plus the exact UTF-8 name.
+function attachmentDisposition(filename) {
+  const fallback = filename.replace(/[^A-Za-z0-9._ -]/g, '_') || 'download';
+  const encoded = encodeURIComponent(filename).replace(/['()*]/g, ch => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
+// The files were cleared from the store before this point; the response is
+// the only remaining copy. One file downloads as itself, several as one ZIP so
+// a single click delivers everything. It is always a download, never rendered:
+// a generic type, nosniff and a sandbox CSP keep the browser from
+// interpreting the bytes.
+function zipName(label) {
+  const base = label.replace(/[\\/\u0000-\u001f\u007f-\u009f]/g, '').trim();
+  // A 100-character label can exceed 255 bytes in UTF-8; keep ".zip".
+  return fitFilename(`${base && base !== '.' && base !== '..' ? base : 'files'}.zip`);
+}
+
+function sendRevealedFiles(res, files, label) {
+  const body = files.length === 1 ? files[0].data : zipFiles(files);
+  const filename = files.length === 1 ? files[0].filename : zipName(label);
+  for (const file of files) if (file.data !== body) file.data.fill(0);
+  res.setHeader('Content-Type', files.length === 1 ? 'application/octet-stream' : 'application/zip');
+  res.setHeader('Content-Disposition', attachmentDisposition(filename));
+  res.setHeader('Content-Length', String(body.length));
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'");
+  res.on('close', () => body.fill(0));
+  return res.status(200).end(body);
+}
+
 function submittedFile(form) {
   if (typeof form.csrf !== 'string') {
     throw Object.assign(new Error('Invalid CSRF token'), { code: 'csrf' });
   }
-  if (!form.file) throw Object.assign(new Error('Missing file'), { code: 'invalid_value' });
-  return [form.csrf, form.file];
+  if (!form.files.length) throw Object.assign(new Error('Missing file'), { code: 'invalid_value' });
+  return [form.csrf, form.files];
 }
 
 function submittedValue(form, fields) {
@@ -218,8 +262,10 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
       csrfToken,
       label: session.label,
       fields: session.fields,
+      files: session.files,
       accept: session.accept,
       maxBytes: session.maxBytes,
+      maxFiles: session.maxFiles,
       expiresAt: session.expiresAt,
       assetBase: browserBase,
     }));
@@ -244,11 +290,12 @@ export function setupHandoffRoutes(app, config = {}, store = handoffStore) {
       return res.status(415).send('Unsupported Media Type');
     }
     try {
-      const form = fileUpload ? await readFileForm(req, session.maxBytes) : await readForm(req);
+      const form = fileUpload ? await readFileForm(req, session) : await readForm(req);
       const liveSession = store.publicView(req.params.id);
       if (!liveSession) return sendUnavailable(req, res, 409);
       if (liveSession.mode === 'reveal') {
         const value = store.reveal(req.params.id, form.get('csrf'));
+        if (typeof value !== 'string') return sendRevealedFiles(res, value, liveSession.label);
         return res.type('html').send(handoffRevealedHtml({ value, assetBase: browserBaseFromRequest(req) }));
       }
       const [csrf, value] = fileUpload

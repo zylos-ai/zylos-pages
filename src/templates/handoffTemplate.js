@@ -8,12 +8,22 @@ function formatBytes(bytes) {
   return `${bytes} bytes`;
 }
 
-function handoffFileFieldHtml(maxBytes) {
+function handoffFileFieldHtml(maxBytes, maxFiles) {
+  const many = maxFiles > 1;
+  const limit = many
+    ? `Up to ${maxFiles} files, ${formatBytes(maxBytes)} in total`
+    : `Maximum size ${formatBytes(maxBytes)}`;
   return `<div class="login-field">
-          <label for="file">File</label>
-          <input type="file" id="file" name="file" aria-describedby="file-limit" required autofocus>
-          <p class="file-limit" id="file-limit">Maximum size ${escapeHtml(formatBytes(maxBytes))}</p>
+          <label for="file">${many ? 'Files' : 'File'}</label>
+          <input type="file" id="file" name="file" aria-describedby="file-limit"${many ? ' multiple' : ''} required autofocus>
+          <p class="file-limit" id="file-limit">${escapeHtml(limit)}</p>
         </div>`;
+}
+
+function handoffFileListHtml(files) {
+  return `<ul class="handoff-file-list">
+        ${files.map(file => `<li><span class="handoff-file-name">${escapeHtml(file.filename)}</span><span class="handoff-file-size">${escapeHtml(formatBytes(file.size))}</span></li>`).join('\n        ')}
+      </ul>`;
 }
 
 function handoffFieldsHtml(fields) {
@@ -42,7 +52,7 @@ function handoffFieldsHtml(fields) {
 }
 
 export function handoffFormHtml({
-  action, csrfToken, label, expiresAt, fields = null, accept = 'text', maxBytes = null, assetBase = '',
+  action, csrfToken, label, expiresAt, fields = null, accept = 'text', maxBytes = null, maxFiles = 1, assetBase = '',
 }) {
   const fileUpload = accept === 'file';
   const hasPasswordToggle = fields?.some(field => field.type === 'password');
@@ -67,10 +77,10 @@ export function handoffFormHtml({
       </div>
       <form method="post" action="${escapeHtml(action)}"${fileUpload ? ' enctype="multipart/form-data"' : ''} autocomplete="off">
         <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
-        ${fileUpload ? handoffFileFieldHtml(maxBytes) : handoffFieldsHtml(fields)}
+        ${fileUpload ? handoffFileFieldHtml(maxBytes, maxFiles) : handoffFieldsHtml(fields)}
         <button type="submit">Send securely</button>
       </form>
-      <p class="login-hint">This one-time form expires at ${escapeHtml(new Date(expiresAt).toISOString())}. The ${fileUpload ? 'file' : 'value'} is not retained after delivery.</p>
+      <p class="login-hint">This one-time form expires at ${escapeHtml(new Date(expiresAt).toISOString())}. The ${fileUpload ? (maxFiles > 1 ? 'files are' : 'file is') : 'value is'} not retained after delivery.</p>
     </div>
   </main>
   ${hasPasswordToggle ? `<script src="${escapeHtml(assetBase)}/_assets/handoff.js" defer></script>` : ''}
@@ -121,7 +131,8 @@ export function handoffResultHtml({ assetBase = '' } = {}) {
 </html>`;
 }
 
-export function handoffRevealHtml({ action, csrfToken, label, expiresAt, assetBase = '' }) {
+export function handoffRevealHtml({ action, csrfToken, label, expiresAt, files = null, assetBase = '' }) {
+  if (files) return handoffDownloadHtml({ action, csrfToken, label, expiresAt, files, assetBase });
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -148,6 +159,47 @@ export function handoffRevealHtml({ action, csrfToken, label, expiresAt, assetBa
       <p class="login-hint">The value is not loaded by this preview. Revealing consumes it permanently. This link expires at ${escapeHtml(new Date(expiresAt).toISOString())}.</p>
     </div>
   </main>
+</body>
+</html>`;
+}
+
+function handoffDownloadHtml({ action, csrfToken, label, expiresAt, files, assetBase }) {
+  const total = files.reduce((sum, file) => sum + file.size, 0);
+  const what = files.length === 1 ? 'The file' : `These ${files.length} files`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>One-time download — Zylos Pages</title>
+  <link rel="stylesheet" href="${escapeHtml(assetBase)}/_assets/style.css">
+  <style>${AUTH_CARD_CSS}
+    .handoff-file-list { list-style: none; margin: 0 0 16px; padding: 0; border: 1px solid var(--color-border); border-radius: 8px; }
+    .handoff-file-list li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; font-size: 13px; }
+    .handoff-file-list li + li { border-top: 1px solid var(--color-border); }
+    .handoff-file-name { min-width: 0; overflow-wrap: anywhere; }
+    .handoff-file-size { flex: none; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <main class="login-container">
+    <div class="login-card">
+      <div class="login-brand">
+        <img src="${escapeHtml(assetBase)}/_assets/logo.png" alt="">
+        <h1>One-time download</h1>
+        <p class="login-sub">${escapeHtml(label)}</p>
+      </div>
+      ${handoffFileListHtml(files)}
+      <form method="post" action="${escapeHtml(action)}" autocomplete="off" data-handoff-download>
+        <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
+        <button type="submit">${files.length === 1 ? 'Download once' : `Download all (${escapeHtml(formatBytes(total))}, ZIP)`}</button>
+      </form>
+      <p class="login-hint" data-handoff-download-hint>${what} ${files.length === 1 ? 'is' : 'are'} not loaded by this preview. Downloading consumes ${files.length === 1 ? 'it' : 'them'} permanently. This link expires at ${escapeHtml(new Date(expiresAt).toISOString())}.</p>
+    </div>
+  </main>
+  <script src="${escapeHtml(assetBase)}/_assets/handoff.js" defer></script>
 </body>
 </html>`;
 }
