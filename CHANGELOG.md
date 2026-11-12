@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- Secure handoff accepts files from the human: a create request with
+  `accept: "file"` renders a file picker instead of text fields, and
+  `await` / `consume` return the files once as
+  `{"files":[{filename, contentType, size, data}]}` with `data` in base64.
+  Up to 5 files by default (`maxFiles` 1–10) and 5 MiB in total (`maxBytes`
+  lowers it). Names are reduced to safe base names and duplicates become
+  `name (2).ext`. Files stay in process memory only and are cleared on
+  delivery, expiry, revoke or restart, like text values (#195).
+- One-time file download, the reverse direction: `create_reveal` accepts
+  `files` (1–10, 5 MiB in total, base64) instead of `value`. The link shows
+  file names and sizes; one click downloads a single file as itself or several
+  as one ZIP, and the link is then used up. Downloads are always attachments
+  (`nosniff`, sandbox CSP), never rendered, and unread files are zeroed on
+  expiry or revoke. The local control socket now accepts requests up to the
+  base64 size of 5 MiB plus 64 KiB and decodes them as a whole, so multi-byte
+  UTF-8 labels and names are never split.
+
 ### Changed
 
 - Default render ceiling `security.maxFileSizeBytes` raised from 1 MiB to

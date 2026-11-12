@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { DATA_DIR } from '../lib/config.js';
-import { handoffStore } from './handoff-store.js';
+import { HANDOFF_MAX_FILE_BYTES, handoffStore } from './handoff-store.js';
 
 export const HANDOFF_CONTROL_SOCKET = path.join(DATA_DIR, 'handoff-control.sock');
-export const HANDOFF_CONTROL_REQUEST_LIMIT_BYTES = 8192;
+// A create_reveal request may carry files as base64, so the local socket
+// accepts the largest encoded total plus room for names and the rest of the JSON.
+export const HANDOFF_CONTROL_REQUEST_LIMIT_BYTES = Math.ceil(HANDOFF_MAX_FILE_BYTES / 3) * 4 + 64 * 1024;
 
 function publicBase(config) {
   const configured = config.publicBaseUrl || '/pages';
@@ -36,7 +38,7 @@ async function removeStaleSocket(socketPath) {
 function safeError(err) {
   const allowed = new Set([
     'aborted', 'consumed', 'expired', 'invalid_accept', 'invalid_label', 'invalid_ttl',
-    'invalid_fields', 'invalid_max_bytes', 'invalid_value', 'not_found', 'revoked', 'unavailable', 'value_too_large',
+    'invalid_fields', 'invalid_max_bytes', 'invalid_max_files', 'invalid_value', 'not_found', 'revoked', 'unavailable', 'value_too_large',
     'viewed', 'waiting',
   ]);
   const code = allowed.has(err?.code) ? err.code : 'invalid_request';
@@ -60,6 +62,7 @@ async function dispatch(request, socket, store, config, abortController) {
         fields: request.fields,
         accept: request.accept,
         maxBytes: request.maxBytes,
+        maxFiles: request.maxFiles,
       });
       return {
         ok: true,
@@ -68,7 +71,12 @@ async function dispatch(request, socket, store, config, abortController) {
       };
     }
     case 'create_reveal': {
-      const created = store.createReveal({ value: request.value, ttlMs: request.ttlMs, label: request.label });
+      const created = store.createReveal({
+        value: request.value,
+        files: request.files,
+        ttlMs: request.ttlMs,
+        label: request.label,
+      });
       return {
         ok: true,
         ...created,
@@ -108,7 +116,9 @@ export async function startHandoffControlServer({
   const server = net.createServer({ allowHalfOpen: true }, socket => {
     clients.add(socket);
     const abortController = new AbortController();
-    let body = '';
+    // Keep raw chunks: decoding each chunk separately could split a multi-byte
+    // UTF-8 character now that requests can span many chunks.
+    const chunks = [];
     let bytes = 0;
     let rejected = false;
 
@@ -117,15 +127,17 @@ export async function startHandoffControlServer({
       bytes += chunk.length;
       if (bytes > HANDOFF_CONTROL_REQUEST_LIMIT_BYTES) {
         rejected = true;
+        chunks.length = 0;
         send(socket, { ok: false, error: 'request_too_large' });
         return;
       }
-      body += chunk.toString('utf8');
+      chunks.push(chunk);
     });
     socket.on('end', async () => {
       if (rejected) return;
       try {
-        const request = JSON.parse(body);
+        const request = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        chunks.length = 0;
         send(socket, await dispatch(request, socket, store, config, abortController));
       } catch (err) {
         send(socket, safeError(err));

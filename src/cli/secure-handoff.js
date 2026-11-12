@@ -4,13 +4,14 @@ import net from 'node:net';
 import { HANDOFF_CONTROL_REQUEST_LIMIT_BYTES, HANDOFF_CONTROL_SOCKET } from '../handoff/handoff-control.js';
 
 async function readRequest() {
-  let body = '';
+  const chunks = [];
   let bytes = 0;
   for await (const chunk of process.stdin) {
     bytes += chunk.length;
     if (bytes > HANDOFF_CONTROL_REQUEST_LIMIT_BYTES) throw new Error('request_too_large');
-    body += chunk.toString('utf8');
+    chunks.push(chunk);
   }
+  const body = Buffer.concat(chunks).toString('utf8');
   JSON.parse(body);
   return body;
 }

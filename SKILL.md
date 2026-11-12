@@ -115,7 +115,13 @@ Spawn the client with fixed argv and write create/status/await/consume/revoke
 JSON directly to stdin. It reaches the running Pages process through a `0600`
 Unix socket that is not routed by Caddy. Give the human only the returned
 `submitUrl`, retain the management token only in caller memory, and keep the
-one-time await response out of routine output. When Pages is behind a reverse
+one-time await response out of routine output. For files, create with
+`"accept":"file"` (optional `maxFiles` 1–10, default 5; `maxBytes` caps the
+total, default and maximum 5 MiB); await returns `{"files":[{filename,
+contentType,size,data}]}` with `data` in base64. To give the human a value or
+files once, send `create_reveal` with either `value` or `files` (1–10 entries
+of `{filename, contentType, data}` in base64, 5 MiB in total) and give them
+only the `revealUrl`; files download once (several as one ZIP). When Pages is behind a reverse
 proxy, `publicBaseUrl` is required: ask the owner for the externally reachable
 absolute Pages base URL and set it in
 `~/zylos/components/pages/config.json`. Never infer it from forwarded headers.

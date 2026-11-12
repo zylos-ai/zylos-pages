@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { spawn } from 'node:child_process';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,7 +9,9 @@ import express from 'express';
 import {
   HandoffStore,
   HANDOFF_DEFAULT_FILE_BYTES,
+  HANDOFF_DEFAULT_FILES,
   HANDOFF_MAX_FIELDS,
+  HANDOFF_MAX_FILES,
   HANDOFF_MAX_FILE_BYTES,
   HANDOFF_MAX_VALUE_BYTES,
 } from '../src/handoff/handoff-store.js';
@@ -205,8 +207,8 @@ test('file handoffs render a multipart form and deliver the file once as base64 
     const opened = await form(origin, created.id);
     assert.equal(opened.response.status, 200);
     assert.match(opened.html, /<form method="post"[^>]*enctype="multipart\/form-data"/);
-    assert.match(opened.html, /<input type="file" id="file" name="file"[^>]*required/);
-    assert.match(opened.html, /Maximum size 1 MiB/);
+    assert.match(opened.html, /<input type="file" id="file" name="file"[^>]*multiple required/);
+    assert.match(opened.html, /Up to 5 files, 5 MiB in total/);
     assert.doesNotMatch(opened.html, /name="value"/);
     assert.doesNotMatch(opened.html, /<script/);
 
@@ -219,12 +221,12 @@ test('file handoffs render a multipart form and deliver the file once as base64 
     assert.equal(response.status, 200);
     assert.match(resultHtml, /Handoff complete/);
     assert.doesNotMatch(resultHtml, /# Handoff/);
-    assert.deepEqual(await waiting, {
+    assert.deepEqual(await waiting, { files: [{
       filename: '交接 handoff.md',
       contentType: 'text/markdown',
       size: document.length,
       data: document.toString('base64'),
-    });
+    }] });
     assert.equal(store.status(created.id, created.manageToken).state, 'consumed');
     assert.throws(() => store.consume(created.id, created.manageToken), { code: 'consumed' });
     assert.equal((await form(origin, created.id)).response.status, 404);
@@ -243,6 +245,13 @@ test('file handoff options reject unsupported kinds, sizes, and field combinatio
     assert.throws(() => store.create({ accept: 'file', maxBytes }), { code: 'invalid_max_bytes' });
   }
   assert.throws(() => store.create({ maxBytes: 1024 }), { code: 'invalid_max_bytes' });
+  assert.equal(store.publicView(store.create({ accept: 'file' }).id).maxFiles, HANDOFF_DEFAULT_FILES);
+  assert.equal(store.publicView(store.create({ accept: 'file', maxFiles: HANDOFF_MAX_FILES }).id).maxFiles, HANDOFF_MAX_FILES);
+  assert.equal(store.publicView(store.create({ accept: 'text' }).id).maxFiles, null);
+  for (const maxFiles of [0, -1, 1.5, '2', HANDOFF_MAX_FILES + 1, null]) {
+    assert.throws(() => store.create({ accept: 'file', maxFiles }), { code: 'invalid_max_files' });
+  }
+  assert.throws(() => store.create({ maxFiles: 2 }), { code: 'invalid_max_files' });
   assert.throws(() => store.create({
     accept: 'file', fields: [{ name: 'key', label: 'Key', type: 'text' }],
   }), { code: 'invalid_fields' });
@@ -260,8 +269,8 @@ test('file submissions reduce filenames to safe base names and normalize content
   for (const [metadata, filename, contentType] of cases) {
     const store = new HandoffStore();
     const created = store.create({ accept: 'file' });
-    store.submit(created.id, store.formCsrfToken(created.id), { ...metadata, data: Buffer.from('k') });
-    const value = store.consume(created.id, created.manageToken);
+    store.submit(created.id, store.formCsrfToken(created.id), [{ ...metadata, data: Buffer.from('k') }]);
+    const [value] = store.consume(created.id, created.manageToken).files;
     assert.equal(value.filename, filename);
     assert.equal(value.contentType, contentType);
   }
@@ -270,9 +279,13 @@ test('file submissions reduce filenames to safe base names and normalize content
   const created = store.create({ accept: 'file', maxBytes: 4 });
   const csrf = store.formCsrfToken(created.id);
   assert.throws(() => store.submit(created.id, csrf, 'not a file'), { code: 'invalid_value' });
-  assert.throws(() => store.submit(created.id, csrf, { data: Buffer.alloc(0) }), { code: 'invalid_value' });
-  assert.throws(() => store.submit(created.id, csrf, { data: 'abc' }), { code: 'invalid_value' });
-  assert.throws(() => store.submit(created.id, csrf, { data: Buffer.alloc(5) }), { code: 'value_too_large' });
+  assert.throws(() => store.submit(created.id, csrf, []), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, { data: Buffer.from('k') }), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, [{ data: Buffer.alloc(0) }]), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, [{ data: 'abc' }]), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, [{ data: Buffer.alloc(5) }]), { code: 'value_too_large' });
+  assert.throws(() => store.submit(created.id, csrf, [{ data: Buffer.alloc(3) }, { data: Buffer.alloc(2) }]), { code: 'value_too_large' }, 'the size limit is a total across files');
+  assert.throws(() => store.submit(created.id, csrf, Array.from({ length: 6 }, () => ({ data: Buffer.from('k') }))), { code: 'invalid_value' }, 'more files than maxFiles');
   assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
 });
 
@@ -285,7 +298,10 @@ test('file POST rejects wrong media type, CSRF, missing, empty, extra, repeated,
     { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('csrf', csrf); body.append('file', file()); } },
     { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); } },
     { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file('')); } },
-    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file()); body.append('file', file()); } },
+    { expected: 400, maxFiles: 1, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file()); body.append('file', file()); } },
+    { expected: 400, maxFiles: 2, build: (body, csrf) => { body.append('csrf', csrf); for (let i = 0; i < 3; i++) body.append('file', file()); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file()); body.append('file', file('')); } },
+    { expected: 413, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file('x'.repeat(40))); body.append('file', file('y'.repeat(40))); } },
     { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('document', file()); } },
     { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('value', 'text'); body.append('file', file()); } },
     { expected: 400, build: (body, csrf) => { body.append('csrf', csrf.repeat(40)); body.append('file', file()); } },
@@ -293,7 +309,7 @@ test('file POST rejects wrong media type, CSRF, missing, empty, extra, repeated,
   ];
   for (const scenario of scenarios) {
     const store = new HandoffStore();
-    const created = store.create({ accept: 'file', maxBytes: 64 });
+    const created = store.create({ accept: 'file', maxBytes: 64, maxFiles: scenario.maxFiles });
     await withServer(store, async origin => {
       const csrf = csrfFrom((await form(origin, created.id)).html);
       const response = scenario.urlencoded
@@ -317,7 +333,7 @@ test('file POST enforces the exact file limit and a raw body ceiling for multipa
       body.append('file', new File(['x'.repeat(64)], 'exact.txt'));
     });
     assert.equal(accepted.status, 200);
-    const delivered = await waiting;
+    const [delivered] = (await waiting).files;
     assert.equal(delivered.size, 64);
     assert.equal(delivered.filename, 'exact.txt');
 
@@ -453,7 +469,7 @@ test('separate client process creates, checks, awaits, consumes, and revokes thr
       assert.equal(consumed.code, 0);
       assert.deepEqual(JSON.parse(consumed.stdout), {
         ok: true,
-        value: { filename: 'key.json', contentType: 'application/json', size: keyFile.length, data: keyFile.toString('base64') },
+        value: { files: [{ filename: 'key.json', contentType: 'application/json', size: keyFile.length, data: keyFile.toString('base64') }] },
       });
       assert.equal(consumed.stderr, '');
     }, { publicBaseUrl: 'https://agent.example/pages' });
@@ -932,4 +948,190 @@ test('gone links render a branded 404 page that does not distinguish the cause',
     assert.equal(never.response.status, 404);
     assert.equal(never.html, gone.html);
   });
+});
+
+// Independent check of a ZIP produced by the download route: Python's zipfile
+// re-reads the central directory and verifies every CRC (testzip). Skipped
+// only where python3 is unavailable.
+function pythonZipEntries(t, zipPath) {
+  const script = [
+    'import json, sys, zipfile',
+    'z = zipfile.ZipFile(sys.argv[1])',
+    'bad = z.testzip()',
+    'print(json.dumps({"bad": bad, "entries": [[i.filename, z.read(i).hex(), i.compress_type, i.flag_bits] for i in z.infolist()]}))',
+  ].join('\n');
+  const result = spawnSync('python3', ['-I', '-c', script, zipPath], { encoding: 'utf8' });
+  if (result.error) { t.diagnostic('python3 unavailable; ZIP cross-check skipped'); return null; }
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+test('duplicate upload names are made unique instead of overwriting each other', () => {
+  const store = new HandoffStore();
+  const created = store.create({ accept: 'file', maxFiles: 6 });
+  const names = ['key.json', 'key.json', 'KEY.JSON', 'notes', 'notes', '.env'];
+  store.submit(created.id, store.formCsrfToken(created.id), names.map(filename => ({ filename, data: Buffer.from(filename) })));
+  const { files } = store.consume(created.id, created.manageToken);
+  assert.deepEqual(files.map(file => file.filename), ['key.json', 'key (2).json', 'KEY (3).JSON', 'notes', 'notes (2)', '.env']);
+  assert.deepEqual(files.map(file => Buffer.from(file.data, 'base64').toString()), names, 'order and content are kept');
+});
+
+test('reveal files validate count, encoding, total size, and value/files exclusivity', () => {
+  const store = new HandoffStore();
+  const b64 = text => Buffer.from(text).toString('base64');
+  assert.throws(() => store.createReveal({ value: 'x', files: [{ filename: 'a', data: b64('a') }] }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({ files: [] }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({ files: 'a' }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({ files: [{ filename: 'a', data: '' }] }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({ files: [{ filename: 'a', data: 'not base64!' }] }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({ files: [{ filename: 'a', data: 'YQ' }] }), { code: 'invalid_value' }, 'unpadded base64 is rejected');
+  assert.throws(() => store.createReveal({ files: [{ filename: 'a', data: [b64('a')] }] }), { code: 'invalid_value' });
+  assert.throws(() => store.createReveal({
+    files: Array.from({ length: HANDOFF_MAX_FILES + 1 }, (_, i) => ({ filename: `${i}`, data: b64('a') })),
+  }), { code: 'invalid_value' });
+  const half = Buffer.alloc(HANDOFF_MAX_FILE_BYTES / 2, 1).toString('base64');
+  assert.throws(() => store.createReveal({
+    files: [{ filename: 'a', data: half }, { filename: 'b', data: half }, { filename: 'c', data: b64('x') }],
+  }), { code: 'value_too_large' }, 'the 5 MiB limit is a total across files');
+
+  const exact = store.createReveal({ files: [{ filename: 'a', data: half }, { filename: 'a', data: half }] });
+  const view = store.publicView(exact.id);
+  assert.deepEqual(view.files, [{ filename: 'a', size: HANDOFF_MAX_FILE_BYTES / 2 }, { filename: 'a (2)', size: HANDOFF_MAX_FILE_BYTES / 2 }]);
+  assert.equal(JSON.stringify(view).includes(half.slice(0, 64)), false, 'the public view never carries file content');
+  assert.equal(store.publicView(store.createReveal({ value: 'text' }).id).files, null);
+});
+
+test('a single reveal file downloads once as an attachment that the browser will not render', async () => {
+  const store = new HandoffStore();
+  const content = Buffer.from('<script>alert(1)</script>\n\u0000binary');
+  const created = store.createReveal({
+    label: 'Deploy key',
+    files: [{ filename: '../部署 key.html', contentType: 'text/html', data: content.toString('base64') }],
+  });
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    assert.equal(opened.response.status, 200);
+    assert.match(opened.html, /One-time download/);
+    assert.match(opened.html, /部署 key\.html/);
+    assert.match(opened.html, new RegExp(`${content.length} bytes`));
+    assert.match(opened.html, /data-handoff-download/);
+    assert.match(opened.html, /Download once/);
+    assert.match(opened.html, /<script src="[^"]*\/_assets\/handoff\.js"/);
+    assert.doesNotMatch(opened.html, /alert\(1\)/);
+    assert.equal(store.status(created.id, created.manageToken).state, 'ready');
+
+    const response = await reveal(origin, created.id, csrfFrom(opened.html));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'application/octet-stream');
+    assert.equal(response.headers.get('content-disposition'),
+      `attachment; filename="__ key.html"; filename*=UTF-8''${encodeURIComponent('部署 key.html')}`);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(response.headers.get('content-security-policy'), /^sandbox/);
+    assert.match(response.headers.get('cache-control'), /no-store/);
+    assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
+
+    assert.equal(store.status(created.id, created.manageToken).state, 'viewed');
+    assert.equal((await form(origin, created.id)).response.status, 404);
+    const again = await reveal(origin, created.id, csrfFrom(opened.html));
+    assert.ok([404, 409].includes(again.status), `second download must fail, got ${again.status}`);
+    assert.doesNotMatch(await again.text(), /alert\(1\)/);
+  });
+});
+
+test('several reveal files download once as one valid ZIP named after the label', async t => {
+  const store = new HandoffStore();
+  const files = [
+    { filename: 'id_ed25519', data: Buffer.from('-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n') },
+    { filename: '证书.pem', data: Buffer.from([0, 1, 2, 255, 254]) },
+    { filename: 'id_ed25519', data: Buffer.from('second copy') },
+  ];
+  const created = store.createReveal({
+    label: '交接/文件',
+    files: files.map(file => ({ filename: file.filename, data: file.data.toString('base64') })),
+  });
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-zip-'));
+  try {
+    await withServer(store, async origin => {
+      const opened = await form(origin, created.id);
+      assert.match(opened.html, /&#x4ea4;|交接\/文件/);
+      assert.match(opened.html, /id_ed25519 \(2\)/);
+      assert.match(opened.html, /Download all \([^)]*ZIP\)/);
+      const response = await reveal(origin, created.id, csrfFrom(opened.html));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'application/zip');
+      assert.equal(response.headers.get('content-disposition'),
+        `attachment; filename="____.zip"; filename*=UTF-8''${encodeURIComponent('交接文件.zip')}`);
+      const zip = Buffer.from(await response.arrayBuffer());
+      assert.equal(zip.readUInt32LE(0), 0x04034b50);
+      const zipPath = path.join(dir, 'download.zip');
+      await writeFile(zipPath, zip);
+      const checked = pythonZipEntries(t, zipPath);
+      if (checked) {
+        assert.equal(checked.bad, null, 'every CRC must verify');
+        assert.deepEqual(checked.entries.map(([name, hex]) => [name, hex]), [
+          ['id_ed25519', files[0].data.toString('hex')],
+          ['证书.pem', files[1].data.toString('hex')],
+          ['id_ed25519 (2)', files[2].data.toString('hex')],
+        ]);
+        assert.ok(checked.entries.every(([, , method, flags]) => method === 0 && (flags & 0x800)), 'stored entries with UTF-8 names');
+      }
+      assert.equal((await form(origin, created.id)).response.status, 404);
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('expiry and revoke zero reveal file buffers that were never downloaded', () => {
+  let now = 1_000;
+  const store = new HandoffStore({ now: () => now });
+  const data = Buffer.from('zero me').toString('base64');
+  const expiring = store.createReveal({ files: [{ filename: 'a', data }], ttlMs: 60_000 });
+  const revoking = store.createReveal({ files: [{ filename: 'b', data }] });
+  const expiringBuffer = store.sessions.get(expiring.id).value[0].data;
+  const revokingBuffer = store.sessions.get(revoking.id).value[0].data;
+  assert.equal(store.revoke(revoking.id, revoking.manageToken), true);
+  assert.ok(revokingBuffer.every(byte => byte === 0));
+  now += 60_000;
+  assert.equal(store.status(expiring.id, expiring.manageToken).state, 'expired');
+  assert.ok(expiringBuffer.every(byte => byte === 0));
+});
+
+test('the local socket carries a multi-MiB reveal file and a non-ASCII label intact', async () => {
+  const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-bigfile-'));
+  const socketPath = path.join(dataDir, 'handoff-control.sock');
+  const store = new HandoffStore();
+  const control = await startHandoffControlServer({ store, socketPath, config: { publicBaseUrl: 'https://agent.example/pages' } });
+  try {
+    const big = Buffer.alloc(4 * 1024 * 1024);
+    for (let i = 0; i < big.length; i++) big[i] = (i * 7 + (i >> 9)) & 0xff;
+    const label = '服务账号密钥 🔑'.repeat(6);
+    const created = await runCli(dataDir, {
+      operation: 'create_reveal',
+      label,
+      files: [{ filename: '密钥文件.bin', contentType: 'application/octet-stream', data: big.toString('base64') }],
+    });
+    assert.equal(created.code, 0);
+    assert.equal(created.stdout.includes(big.toString('base64').slice(0, 64)), false, 'create response must not echo file data');
+    const view = store.publicView(created.json.id);
+    assert.equal(view.label, label);
+    assert.deepEqual(view.files, [{ filename: '密钥文件.bin', size: big.length }]);
+
+    await withServer(store, async origin => {
+      const opened = await form(origin, created.json.id);
+      const response = await reveal(origin, created.json.id, csrfFrom(opened.html));
+      assert.equal(response.status, 200);
+      assert.ok(Buffer.from(await response.arrayBuffer()).equals(big));
+    });
+
+    const tooBig = await runCli(dataDir, {
+      operation: 'create_reveal',
+      files: [{ filename: 'big.bin', data: Buffer.alloc(HANDOFF_MAX_FILE_BYTES + 3).toString('base64') }],
+    });
+    assert.equal(tooBig.code, 1);
+    assert.deepEqual(tooBig.json, { ok: false, error: 'value_too_large' });
+  } finally {
+    control.close();
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });

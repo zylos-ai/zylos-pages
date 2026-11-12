@@ -5,8 +5,11 @@ export const HANDOFF_MAX_TTL_MS = 15 * 60_000;
 export const HANDOFF_DEFAULT_TTL_MS = 5 * 60_000;
 export const HANDOFF_MAX_VALUE_BYTES = 4096;
 export const HANDOFF_MAX_FIELDS = 4;
-export const HANDOFF_DEFAULT_FILE_BYTES = 1024 * 1024;
+// File limits apply to the total size of all files in one handoff.
+export const HANDOFF_DEFAULT_FILE_BYTES = 5 * 1024 * 1024;
 export const HANDOFF_MAX_FILE_BYTES = 5 * 1024 * 1024;
+export const HANDOFF_DEFAULT_FILES = 5;
+export const HANDOFF_MAX_FILES = 10;
 
 const HANDOFF_FIELD_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const HANDOFF_FIELD_TYPES = new Set(['text', 'password']);
@@ -56,13 +59,16 @@ function validateFields(fields) {
   });
 }
 
-function validateAccept(accept, fields, maxBytes) {
+function validateAccept(accept, fields, maxBytes, maxFiles) {
   if (!HANDOFF_ACCEPT_KINDS.has(accept)) {
     throw handoffError('invalid_accept', 'Accept must be text or file');
   }
   if (accept === 'text') {
     if (maxBytes !== undefined) {
       throw handoffError('invalid_max_bytes', 'maxBytes applies only to file handoffs');
+    }
+    if (maxFiles !== undefined) {
+      throw handoffError('invalid_max_files', 'maxFiles applies only to file handoffs');
     }
     return null;
   }
@@ -73,7 +79,11 @@ function validateAccept(accept, fields, maxBytes) {
   if (!Number.isInteger(limit) || limit < 1 || limit > HANDOFF_MAX_FILE_BYTES) {
     throw handoffError('invalid_max_bytes', `maxBytes must be between 1 and ${HANDOFF_MAX_FILE_BYTES}`);
   }
-  return limit;
+  const count = maxFiles === undefined ? HANDOFF_DEFAULT_FILES : maxFiles;
+  if (!Number.isInteger(count) || count < 1 || count > HANDOFF_MAX_FILES) {
+    throw handoffError('invalid_max_files', `maxFiles must be between 1 and ${HANDOFF_MAX_FILES}`);
+  }
+  return { maxBytes: limit, maxFiles: count };
 }
 
 // The filename is only a hint for the consumer. Reduce it to a plain base name
@@ -94,23 +104,87 @@ function safeContentType(contentType) {
   return HANDOFF_CONTENT_TYPE_RE.test(normalized) ? normalized : 'application/octet-stream';
 }
 
-function validatedFileSubmission(maxBytes, value) {
-  if (!value || typeof value !== 'object' || !Buffer.isBuffer(value.data) || value.data.length === 0) {
-    throw handoffError('invalid_value', 'A non-empty file is required');
+// Two files with the same name would overwrite each other when the consumer
+// writes them out or when they share a ZIP, so later duplicates get " (2)",
+// " (3)" ... before the extension.
+function uniqueFilenames(files) {
+  const seen = new Set();
+  return files.map(file => {
+    let name = file.filename;
+    const dot = name.lastIndexOf('.');
+    const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
+    for (let n = 2; seen.has(name.toLowerCase()); n++) name = `${stem} (${n})${ext}`;
+    seen.add(name.toLowerCase());
+    return { ...file, filename: name };
+  });
+}
+
+function validatedFileSubmission(session, value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw handoffError('invalid_value', 'At least one non-empty file is required');
   }
-  if (value.data.length > maxBytes) {
-    throw handoffError('value_too_large', 'File exceeds the size limit');
+  if (value.length > session.maxFiles) throw handoffError('invalid_value', 'Too many files');
+  let total = 0;
+  for (const file of value) {
+    if (!file || typeof file !== 'object' || !Buffer.isBuffer(file.data) || file.data.length === 0) {
+      throw handoffError('invalid_value', 'Every file must be non-empty');
+    }
+    total += file.data.length;
   }
+  if (total > session.maxBytes) throw handoffError('value_too_large', 'Files exceed the size limit');
+  const files = uniqueFilenames(value.map(file => ({
+    filename: safeFilename(file.filename),
+    contentType: safeContentType(file.contentType),
+    data: file.data,
+  })));
   return {
-    filename: safeFilename(value.filename),
-    contentType: safeContentType(value.contentType),
-    size: value.data.length,
-    data: value.data.toString('base64'),
+    files: files.map(file => ({
+      filename: file.filename,
+      contentType: file.contentType,
+      size: file.data.length,
+      data: file.data.toString('base64'),
+    })),
   };
 }
 
+// Strict padded base64. A grouped pattern like (?:[A-Za-z0-9+/]{4})* overflows
+// the regex stack on multi-MiB input, so check the alphabet with a flat
+// character class and the padding with the length.
+const BASE64_CHARS_RE = /^[A-Za-z0-9+/]*={0,2}$/;
+const isStrictBase64 = data => data.length % 4 === 0 && BASE64_CHARS_RE.test(data);
+const HANDOFF_MAX_FILE_BASE64_CHARS = Math.ceil(HANDOFF_MAX_FILE_BYTES / 3) * 4;
+
+// Reveal files arrive from the trusted local socket as strict base64. Decode
+// each once into a Buffer, apply the same name/type normalization as uploads,
+// and keep only what the download response needs.
+function validatedRevealFiles(files) {
+  if (!Array.isArray(files) || files.length === 0 || files.length > HANDOFF_MAX_FILES) {
+    throw handoffError('invalid_value', `Send 1 to ${HANDOFF_MAX_FILES} files`);
+  }
+  let encoded = 0;
+  for (const file of files) {
+    if (!file || typeof file !== 'object' || Array.isArray(file)
+      || typeof file.data !== 'string' || file.data.length === 0 || !isStrictBase64(file.data)) {
+      throw handoffError('invalid_value', 'Every file needs non-empty base64 data');
+    }
+    encoded += file.data.length;
+  }
+  // Cheap bound before decoding anything.
+  if (encoded > HANDOFF_MAX_FILE_BASE64_CHARS + files.length * 4) {
+    throw handoffError('value_too_large', 'Files exceed the size limit');
+  }
+  const decoded = files.map(file => ({
+    filename: safeFilename(file.filename),
+    contentType: safeContentType(file.contentType),
+    data: Buffer.from(file.data, 'base64'),
+  }));
+  const total = decoded.reduce((sum, file) => sum + file.data.length, 0);
+  if (total > HANDOFF_MAX_FILE_BYTES) throw handoffError('value_too_large', 'Files exceed the size limit');
+  return uniqueFilenames(decoded);
+}
+
 function validatedSubmission(session, value) {
-  if (session.accept === 'file') return validatedFileSubmission(session.maxBytes, value);
+  if (session.accept === 'file') return validatedFileSubmission(session, value);
   const { fields } = session;
   if (!fields) {
     if (typeof value !== 'string' || value.length === 0) throw handoffError('invalid_value', 'A value is required');
@@ -146,6 +220,15 @@ function validatedSubmission(session, value) {
   return result;
 }
 
+// Reveal files are held as Buffers; zero them when a session ends without a
+// download (expiry, revoke) instead of only dropping the reference.
+function dropValue(session) {
+  if (Array.isArray(session.value)) {
+    for (const file of session.value) if (Buffer.isBuffer(file?.data)) file.data.fill(0);
+  }
+  session.value = null;
+}
+
 export class HandoffStore {
   constructor({ now = Date.now, randomBytes = crypto.randomBytes } = {}) {
     this.now = now;
@@ -155,7 +238,7 @@ export class HandoffStore {
     this.viewWaiters = new Map();
   }
 
-  create({ ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value', fields, accept = 'text', maxBytes } = {}) {
+  create({ ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value', fields, accept = 'text', maxBytes, maxFiles } = {}) {
     if (!Number.isInteger(ttlMs) || ttlMs < HANDOFF_MIN_TTL_MS || ttlMs > HANDOFF_MAX_TTL_MS) {
       throw handoffError('invalid_ttl', 'TTL must be between 1 and 15 minutes');
     }
@@ -163,7 +246,7 @@ export class HandoffStore {
       throw handoffError('invalid_label', 'Label must be between 1 and 100 characters');
     }
 
-    const fileMaxBytes = validateAccept(accept, fields, maxBytes);
+    const fileLimits = validateAccept(accept, fields, maxBytes, maxFiles);
     const validatedFields = validateFields(fields);
     const id = this.randomBytes(16).toString('hex');
     const manageToken = this.randomBytes(32).toString('base64url');
@@ -175,7 +258,8 @@ export class HandoffStore {
       accept,
       label,
       fields: validatedFields,
-      maxBytes: fileMaxBytes,
+      maxBytes: fileLimits?.maxBytes ?? null,
+      maxFiles: fileLimits?.maxFiles ?? null,
       manageTokenHash: digest(manageToken),
       csrfTokenHash: digest(csrfToken),
       csrfTokenForRoute: csrfToken,
@@ -189,16 +273,25 @@ export class HandoffStore {
     return { id, manageToken, createdAt, expiresAt: createdAt + ttlMs };
   }
 
-  createReveal({ value, ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value' } = {}) {
+  createReveal({ value, files, ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value' } = {}) {
     if (!Number.isInteger(ttlMs) || ttlMs < HANDOFF_MIN_TTL_MS || ttlMs > HANDOFF_MAX_TTL_MS) {
       throw handoffError('invalid_ttl', 'TTL must be between 1 and 15 minutes');
     }
     if (typeof label !== 'string' || label.length < 1 || label.length > 100) {
       throw handoffError('invalid_label', 'Label must be between 1 and 100 characters');
     }
-    if (typeof value !== 'string' || value.length === 0) throw handoffError('invalid_value', 'A value is required');
-    if (Buffer.byteLength(value, 'utf8') > HANDOFF_MAX_VALUE_BYTES) {
-      throw handoffError('value_too_large', 'Value exceeds the size limit');
+    // Exactly one payload: a text value (revealed on the page) or files
+    // (downloaded once). Both together is ambiguous and rejected.
+    if (files !== undefined && value !== undefined) {
+      throw handoffError('invalid_value', 'Send either value or files, not both');
+    }
+    if (files !== undefined) {
+      value = validatedRevealFiles(files);
+    } else {
+      if (typeof value !== 'string' || value.length === 0) throw handoffError('invalid_value', 'A value is required');
+      if (Buffer.byteLength(value, 'utf8') > HANDOFF_MAX_VALUE_BYTES) {
+        throw handoffError('value_too_large', 'Value exceeds the size limit');
+      }
     }
 
     const id = this.randomBytes(16).toString('hex');
@@ -208,6 +301,7 @@ export class HandoffStore {
     this.sessions.set(id, {
       id,
       mode: 'reveal',
+      revealFiles: typeof value === 'string' ? null : value.map(file => ({ filename: file.filename, size: file.data.length })),
       label,
       manageTokenHash: digest(manageToken),
       csrfTokenHash: digest(csrfToken),
@@ -226,7 +320,7 @@ export class HandoffStore {
     const session = this.sessions.get(id);
     if (!session) return null;
     if (session.expiresAt <= this.now() && !['consumed', 'viewed', 'revoked'].includes(session.state)) {
-      session.value = null;
+      dropValue(session);
       session.csrfTokenForRoute = null;
       session.state = 'expired';
       this._rejectWaiters(id, handoffError('expired', 'Handoff expired'));
@@ -246,6 +340,9 @@ export class HandoffStore {
       expiresAt: session.expiresAt,
       fields: session.fields?.map(field => ({ ...field })) ?? null,
       maxBytes: session.maxBytes ?? null,
+      maxFiles: session.maxFiles ?? null,
+      // Names and sizes only: the preview never loads file content.
+      files: session.revealFiles?.map(file => ({ ...file })) ?? null,
     };
   }
 
@@ -386,7 +483,7 @@ export class HandoffStore {
     if (['consumed', 'viewed'].includes(session.state)) {
       throw handoffError(session.state, 'Completed handoffs cannot be revoked');
     }
-    session.value = null;
+    dropValue(session);
     session.csrfTokenForRoute = null;
     session.state = 'revoked';
     session.revokedAt = this.now();
@@ -400,7 +497,7 @@ export class HandoffStore {
     for (const [id, session] of this.sessions) {
       this._live(id);
       if (['expired', 'consumed', 'viewed', 'revoked'].includes(session.state)) {
-        session.value = null;
+        dropValue(session);
         session.csrfTokenForRoute = null;
         session.attempts.clear();
         this.sessions.delete(id);
