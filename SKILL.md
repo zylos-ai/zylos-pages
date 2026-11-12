@@ -123,6 +123,12 @@ Missing configuration is warned during install, upgrade, and service startup;
 the handoff trust check remains fail closed. Full protocol and cleanup guidance
 is in `docs/secure-handoff.md`.
 
+To collect a file (for example a key file or a document) instead of typed text,
+add `"accept":"file"` and optionally `"maxBytes"` (1 MiB by default, at most
+5 MiB) to `create`. The one-time await response carries the file as base64
+`data` with a `filename` hint; decode it straight to a path you choose with
+`0600` permissions and never echo the content.
+
 For the reverse one-time reveal flow, send `create_reveal` JSON (including the
 value) only on the same client's stdin, share only the returned `revealUrl`, and
 optionally wait with `await_viewed`. Preview GETs never load the value; the

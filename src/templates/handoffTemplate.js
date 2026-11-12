@@ -1,6 +1,21 @@
 import { escapeHtml } from '../security/sanitize.js';
 import { AUTH_CARD_CSS } from './authCardStyles.js';
 
+function formatBytes(bytes) {
+  for (const [unit, size] of [['MiB', 1024 * 1024], ['KiB', 1024]]) {
+    if (bytes >= size) return `${Number((bytes / size).toFixed(1))} ${unit}`;
+  }
+  return `${bytes} bytes`;
+}
+
+function handoffFileFieldHtml(maxBytes) {
+  return `<div class="login-field">
+          <label for="file">File</label>
+          <input type="file" id="file" name="file" aria-describedby="file-limit" required autofocus>
+          <p class="file-limit" id="file-limit">Maximum size ${escapeHtml(formatBytes(maxBytes))}</p>
+        </div>`;
+}
+
 function handoffFieldsHtml(fields) {
   if (!fields) {
     return `<div class="login-field">
@@ -26,7 +41,10 @@ function handoffFieldsHtml(fields) {
   }).join('\n        ');
 }
 
-export function handoffFormHtml({ action, csrfToken, label, expiresAt, fields = null, assetBase = '' }) {
+export function handoffFormHtml({
+  action, csrfToken, label, expiresAt, fields = null, accept = 'text', maxBytes = null, assetBase = '',
+}) {
+  const fileUpload = accept === 'file';
   const hasPasswordToggle = fields?.some(field => field.type === 'password');
   return `<!DOCTYPE html>
 <html lang="en">
@@ -47,12 +65,12 @@ export function handoffFormHtml({ action, csrfToken, label, expiresAt, fields = 
         <h1>Secure handoff</h1>
         <p class="login-sub">${escapeHtml(label)}</p>
       </div>
-      <form method="post" action="${escapeHtml(action)}" autocomplete="off">
+      <form method="post" action="${escapeHtml(action)}"${fileUpload ? ' enctype="multipart/form-data"' : ''} autocomplete="off">
         <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}">
-        ${handoffFieldsHtml(fields)}
+        ${fileUpload ? handoffFileFieldHtml(maxBytes) : handoffFieldsHtml(fields)}
         <button type="submit">Send securely</button>
       </form>
-      <p class="login-hint">This one-time form expires at ${escapeHtml(new Date(expiresAt).toISOString())}. The value is not retained after delivery.</p>
+      <p class="login-hint">This one-time form expires at ${escapeHtml(new Date(expiresAt).toISOString())}. The ${fileUpload ? 'file' : 'value'} is not retained after delivery.</p>
     </div>
   </main>
   ${hasPasswordToggle ? `<script src="${escapeHtml(assetBase)}/_assets/handoff.js" defer></script>` : ''}

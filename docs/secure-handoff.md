@@ -33,6 +33,28 @@ returns their values together as one object. The combined UTF-8 size of all
 values remains capped at 4 KiB. Omitting `fields` preserves the original scalar
 `value` request and response contract.
 
+`create` may instead set `"accept":"file"` to collect one file, such as a
+service-account key or a handoff document, rather than typed text. The form
+then posts `multipart/form-data` with the CSRF token and a single file part
+named `file`. The optional `maxBytes` integer sets the file size ceiling: 1 MiB
+by default and at most 5 MiB. `maxBytes` is rejected for text handoffs, and
+`accept:"file"` cannot be combined with `fields`. Any other part, a repeated
+part, an empty file, or a file over `maxBytes` is rejected and the handoff stays
+waiting. `await` / `consume` returns the file once as:
+
+```json
+{"ok":true,"value":{"filename":"key.json","contentType":"application/json","size":2345,"data":"<base64>"}}
+```
+
+`data` is the exact file content in base64. `filename` is only a hint reduced
+to a base name without path separators or control characters (`upload` when
+none is usable), and `contentType` is the browser-reported type, or
+`application/octet-stream` when it is missing or malformed. The integration
+chooses the destination path itself and should write the decoded bytes there
+with `0600` permissions. The file is buffered only in the Pages process memory
+and follows the same one-time, zero-retention rules as text values. Omitting
+`accept` (or sending `"text"`) keeps text handoffs unchanged.
+
 For a reverse reveal, send `create_reveal` with `value`, `ttlMs`, and `label` on
 stdin. Give the human only `revealUrl`. The integration may wait with
 `await_viewed`; its response is a secret-free event containing only the handoff
@@ -57,10 +79,12 @@ again.
 - GET only renders an empty form. Submission is POST-only and requires a
   same-origin Origin/Referer check, the Host bound by the preview GET, and a
   per-session CSRF token. Responses are `no-store` with a `no-referrer` policy.
-- The default ceiling is 4 KiB per value and 8 POST attempts per IP/session per
-  minute. Global Pages rate limiting remains an additional layer.
-- The API accepts only TTL and display-label data. There is no command,
-  executable path, script, callback URL, or post-consumption hook parameter.
+- The default ceiling is 4 KiB per value (1 MiB per file, configurable up to
+  5 MiB with `maxBytes`) and 8 POST attempts per IP/session per minute. Global
+  Pages rate limiting remains an additional layer.
+- The API accepts only TTL, display-label, field, and file-limit data. There is
+  no command, executable path, script, callback URL, or post-consumption hook
+  parameter.
 - Zero retention is the default and only mode. A caller needing durable secret
   custody must move the consumed value directly into a purpose-built secret
   manager; Pages must not be extended into that role.
@@ -76,6 +100,7 @@ The client accepts exactly one JSON object on stdin. Supported operations are:
 
 - `{"operation":"create","ttlMs":300000,"label":"API token"}`
 - `{"operation":"create","ttlMs":300000,"label":"Service account","fields":[{"name":"email","label":"Email","type":"text"},{"name":"password","label":"Password","type":"password"}]}`
+- `{"operation":"create","ttlMs":300000,"label":"Service account key","accept":"file","maxBytes":1048576}`
 - `{"operation":"status","id":"…","manageToken":"…"}`
 - `{"operation":"await","id":"…","manageToken":"…"}`
 - `{"operation":"consume","id":"…","manageToken":"…"}`

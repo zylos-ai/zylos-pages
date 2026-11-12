@@ -71,6 +71,26 @@ export const AUTH_CARD_CSS = `
       border-color: var(--color-link);
       box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
     }
+    .login-card input[type="file"] {
+      width: 100%;
+      padding: 8px;
+      font-size: 13px;
+      border: 1px dashed var(--color-border);
+      border-radius: 8px;
+      background: var(--color-bg-secondary, transparent);
+      color: var(--color-text);
+      box-sizing: border-box;
+    }
+    .login-card input[type="file"]:focus-visible {
+      outline: none;
+      border-color: var(--color-link);
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.18);
+    }
+    .login-card .file-limit {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--color-text-secondary);
+    }
     .login-card textarea {
       width: 100%;
       padding: 10px 12px;

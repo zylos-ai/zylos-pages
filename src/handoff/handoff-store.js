@@ -5,10 +5,15 @@ export const HANDOFF_MAX_TTL_MS = 15 * 60_000;
 export const HANDOFF_DEFAULT_TTL_MS = 5 * 60_000;
 export const HANDOFF_MAX_VALUE_BYTES = 4096;
 export const HANDOFF_MAX_FIELDS = 4;
+export const HANDOFF_DEFAULT_FILE_BYTES = 1024 * 1024;
+export const HANDOFF_MAX_FILE_BYTES = 5 * 1024 * 1024;
 
 const HANDOFF_FIELD_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const HANDOFF_FIELD_TYPES = new Set(['text', 'password']);
 const HANDOFF_FIELD_KEYS = new Set(['name', 'label', 'type']);
+const HANDOFF_MAX_FILENAME_CHARS = 255;
+const HANDOFF_ACCEPT_KINDS = new Set(['text', 'file']);
+const HANDOFF_CONTENT_TYPE_RE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/;
 
 function handoffError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -51,7 +56,62 @@ function validateFields(fields) {
   });
 }
 
-function validatedSubmission(fields, value) {
+function validateAccept(accept, fields, maxBytes) {
+  if (!HANDOFF_ACCEPT_KINDS.has(accept)) {
+    throw handoffError('invalid_accept', 'Accept must be text or file');
+  }
+  if (accept === 'text') {
+    if (maxBytes !== undefined) {
+      throw handoffError('invalid_max_bytes', 'maxBytes applies only to file handoffs');
+    }
+    return null;
+  }
+  if (fields !== undefined) {
+    throw handoffError('invalid_fields', 'File handoffs do not accept named fields');
+  }
+  const limit = maxBytes === undefined ? HANDOFF_DEFAULT_FILE_BYTES : maxBytes;
+  if (!Number.isInteger(limit) || limit < 1 || limit > HANDOFF_MAX_FILE_BYTES) {
+    throw handoffError('invalid_max_bytes', `maxBytes must be between 1 and ${HANDOFF_MAX_FILE_BYTES}`);
+  }
+  return limit;
+}
+
+// The filename is only a hint for the consumer. Reduce it to a plain base name
+// without control characters so it can never carry a path or terminal escape.
+function safeFilename(filename) {
+  const name = String(filename ?? '')
+    .split(/[\\/]/)
+    .pop()
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
+    .trim();
+  // Truncate by code point so a surrogate pair is never split.
+  const base = Array.from(name).slice(0, HANDOFF_MAX_FILENAME_CHARS).join('');
+  return base && base !== '.' && base !== '..' ? base : 'upload';
+}
+
+function safeContentType(contentType) {
+  const normalized = typeof contentType === 'string' ? contentType.trim().toLowerCase() : '';
+  return HANDOFF_CONTENT_TYPE_RE.test(normalized) ? normalized : 'application/octet-stream';
+}
+
+function validatedFileSubmission(maxBytes, value) {
+  if (!value || typeof value !== 'object' || !Buffer.isBuffer(value.data) || value.data.length === 0) {
+    throw handoffError('invalid_value', 'A non-empty file is required');
+  }
+  if (value.data.length > maxBytes) {
+    throw handoffError('value_too_large', 'File exceeds the size limit');
+  }
+  return {
+    filename: safeFilename(value.filename),
+    contentType: safeContentType(value.contentType),
+    size: value.data.length,
+    data: value.data.toString('base64'),
+  };
+}
+
+function validatedSubmission(session, value) {
+  if (session.accept === 'file') return validatedFileSubmission(session.maxBytes, value);
+  const { fields } = session;
   if (!fields) {
     if (typeof value !== 'string' || value.length === 0) throw handoffError('invalid_value', 'A value is required');
     if (Buffer.byteLength(value, 'utf8') > HANDOFF_MAX_VALUE_BYTES) {
@@ -95,7 +155,7 @@ export class HandoffStore {
     this.viewWaiters = new Map();
   }
 
-  create({ ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value', fields } = {}) {
+  create({ ttlMs = HANDOFF_DEFAULT_TTL_MS, label = 'Secure value', fields, accept = 'text', maxBytes } = {}) {
     if (!Number.isInteger(ttlMs) || ttlMs < HANDOFF_MIN_TTL_MS || ttlMs > HANDOFF_MAX_TTL_MS) {
       throw handoffError('invalid_ttl', 'TTL must be between 1 and 15 minutes');
     }
@@ -103,6 +163,7 @@ export class HandoffStore {
       throw handoffError('invalid_label', 'Label must be between 1 and 100 characters');
     }
 
+    const fileMaxBytes = validateAccept(accept, fields, maxBytes);
     const validatedFields = validateFields(fields);
     const id = this.randomBytes(16).toString('hex');
     const manageToken = this.randomBytes(32).toString('base64url');
@@ -111,8 +172,10 @@ export class HandoffStore {
     this.sessions.set(id, {
       id,
       mode: 'submit',
+      accept,
       label,
       fields: validatedFields,
+      maxBytes: fileMaxBytes,
       manageTokenHash: digest(manageToken),
       csrfTokenHash: digest(csrfToken),
       csrfTokenForRoute: csrfToken,
@@ -178,9 +241,11 @@ export class HandoffStore {
     return {
       id: session.id,
       mode: session.mode,
+      accept: session.accept ?? null,
       label: session.label,
       expiresAt: session.expiresAt,
       fields: session.fields?.map(field => ({ ...field })) ?? null,
+      maxBytes: session.maxBytes ?? null,
     };
   }
 
@@ -220,7 +285,7 @@ export class HandoffStore {
     const session = this._live(id);
     if (!session || session.state !== 'waiting') throw handoffError('unavailable', 'Handoff is unavailable');
     if (!tokenMatches(session.csrfTokenHash, csrfToken)) throw handoffError('csrf', 'CSRF validation failed');
-    session.value = validatedSubmission(session.fields, value);
+    session.value = validatedSubmission(session, value);
     session.state = 'submitted';
     session.submittedAt = this.now();
     const submittedAt = session.submittedAt;

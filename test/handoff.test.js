@@ -6,8 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
-import { HandoffStore, HANDOFF_MAX_FIELDS, HANDOFF_MAX_VALUE_BYTES } from '../src/handoff/handoff-store.js';
-import { HANDOFF_BODY_LIMIT_BYTES, setupHandoffRoutes } from '../src/routes/handoff.js';
+import {
+  HandoffStore,
+  HANDOFF_DEFAULT_FILE_BYTES,
+  HANDOFF_MAX_FIELDS,
+  HANDOFF_MAX_FILE_BYTES,
+  HANDOFF_MAX_VALUE_BYTES,
+} from '../src/handoff/handoff-store.js';
+import { HANDOFF_BODY_LIMIT_BYTES, HANDOFF_FILE_BODY_OVERHEAD_BYTES, setupHandoffRoutes } from '../src/routes/handoff.js';
 import { startHandoffControlServer } from '../src/handoff/handoff-control.js';
 import { handoffRevealedHtml } from '../src/templates/handoffTemplate.js';
 
@@ -50,6 +56,12 @@ async function submitFields(origin, id, csrf, fields, headers = {}) {
     headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded', ...headers },
     body: new URLSearchParams({ csrf, ...fields }),
   });
+}
+
+async function submitFile(origin, id, build, headers = {}) {
+  const body = new FormData();
+  build(body);
+  return fetch(`${origin}/handoff/${id}`, { method: 'POST', headers: { Origin: origin, ...headers }, body });
 }
 
 async function reveal(origin, id, csrf, headers = {}) {
@@ -185,6 +197,169 @@ test('field schemas reject unsafe, ambiguous, or unsupported definitions', () =>
   }
 });
 
+test('file handoffs render a multipart form and deliver the file once as base64 with sanitized metadata', async () => {
+  const store = new HandoffStore();
+  const created = store.create({ label: 'Handoff document', accept: 'file' });
+  const document = Buffer.from([0x00, 0xff, 0x10, 0x80, ...Buffer.from('# Handoff\n')]);
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    assert.equal(opened.response.status, 200);
+    assert.match(opened.html, /<form method="post"[^>]*enctype="multipart\/form-data"/);
+    assert.match(opened.html, /<input type="file" id="file" name="file"[^>]*required/);
+    assert.match(opened.html, /Maximum size 1 MiB/);
+    assert.doesNotMatch(opened.html, /name="value"/);
+    assert.doesNotMatch(opened.html, /<script/);
+
+    const waiting = store.awaitAndConsume(created.id, created.manageToken);
+    const response = await submitFile(origin, created.id, body => {
+      body.append('csrf', csrfFrom(opened.html));
+      body.append('file', new File([document], '../../etc/交接 handoff.md', { type: 'Text/Markdown' }));
+    });
+    const resultHtml = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(resultHtml, /Handoff complete/);
+    assert.doesNotMatch(resultHtml, /# Handoff/);
+    assert.deepEqual(await waiting, {
+      filename: '交接 handoff.md',
+      contentType: 'text/markdown',
+      size: document.length,
+      data: document.toString('base64'),
+    });
+    assert.equal(store.status(created.id, created.manageToken).state, 'consumed');
+    assert.throws(() => store.consume(created.id, created.manageToken), { code: 'consumed' });
+    assert.equal((await form(origin, created.id)).response.status, 404);
+  });
+});
+
+test('file handoff options reject unsupported kinds, sizes, and field combinations', () => {
+  const store = new HandoffStore();
+  assert.equal(store.publicView(store.create({ accept: 'file' }).id).maxBytes, HANDOFF_DEFAULT_FILE_BYTES);
+  assert.equal(store.publicView(store.create({ accept: 'file', maxBytes: HANDOFF_MAX_FILE_BYTES }).id).maxBytes, HANDOFF_MAX_FILE_BYTES);
+  assert.equal(store.publicView(store.create({ accept: 'text' }).id).maxBytes, null);
+  for (const accept of ['binary', null, '', 1]) {
+    assert.throws(() => store.create({ accept }), { code: 'invalid_accept' });
+  }
+  for (const maxBytes of [0, -1, 1.5, '1024', HANDOFF_MAX_FILE_BYTES + 1, null]) {
+    assert.throws(() => store.create({ accept: 'file', maxBytes }), { code: 'invalid_max_bytes' });
+  }
+  assert.throws(() => store.create({ maxBytes: 1024 }), { code: 'invalid_max_bytes' });
+  assert.throws(() => store.create({
+    accept: 'file', fields: [{ name: 'key', label: 'Key', type: 'text' }],
+  }), { code: 'invalid_fields' });
+});
+
+test('file submissions reduce filenames to safe base names and normalize content types', () => {
+  const cases = [
+    [{ filename: 'C:\\Users\\me\\id_ed25519', contentType: 'application/x-pem-file' }, 'id_ed25519', 'application/x-pem-file'],
+    [{ filename: '..', contentType: 'text/plain; charset=utf-8' }, 'upload', 'application/octet-stream'],
+    [{ filename: '\u001b[31m\u0000\u009b', contentType: undefined }, '[31m', 'application/octet-stream'],
+    [{ filename: undefined, contentType: '../../etc' }, 'upload', 'application/octet-stream'],
+    [{ filename: `${'n'.repeat(300)}.json`, contentType: 'APPLICATION/JSON' }, 'n'.repeat(255), 'application/json'],
+    [{ filename: '\u{1F511}'.repeat(300), contentType: 'application/json' }, '\u{1F511}'.repeat(255), 'application/json'],
+  ];
+  for (const [metadata, filename, contentType] of cases) {
+    const store = new HandoffStore();
+    const created = store.create({ accept: 'file' });
+    store.submit(created.id, store.formCsrfToken(created.id), { ...metadata, data: Buffer.from('k') });
+    const value = store.consume(created.id, created.manageToken);
+    assert.equal(value.filename, filename);
+    assert.equal(value.contentType, contentType);
+  }
+
+  const store = new HandoffStore();
+  const created = store.create({ accept: 'file', maxBytes: 4 });
+  const csrf = store.formCsrfToken(created.id);
+  assert.throws(() => store.submit(created.id, csrf, 'not a file'), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, { data: Buffer.alloc(0) }), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, { data: 'abc' }), { code: 'invalid_value' });
+  assert.throws(() => store.submit(created.id, csrf, { data: Buffer.alloc(5) }), { code: 'value_too_large' });
+  assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
+});
+
+test('file POST rejects wrong media type, CSRF, missing, empty, extra, repeated, and oversized parts', async () => {
+  const file = (bytes = 'secret-file', name = 'secret.txt') => new File([bytes], name, { type: 'text/plain' });
+  const scenarios = [
+    { expected: 415, urlencoded: true },
+    { expected: 403, build: body => { body.append('csrf', 'wrong'); body.append('file', file()); } },
+    { expected: 403, build: body => { body.append('file', file()); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('csrf', csrf); body.append('file', file()); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file('')); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file()); body.append('file', file()); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('document', file()); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf); body.append('value', 'text'); body.append('file', file()); } },
+    { expected: 400, build: (body, csrf) => { body.append('csrf', csrf.repeat(40)); body.append('file', file()); } },
+    { expected: 413, build: (body, csrf) => { body.append('csrf', csrf); body.append('file', file('x'.repeat(65))); } },
+  ];
+  for (const scenario of scenarios) {
+    const store = new HandoffStore();
+    const created = store.create({ accept: 'file', maxBytes: 64 });
+    await withServer(store, async origin => {
+      const csrf = csrfFrom((await form(origin, created.id)).html);
+      const response = scenario.urlencoded
+        ? await submit(origin, created.id, csrf, 'pasted instead of uploaded')
+        : await submitFile(origin, created.id, body => scenario.build(body, csrf));
+      assert.equal(response.status, scenario.expected);
+      assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
+    });
+  }
+});
+
+test('file POST enforces the exact file limit and a raw body ceiling for multipart framing', async () => {
+  const store = new HandoffStore();
+  const exact = store.create({ accept: 'file', maxBytes: 64 });
+  const padded = store.create({ accept: 'file', maxBytes: 64 });
+  await withServer(store, async origin => {
+    const opened = await form(origin, exact.id);
+    const waiting = store.awaitAndConsume(exact.id, exact.manageToken);
+    const accepted = await submitFile(origin, exact.id, body => {
+      body.append('csrf', csrfFrom(opened.html));
+      body.append('file', new File(['x'.repeat(64)], 'exact.txt'));
+    });
+    assert.equal(accepted.status, 200);
+    const delivered = await waiting;
+    assert.equal(delivered.size, 64);
+    assert.equal(delivered.filename, 'exact.txt');
+
+    const csrf = csrfFrom((await form(origin, padded.id)).html);
+    const boundary = 'handoff-boundary';
+    const multipart = [
+      'x'.repeat(HANDOFF_FILE_BODY_OVERHEAD_BYTES + 64),
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="csrf"',
+      '',
+      csrf,
+      `--${boundary}`,
+      'Content-Disposition: form-data; name="file"; filename="small.txt"',
+      '',
+      'small',
+      `--${boundary}--`,
+      '',
+    ].join('\r\n');
+    const rejected = await fetch(`${origin}/handoff/${padded.id}`, {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body: multipart,
+    });
+    assert.equal(rejected.status, 413);
+    assert.equal(store.status(padded.id, padded.manageToken).state, 'waiting');
+  });
+});
+
+test('text handoffs keep rejecting multipart bodies', async () => {
+  const store = new HandoffStore();
+  const created = store.create();
+  await withServer(store, async origin => {
+    const csrf = csrfFrom((await form(origin, created.id)).html);
+    const response = await submitFile(origin, created.id, body => {
+      body.append('csrf', csrf);
+      body.append('value', 'secret');
+    });
+    assert.equal(response.status, 415);
+    assert.equal(store.status(created.id, created.manageToken).state, 'waiting');
+  });
+});
+
 test('separate client process creates, checks, awaits, consumes, and revokes through a 0600 local socket', async () => {
   const dataDir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-control-'));
   const socketPath = path.join(dataDir, 'handoff-control.sock');
@@ -259,6 +434,33 @@ test('separate client process creates, checks, awaits, consumes, and revokes thr
       });
       assert.equal(consumed.stderr, '');
     }, { publicBaseUrl: 'https://agent.example/pages' });
+
+    const fileHandoff = (await runCli(dataDir, {
+      operation: 'create', label: 'Service account key', accept: 'file', maxBytes: 1024,
+    })).json;
+    const awaitingFile = startCli(dataDir, {
+      operation: 'await', id: fileHandoff.id, manageToken: fileHandoff.manageToken,
+    });
+    const keyFile = Buffer.from('{"private_key":"socket-only-file"}\n');
+    await withServer(store, async internalOrigin => {
+      const opened = await form(internalOrigin, fileHandoff.id);
+      const response = await submitFile(internalOrigin, fileHandoff.id, body => {
+        body.append('csrf', csrfFrom(opened.html));
+        body.append('file', new File([keyFile], 'key.json', { type: 'application/json' }));
+      }, { Origin: 'https://agent.example' });
+      assert.equal(response.status, 200);
+      const consumed = await awaitingFile.completed;
+      assert.equal(consumed.code, 0);
+      assert.deepEqual(JSON.parse(consumed.stdout), {
+        ok: true,
+        value: { filename: 'key.json', contentType: 'application/json', size: keyFile.length, data: keyFile.toString('base64') },
+      });
+      assert.equal(consumed.stderr, '');
+    }, { publicBaseUrl: 'https://agent.example/pages' });
+
+    const invalidFile = await runCli(dataDir, { operation: 'create', accept: 'file', maxBytes: HANDOFF_MAX_FILE_BYTES + 1 });
+    assert.equal(invalidFile.code, 1);
+    assert.deepEqual(invalidFile.json, { ok: false, error: 'invalid_max_bytes' });
 
     const abandoned = (await runCli(dataDir, { operation: 'create' })).json;
     const revoked = await runCli(dataDir, {
