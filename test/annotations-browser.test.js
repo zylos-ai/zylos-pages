@@ -79,7 +79,7 @@ test('annotation header keeps all controls inside narrow panels at 1, 10 and 200
           }
           const heading = page.locator('.annotation-panel > .annotation-heading h2');
           assert.equal(await heading.innerText(), `Annotations · ${records}`);
-          assert.equal(await heading.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'count remains visible');
+          assert.equal(await heading.evaluate(node => node.scrollWidth <= node.clientWidth), true, `${width}px/${records}: count remains visible`);
           if (evidenceDir && records > 1) await page.screenshot({ path: path.join(evidenceDir, `header-${width}-${records}-${theme}.png`) });
         }
         await page.setViewportSize({ width, height: 400 });
@@ -356,7 +356,7 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       await sharePage.locator('.annotation-launcher').click();
       assert.equal(await sharePage.locator('.annotation-comment').innerText(), `Share-only comment ${label}`);
       await denyClipboard(sharePage);
-      await sharePage.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+      await sharePage.getByRole('button', { name: 'Preview prompt', exact: true }).click();
       await sharePage.getByRole('dialog', { name: 'Feedback preview', exact: true }).getByRole('button', { name: 'Copy Prompt', exact: true }).click();
       await sharePage.locator('#annotation-copy-text').waitFor({ state: 'visible' });
       const sharePrompt = await sharePage.locator('#annotation-copy-text').inputValue();
@@ -407,8 +407,9 @@ test('annotations persist and manage Markdown and opaque HTML without backend ca
       assert.equal(await page.locator('.annotation-item.annotation-active').count(), 1);
       // Force the tested clipboard fallback without relying on host clipboard permissions.
       await denyClipboard(page);
+      // A denied one-click copy opens the preview with the manual fallback.
       await page.getByRole('button', { name: 'Copy Prompt', exact: true }).click();
-      await page.getByRole('dialog', { name: 'Feedback preview', exact: true }).getByRole('button', { name: 'Copy Prompt', exact: true }).click();
+      await page.getByRole('dialog', { name: 'Feedback preview', exact: true }).getByRole('button', { name: 'Copy failed', exact: true }).waitFor();
       await page.locator('#annotation-copy-text').waitFor({ state: 'visible' });
       const prompt = await page.locator('#annotation-copy-text').inputValue();
       assert.match(prompt, /Opaque sandbox text supports local annotations\./);
@@ -483,10 +484,11 @@ async function snapshot(page, directory, label) {
   assert.equal(await page.locator('.annotation-panel > .annotation-heading h2').innerText(), 'Annotations · 1');
   const heading = page.locator('.annotation-panel > .annotation-heading');
   const title = await heading.locator('h2').boundingBox();
+  const view = await heading.getByRole('button', { name: 'Preview prompt', exact: true }).boundingBox();
   const copy = await heading.getByRole('button', { name: 'Copy Prompt', exact: true }).boundingBox();
   const more = await heading.getByRole('button', { name: 'More actions', exact: true }).boundingBox();
   const close = await heading.getByRole('button', { name: 'Close', exact: true }).boundingBox();
-  assert.ok(title.x + title.width <= copy.x && copy.x + copy.width <= more.x && more.x + more.width <= close.x, `${label} header controls do not overlap`);
+  assert.ok(title.x + title.width <= view.x && view.x + view.width <= copy.x && copy.x + copy.width <= more.x && more.x + more.width <= close.x, `${label} header controls do not overlap`);
   assert.ok(Math.abs(title.y + title.height / 2 - copy.y - copy.height / 2) < 2, `${label} copy aligns with title`);
   assert.equal(copy.height, 30);
   assert.equal(await page.locator('.annotation-panel > .annotation-toolbar').count(), 0, 'no standalone toolbar row');
@@ -517,7 +519,7 @@ async function multiCountHeader(page, directory, label) {
     }, total);
     await count(page, total);
     const panel = await page.locator('.annotation-panel').boundingBox();
-    for (const name of ['Copy Prompt', 'More actions', 'Close']) {
+    for (const name of ['Preview prompt', 'Copy Prompt', 'More actions', 'Close']) {
       const box = await page.locator('.annotation-panel > .annotation-heading').getByRole('button', { name, exact: true }).boundingBox();
       assert.ok(box.x >= panel.x && box.x + box.width <= panel.x + panel.width, `${total} records: ${name} stays inside real page panel`);
     }

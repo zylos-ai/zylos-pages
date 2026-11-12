@@ -28,6 +28,7 @@
     edit: '<path d="m16 3 5 5-12 12-6 1 1-6ZM14 5l5 5"/>',
     delete: '<path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/>',
     pick: '<path d="M4 4h5M4 4v5M20 4h-5M20 4v5M4 20h5M4 20v-5"/><path d="m12 11 8 3-3.5 1.5L15 19Z"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   };
   function decorate(node, name, label, text) {
     // Match the reader's existing inline stroke-icon convention.
@@ -78,8 +79,11 @@
   const status = element('p', 'annotation-status', 'Saved in this browser');
   status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
   const actions = element('div', 'annotation-actions annotation-toolbar');
-  const copy = button('Copy Prompt', previewPrompt, actions, 'annotation-primary');
-  decorate(copy, 'copy', 'Copy Prompt', 'Prompt');
+  // One click copies; the eye opens the read-only preview for the occasional check.
+  const viewPrompt = button('Preview prompt', previewPrompt, actions, 'annotation-icon');
+  decorate(viewPrompt, 'eye', 'Preview prompt');
+  const copy = button('Copy Prompt', quickCopy, actions, 'annotation-primary annotation-quick-copy');
+  let quickGeneration = 0, quickTimer = null;
   const moreWrap = element('div', 'annotation-more'); actions.append(moreWrap);
   const more = button('More actions', () => {
     menu.hidden = !menu.hidden; more.setAttribute('aria-expanded', String(!menu.hidden));
@@ -149,7 +153,7 @@
   panel.append(heading, status, list); host.append(panel, editor, manual, confirmation, pickBar);
   let store, records = [], candidate = null, candidateRect = null, editing = null, index = null;
   let addTouch = null, touchClickPending = false;
-  setCopyState('idle');
+  setCopyState('idle'); setQuickState('idle');
   let editorRect = null, restorePanel = false, pendingLocate = null;
   let frameSelectionId = null;
   let picking = false, pickAnchor = null, pickRect = null, locateFailed = false;
@@ -370,14 +374,15 @@
     }
   }
   function refresh() {
-    if (!store) { copy.disabled = clear.disabled = pick.disabled = true; return; }
+    if (!store) { copy.disabled = viewPrompt.disabled = clear.disabled = pick.disabled = true; return; }
     try {
       const result = store.read(); records = result.records;
       status.textContent = result.corrupt.length ? 'Some saved records could not be read. They have been preserved.' : 'Saved in this browser';
     } catch (error) { report(error); return; }
     decorate(launcher, 'comment', `Annotations (${records.length})`, String(records.length));
     title.textContent = `Annotations · ${records.length}`;
-    copy.disabled = !records.length; clear.disabled = !store;
+    if (copy.dataset.copyState !== 'pending') copy.disabled = !records.length;
+    viewPrompt.disabled = !records.length; clear.disabled = !store;
     updateLocations(); renderList();
   }
   function updateLocations() {
@@ -460,17 +465,54 @@
     picking = false; pickAnchor = pickRect = null; pickBar.hidden = true; pick.setAttribute('aria-pressed', 'false');
     if (picker) picker.stop(); else send({ type: 'pick-stop' });
   }
+  function buildPrompt() {
+    const documentUrl = host.dataset.documentUrl
+      ? new URL(host.dataset.documentUrl, location.origin).href : '';
+    return core.exportMarkdown(records.map(record => ({ ...record, locationStatus: locations.get(record.id) })), documentUrl, document.title);
+  }
   function previewPrompt() {
     try {
       closeConfirmation(false); dismissEditor(); clearCandidate();
-      const documentUrl = host.dataset.documentUrl
-        ? new URL(host.dataset.documentUrl, location.origin).href : '';
-      const text = core.exportMarkdown(records.map(record => ({ ...record, locationStatus: locations.get(record.id) })), documentUrl, document.title);
-      manualText.value = text;
+      manualText.value = buildPrompt();
       resetCopyState();
       previewStatus.textContent = `${records.length} annotation(s)`;
       place(manual); manualText.focus({ preventScroll: true });
-    } catch { status.textContent = 'Could not prepare a safe prompt.'; }
+      return true;
+    } catch { status.textContent = 'Could not prepare a safe prompt.'; return false; }
+  }
+  function setQuickState(state) {
+    const [icon, label, text] = state === 'pending' ? ['loading', 'Copying...', 'Copying']
+      : state === 'success' ? ['check', 'Copied', 'Copied'] : ['copy', 'Copy Prompt', 'Prompt'];
+    decorate(copy, icon, label, text);
+    copy.dataset.copyState = state;
+    copy.setAttribute('aria-busy', String(state === 'pending'));
+    copy.disabled = state === 'pending' || !records.length;
+  }
+  async function quickCopy() {
+    if (copy.dataset.copyState === 'pending' || !records.length) return;
+    const generation = ++quickGeneration;
+    clearTimeout(quickTimer);
+    let text;
+    try { text = buildPrompt(); } catch { status.textContent = 'Could not prepare a safe prompt.'; return; }
+    // Anything the clipboard cannot take falls back to the preview, never to silence.
+    const fallback = (state, message) => {
+      setQuickState('idle');
+      if (!previewPrompt()) return;
+      setCopyState(state); previewStatus.textContent = message;
+      manualText.focus(); manualText.select();
+    };
+    if (text.length > 100000) { fallback('manual', 'Large prompt. Select and copy the full text.'); return; }
+    if (!navigator.clipboard?.writeText) { fallback('error', 'Clipboard unavailable. Select and copy the full prompt, or try again.'); return; }
+    setQuickState('pending');
+    try {
+      await navigator.clipboard.writeText(text);
+      if (generation !== quickGeneration) return;
+      setQuickState('success'); status.textContent = `Prompt copied (${records.length} annotation(s))`;
+      quickTimer = setTimeout(() => { if (generation === quickGeneration) setQuickState('idle'); }, 2000);
+    } catch {
+      if (generation !== quickGeneration) return;
+      fallback('error', 'Clipboard unavailable. Select and copy the full prompt, or try again.');
+    }
   }
   function setCopyState(state) {
     const [icon, label] = state === 'pending' ? ['loading', 'Copying...']

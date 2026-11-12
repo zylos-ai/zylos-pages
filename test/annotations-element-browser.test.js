@@ -126,7 +126,7 @@ test('element annotations pick, walk ancestors, save, export and relocate in Mar
 
         await page.locator('.annotation-launcher').click();
         await located(page);
-        await page.getByRole('button', { name: 'Copy Prompt', exact: true }).first().click();
+        await page.getByRole('button', { name: 'Preview prompt', exact: true }).click();
         const prompt = await page.locator('.annotation-copy-text').inputValue();
         // Markdown lifts the H1 into the page title (already in the prompt header); opaque HTML keeps it in the body.
         const section = kind === 'html' ? 'Pawly plans › 2 Pricing › 2\\.2 Compare' : '2 Pricing › 2\\.2 Compare';
