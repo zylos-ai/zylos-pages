@@ -53,8 +53,12 @@ order submitted:
 
 `data` is the exact file content in base64. `filename` is only a hint reduced
 to a base name without path separators or control characters (`upload` when
-none is usable); when two files share a name (case-insensitively), later ones
-become `name (2).ext`, `name (3).ext`, … so writing them out never overwrites.
+none is usable) and shortened to at most 255 UTF-8 bytes, keeping the
+extension. When two names would be the same path on a case- or
+Unicode-normalization-insensitive file system (default macOS APFS, Windows
+NTFS), for example `Key.json` / `KEY.JSON` or a precomposed and a decomposed
+`é`, later ones become `name (2).ext`, `name (3).ext`, … still within 255
+bytes, so writing them out never overwrites or fails on length.
 `contentType` is the browser-reported type, or `application/octet-stream` when
 it is missing or malformed. The integration chooses the destination paths
 itself and should write the decoded bytes there with `0600` permissions. The file is buffered only in the Pages process memory
@@ -70,7 +74,8 @@ To hand the human files instead of text, send `create_reveal` with `files`
 in total. `data` must be standard padded base64; names are reduced and
 de-duplicated exactly as for uploads. The preview page lists only file names
 and sizes. Its download button POSTs once: a single file is returned as itself,
-several files as one uncompressed ZIP named after the label. The response is
+several files as one uncompressed ZIP named after the label (shortened to fit
+255 bytes). The response is
 always a download (`Content-Disposition: attachment` with a UTF-8 filename,
 `application/octet-stream` or `application/zip`, `nosniff`, and a sandbox CSP),
 so the browser never renders the content. The files are cleared from the store

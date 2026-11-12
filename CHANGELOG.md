@@ -9,8 +9,9 @@
   `await` / `consume` return the files once as
   `{"files":[{filename, contentType, size, data}]}` with `data` in base64.
   Up to 5 files by default (`maxFiles` 1–10) and 5 MiB in total (`maxBytes`
-  lowers it). Names are reduced to safe base names and duplicates become
-  `name (2).ext`. Files stay in process memory only and are cleared on
+  lowers it). Names are reduced to safe base names of at most 255 UTF-8 bytes,
+  and names that would clash on a case- or normalization-insensitive disk
+  become `name (2).ext` within the same limit. Files stay in process memory only and are cleared on
   delivery, expiry, revoke or restart, like text values (#195).
 - One-time file download, the reverse direction: `create_reveal` accepts
   `files` (1–10, 5 MiB in total, base64) instead of `value`. The link shows

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -263,8 +263,10 @@ test('file submissions reduce filenames to safe base names and normalize content
     [{ filename: '..', contentType: 'text/plain; charset=utf-8' }, 'upload', 'application/octet-stream'],
     [{ filename: '\u001b[31m\u0000\u009b', contentType: undefined }, '[31m', 'application/octet-stream'],
     [{ filename: undefined, contentType: '../../etc' }, 'upload', 'application/octet-stream'],
-    [{ filename: `${'n'.repeat(300)}.json`, contentType: 'APPLICATION/JSON' }, 'n'.repeat(255), 'application/json'],
-    [{ filename: '\u{1F511}'.repeat(300), contentType: 'application/json' }, '\u{1F511}'.repeat(255), 'application/json'],
+    [{ filename: `${'n'.repeat(300)}.json`, contentType: 'APPLICATION/JSON' }, `${'n'.repeat(250)}.json`, 'application/json'],
+    [{ filename: '\u{1F511}'.repeat(300), contentType: 'application/json' }, '\u{1F511}'.repeat(63), 'application/json'],
+    [{ filename: `${'密'.repeat(100)}.pem`, contentType: undefined }, `${'密'.repeat(83)}.pem`, 'application/octet-stream'],
+    [{ filename: `a.${'x'.repeat(300)}`, contentType: undefined }, `a.${'x'.repeat(253)}`, 'application/octet-stream'],
   ];
   for (const [metadata, filename, contentType] of cases) {
     const store = new HandoffStore();
@@ -1133,5 +1135,101 @@ test('the local socket carries a multi-MiB reveal file and a non-ASCII label int
   } finally {
     control.close();
     await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+// Extract a downloaded ZIP to a real directory the way a careful receiver would:
+// exclusive creation, so a colliding or over-long name fails instead of being
+// silently overwritten or skipped. Python also reports names that would be the
+// same path on a case- and normalization-insensitive file system (default APFS
+// / NTFS), using its own NFC + casefold instead of the code under test.
+function pythonExtract(t, zipPath, outDir) {
+  const script = [
+    'import json, os, sys, unicodedata, zipfile',
+    'z = zipfile.ZipFile(sys.argv[1])',
+    'out = sys.argv[2]',
+    'res = {"bad": z.testzip(), "written": [], "errors": [], "folded": []}',
+    'for info in z.infolist():',
+    '    try:',
+    '        with open(os.path.join(out, info.filename), "xb") as f: f.write(z.read(info))',
+    '        res["written"].append(info.filename)',
+    '    except OSError as e:',
+    '        res["errors"].append([info.filename, e.errno])',
+    '    res["folded"].append(unicodedata.normalize("NFC", info.filename).casefold())',
+    'print(json.dumps(res))',
+  ].join('\n');
+  const result = spawnSync('python3', ['-I', '-c', script, zipPath, outDir], { encoding: 'utf8' });
+  if (result.error) { t.diagnostic('python3 unavailable; extraction check skipped'); return null; }
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+async function downloadRevealZip(files, label = 'Bundle') {
+  const store = new HandoffStore();
+  const created = store.createReveal({
+    label,
+    files: files.map(([filename, text]) => ({ filename, data: Buffer.from(text).toString('base64') })),
+  });
+  let zip;
+  let disposition;
+  await withServer(store, async origin => {
+    const opened = await form(origin, created.id);
+    const response = await reveal(origin, created.id, csrfFrom(opened.html));
+    assert.equal(response.status, 200);
+    disposition = response.headers.get('content-disposition');
+    zip = Buffer.from(await response.arrayBuffer());
+  });
+  return { zip, disposition };
+}
+
+test('names equal on case- or normalization-insensitive disks are de-duplicated and all extract', async t => {
+  const names = ['\u00e9.txt', 'e\u0301.txt', '\u00c9.TXT', 'Stra\u00dfe.md', 'STRASSE.md', 'key', 'Key'];
+  const { zip } = await downloadRevealZip(names.map((name, i) => [name, `file ${i}`]));
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-unicode-'));
+  try {
+    const zipPath = path.join(dir, 'download.zip');
+    await writeFile(zipPath, zip);
+    const out = path.join(dir, 'out');
+    await mkdir(out);
+    const result = pythonExtract(t, zipPath, out);
+    if (!result) return;
+    assert.equal(result.bad, null);
+    assert.deepEqual(result.errors, []);
+    assert.equal(result.written.length, names.length);
+    assert.equal(new Set(result.folded).size, names.length, `names collide after NFC + casefold: ${result.written.join(' | ')}`);
+    assert.deepEqual(result.written, ['\u00e9.txt', 'e\u0301 (2).txt', '\u00c9 (3).TXT', 'Stra\u00dfe.md', 'STRASSE (2).md', 'key', 'Key (2)']);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('de-duplicated and label-derived names stay within 255 bytes and extract on a real disk', async t => {
+  const ascii = `${'a'.repeat(251)}.txt`;
+  const emoji = `${'\u{1F511}'.repeat(62)}.pem`;
+  const longLabel = '交'.repeat(100);
+  const { zip, disposition } = await downloadRevealZip([[ascii, 'one'], [ascii, 'two'], [ascii, 'three'], [emoji, 'four'], [emoji, 'five']], longLabel);
+  const zipName = decodeURIComponent(disposition.match(/filename\*=UTF-8''(.+)$/)[1]);
+  assert.ok(Buffer.byteLength(zipName) <= 255, `zip name is ${Buffer.byteLength(zipName)} bytes`);
+  assert.ok(zipName.endsWith('.zip'));
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-long-'));
+  try {
+    const zipPath = path.join(dir, 'download.zip');
+    await writeFile(zipPath, zip);
+    await writeFile(path.join(dir, zipName), zip, { flag: 'wx' });
+    const out = path.join(dir, 'out');
+    await mkdir(out);
+    const result = pythonExtract(t, zipPath, out);
+    if (!result) return;
+    assert.equal(result.bad, null);
+    assert.deepEqual(result.errors, [], 'every entry must be writable');
+    assert.equal(result.written.length, 5);
+    for (const name of result.written) assert.ok(Buffer.byteLength(name) <= 255, `${Buffer.byteLength(name)} bytes: ${name}`);
+    assert.equal(result.written[0], ascii);
+    assert.match(result.written[1], /^a+ \(2\)\.txt$/);
+    assert.match(result.written[2], /^a+ \(3\)\.txt$/);
+    assert.match(result.written[4], /^(\u{1F511})+ \(2\)\.pem$/u);
+    assert.equal(new Set(result.folded).size, 5);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

@@ -1,7 +1,7 @@
 import Busboy from 'busboy';
 import { zipFiles } from '../handoff/zip.js';
 import { browserBaseFromRequest, browserPath } from '../lib/browser-base.js';
-import { HANDOFF_MAX_VALUE_BYTES, handoffStore } from '../handoff/handoff-store.js';
+import { HANDOFF_MAX_VALUE_BYTES, fitFilename, handoffStore } from '../handoff/handoff-store.js';
 import { handoffFormHtml, handoffResultHtml, handoffRevealHtml, handoffRevealedHtml, handoffUnavailableHtml } from '../templates/handoffTemplate.js';
 
 // Form encoding can expand each UTF-8 byte to a three-byte %XX sequence.
@@ -204,7 +204,8 @@ function attachmentDisposition(filename) {
 // interpreting the bytes.
 function zipName(label) {
   const base = label.replace(/[\\/\u0000-\u001f\u007f-\u009f]/g, '').trim();
-  return `${base && base !== '.' && base !== '..' ? base : 'files'}.zip`;
+  // A 100-character label can exceed 255 bytes in UTF-8; keep ".zip".
+  return fitFilename(`${base && base !== '.' && base !== '..' ? base : 'files'}.zip`);
 }
 
 function sendRevealedFiles(res, files, label) {

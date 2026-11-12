@@ -14,7 +14,11 @@ export const HANDOFF_MAX_FILES = 10;
 const HANDOFF_FIELD_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const HANDOFF_FIELD_TYPES = new Set(['text', 'password']);
 const HANDOFF_FIELD_KEYS = new Set(['name', 'label', 'type']);
-const HANDOFF_MAX_FILENAME_CHARS = 255;
+// Common file systems (ext4, APFS, NTFS via UTF-8 tools) cap a name at 255
+// bytes, so every name we emit fits in 255 UTF-8 bytes, suffixes included.
+export const HANDOFF_MAX_FILENAME_BYTES = 255;
+// An "extension" longer than this is treated as part of the stem.
+const HANDOFF_MAX_EXTENSION_BYTES = 32;
 const HANDOFF_ACCEPT_KINDS = new Set(['text', 'file']);
 const HANDOFF_CONTENT_TYPE_RE = /^[a-z0-9][a-z0-9!#$&^_.+-]{0,126}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$/;
 
@@ -86,6 +90,30 @@ function validateAccept(accept, fields, maxBytes, maxFiles) {
   return { maxBytes: limit, maxFiles: count };
 }
 
+function splitExtension(name) {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return [name, ''];
+  const ext = name.slice(dot);
+  return Buffer.byteLength(ext) > HANDOFF_MAX_EXTENSION_BYTES ? [name, ''] : [name.slice(0, dot), ext];
+}
+
+// Build `stem + suffix + ext` within the byte budget, shortening only the stem
+// and only by whole code points, so the extension and any " (n)" suffix
+// survive and a surrogate pair is never split.
+export function fitFilename(name, suffix = '') {
+  const [stem, ext] = splitExtension(name);
+  const reserved = Buffer.byteLength(suffix) + Buffer.byteLength(ext);
+  const kept = [];
+  let bytes = 0;
+  for (const char of stem) {
+    const size = Buffer.byteLength(char);
+    if (bytes + size + reserved > HANDOFF_MAX_FILENAME_BYTES) break;
+    kept.push(char);
+    bytes += size;
+  }
+  return `${kept.join('').trimEnd()}${suffix}${ext}`;
+}
+
 // The filename is only a hint for the consumer. Reduce it to a plain base name
 // without control characters so it can never carry a path or terminal escape.
 function safeFilename(filename) {
@@ -94,8 +122,7 @@ function safeFilename(filename) {
     .pop()
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, '')
     .trim();
-  // Truncate by code point so a surrogate pair is never split.
-  const base = Array.from(name).slice(0, HANDOFF_MAX_FILENAME_CHARS).join('');
+  const base = fitFilename(name);
   return base && base !== '.' && base !== '..' ? base : 'upload';
 }
 
@@ -104,17 +131,25 @@ function safeContentType(contentType) {
   return HANDOFF_CONTENT_TYPE_RE.test(normalized) ? normalized : 'application/octet-stream';
 }
 
+// Comparison key for "same name on disk". Default APFS and NTFS are
+// case-insensitive and APFS is also Unicode-normalization-insensitive, so
+// "é.txt" and "e\u0301.txt" or "Key.json" and "KEY.JSON" are one path there.
+// NFKC plus upper-then-lower case mapping merges at least those (and folds
+// e.g. "ß" with "ss"); merging a little more than a given file system does
+// only costs an unneeded " (n)" suffix, never an overwrite.
+function filenameKey(name) {
+  return name.normalize('NFKC').toUpperCase().toLowerCase().normalize('NFKC');
+}
+
 // Two files with the same name would overwrite each other when the consumer
 // writes them out or when they share a ZIP, so later duplicates get " (2)",
-// " (3)" ... before the extension.
+// " (3)" ... before the extension, still within the 255-byte name budget.
 function uniqueFilenames(files) {
   const seen = new Set();
   return files.map(file => {
     let name = file.filename;
-    const dot = name.lastIndexOf('.');
-    const [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ''];
-    for (let n = 2; seen.has(name.toLowerCase()); n++) name = `${stem} (${n})${ext}`;
-    seen.add(name.toLowerCase());
+    for (let n = 2; seen.has(filenameKey(name)); n++) name = fitFilename(file.filename, ` (${n})`);
+    seen.add(filenameKey(name));
     return { ...file, filename: name };
   });
 }
