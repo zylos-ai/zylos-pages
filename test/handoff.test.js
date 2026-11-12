@@ -8,6 +8,7 @@ import test from 'node:test';
 import express from 'express';
 import {
   HandoffStore,
+  filenameKey,
   HANDOFF_DEFAULT_FILE_BYTES,
   HANDOFF_DEFAULT_FILES,
   HANDOFF_MAX_FIELDS,
@@ -1183,7 +1184,10 @@ async function downloadRevealZip(files, label = 'Bundle') {
 }
 
 test('names equal on case- or normalization-insensitive disks are de-duplicated and all extract', async t => {
-  const names = ['\u00e9.txt', 'e\u0301.txt', '\u00c9.TXT', 'Stra\u00dfe.md', 'STRASSE.md', 'key', 'Key'];
+  const names = [
+    '\u00e9.txt', 'e\u0301.txt', '\u00c9.TXT', 'Stra\u00dfe.md', 'STRASSE.md', 'key', 'Key',
+    '\u00df.txt', '\u1e9e.txt', 'STRA\u1e9eE.md',
+  ];
   const { zip } = await downloadRevealZip(names.map((name, i) => [name, `file ${i}`]));
   const dir = await mkdtemp(path.join(os.tmpdir(), 'zylos-pages-handoff-unicode-'));
   try {
@@ -1197,7 +1201,10 @@ test('names equal on case- or normalization-insensitive disks are de-duplicated 
     assert.deepEqual(result.errors, []);
     assert.equal(result.written.length, names.length);
     assert.equal(new Set(result.folded).size, names.length, `names collide after NFC + casefold: ${result.written.join(' | ')}`);
-    assert.deepEqual(result.written, ['\u00e9.txt', 'e\u0301 (2).txt', '\u00c9 (3).TXT', 'Stra\u00dfe.md', 'STRASSE (2).md', 'key', 'Key (2)']);
+    assert.deepEqual(result.written, [
+      '\u00e9.txt', 'e\u0301 (2).txt', '\u00c9 (3).TXT', 'Stra\u00dfe.md', 'STRASSE (2).md', 'key', 'Key (2)',
+      '\u00df.txt', '\u1e9e (2).txt', 'STRA\u1e9eE (3).md',
+    ]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1232,4 +1239,23 @@ test('de-duplicated and label-derived names stay within 255 bytes and extract on
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the duplicate-name key agrees with Unicode full case folding for every code point', t => {
+  // Python's str.casefold is an independent implementation of Unicode full
+  // case folding. If key(c) === key(casefold(c)) for every c, any two names
+  // that fold to the same string also get the same key.
+  const script = [
+    'import json',
+    'print(json.dumps({chr(cp): chr(cp).casefold() for cp in range(0x110000)',
+    '                  if not 0xD800 <= cp <= 0xDFFF and chr(cp).casefold() != chr(cp)}))',
+  ].join('\n');
+  const result = spawnSync('python3', ['-I', '-c', script], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  if (result.error) { t.diagnostic('python3 unavailable; casefold cross-check skipped'); return; }
+  assert.equal(result.status, 0, result.stderr);
+  const folds = Object.entries(JSON.parse(result.stdout));
+  assert.ok(folds.length > 1000, 'the folding table must not be empty');
+  const misses = folds.filter(([c, folded]) => filenameKey(c) !== filenameKey(folded))
+    .map(([c, folded]) => `U+${c.codePointAt(0).toString(16).toUpperCase()} -> ${folded}`);
+  assert.deepEqual(misses, []);
 });

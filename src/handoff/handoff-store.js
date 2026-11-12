@@ -134,11 +134,14 @@ function safeContentType(contentType) {
 // Comparison key for "same name on disk". Default APFS and NTFS are
 // case-insensitive and APFS is also Unicode-normalization-insensitive, so
 // "é.txt" and "e\u0301.txt" or "Key.json" and "KEY.JSON" are one path there.
-// NFKC plus upper-then-lower case mapping merges at least those (and folds
-// e.g. "ß" with "ss"); merging a little more than a given file system does
-// only costs an unneeded " (n)" suffix, never an overwrite.
-function filenameKey(name) {
-  return name.normalize('NFKC').toUpperCase().toLowerCase().normalize('NFKC');
+// NFKC plus lower-upper-lower case mapping merges at least those. Lowering
+// first matters: "ẞ" upper-cases to itself, so only lower ("ß") then upper
+// ("SS") reaches "ss" like "ß" does. For every code point this key agrees with
+// Unicode full case folding (checked against Python's str.casefold in the
+// tests). Merging a little more than a given file system does only costs an
+// unneeded " (n)" suffix, never an overwrite.
+export function filenameKey(name) {
+  return name.normalize('NFKC').toLowerCase().toUpperCase().toLowerCase().normalize('NFKC');
 }
 
 // Two files with the same name would overwrite each other when the consumer
