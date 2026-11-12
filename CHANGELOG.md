@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-12
+
 ### Added
 
 - Secure handoff accepts files from the human: a create request with
@@ -9,10 +11,11 @@
   `await` / `consume` return the files once as
   `{"files":[{filename, contentType, size, data}]}` with `data` in base64.
   Up to 5 files by default (`maxFiles` 1–10) and 5 MiB in total (`maxBytes`
-  lowers it). Names are reduced to safe base names of at most 255 UTF-8 bytes,
-  and names that would clash on a case- or normalization-insensitive disk
-  become `name (2).ext` within the same limit. Files stay in process memory only and are cleared on
-  delivery, expiry, revoke or restart, like text values (#195).
+  lowers it). Names are reduced to safe base names of at most 255 UTF-8
+  bytes, and names that would clash on a case- or normalization-insensitive
+  disk become `name (2).ext` within the same limit. Files stay in process
+  memory only and are cleared on delivery, expiry, revoke or restart, like
+  text values (#195, #200).
 - One-time file download, the reverse direction: `create_reveal` accepts
   `files` (1–10, 5 MiB in total, base64) instead of `value`. The link shows
   file names and sizes; one click downloads a single file as itself or several
@@ -20,17 +23,37 @@
   (`nosniff`, sandbox CSP), never rendered, and unread files are zeroed on
   expiry or revoke. The local control socket now accepts requests up to the
   base64 size of 5 MiB plus 64 KiB and decodes them as a whole, so multi-byte
-  UTF-8 labels and names are never split.
+  UTF-8 labels and names are never split (#200).
 
 ### Changed
 
+- The annotation panel's Prompt button copies the feedback prompt in one
+  click and confirms in place (green "Copied" with a short animation, back to
+  normal after 2 seconds) instead of opening the preview first. A new eye
+  button beside it opens the read-only preview. If the clipboard is
+  unavailable, the write is denied or the prompt is over 100,000 characters,
+  the click opens the preview with the text selected for manual copying. At
+  widths of 360px or less the panel header compacts so the annotation count
+  stays visible (#194).
 - Default render ceiling `security.maxFileSizeBytes` raised from 1 MiB to
   10 MiB, and the default request limit `rateLimit.max` from 60 to 600 per
   minute per client IP. A single HTML deck with inline images routinely
   exceeded 1 MiB ("File too large"), and splitting its images out made one
   page view cost ~45 requests, so a reader hit 429 after one refresh. New
   installs and absent keys get the new defaults; upgrades never change a value
-  already present in `config.json`, even if it equals the old default.
+  already present in `config.json`, even if it equals the old default (#197).
+
+### Removed
+
+- The unused `sanitizeRenderedHtml` helper, which was never called and would
+  have allowed event-handler attributes had anyone used it; rendering keeps
+  the sanitizer in the render worker (#199).
+
+### Upgrade notes
+
+- File handoff uploads can be up to 5 MiB. If a reverse proxy sits in front
+  of Pages, its request body limit must allow that (nginx defaults to 1 MiB:
+  set `client_max_body_size` to at least 6m for the handoff path).
 
 ## [0.17.0] - 2026-11-04
 
