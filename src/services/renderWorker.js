@@ -93,7 +93,7 @@ async function render() {
 
   // Read file with size check
   const stats = await stat(filePath);
-  if (stats.size > (config.maxFileSizeBytes || 1048576)) {
+  if (stats.size > (config.maxFileSizeBytes || 10 * 1024 * 1024)) {
     throw new Error(`File too large: ${stats.size} bytes`);
   }
   const raw = await readFile(filePath, 'utf-8');

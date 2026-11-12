@@ -48,7 +48,7 @@ export function setupLogicalAssetRoute(app, config) {
         allowOpaqueSandboxOrigin(req, res);
       }
       const info = await stat(filePath);
-      const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
+      const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 10 * 1024 * 1024;
       if (info.size > maxFileSizeBytes) {
         return res.status(413).send(`File too large: ${info.size} bytes (max ${maxFileSizeBytes})`);
       }

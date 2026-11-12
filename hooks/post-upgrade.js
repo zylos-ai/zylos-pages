@@ -36,7 +36,7 @@ if (fs.existsSync(configPath)) {
   if (!config.security || typeof config.security !== 'object' || Array.isArray(config.security)) {
     config.security = {
       allowRawHtml: false,
-      maxFileSizeBytes: 1048576,
+      maxFileSizeBytes: 10 * 1024 * 1024,
       maxAttachmentSizeBytes: 50 * 1024 * 1024,
       renderTimeoutMs: 5000,
     };
@@ -54,7 +54,7 @@ if (fs.existsSync(configPath)) {
 
   // Migration: add rateLimit section if missing
   if (!config.rateLimit) {
-    config.rateLimit = { windowMs: 60000, max: 60 };
+    config.rateLimit = { windowMs: 60000, max: 600 };
     migrated = true;
   }
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Default render ceiling `security.maxFileSizeBytes` raised from 1 MiB to
+  10 MiB, and the default request limit `rateLimit.max` from 60 to 600 per
+  minute per client IP. A single HTML deck with inline images routinely
+  exceeded 1 MiB ("File too large"), and splitting its images out made one
+  page view cost ~45 requests, so a reader hit 429 after one refresh. New
+  installs and absent keys get the new defaults; upgrades never change a value
+  already present in `config.json`, even if it equals the old default.
+
 ## [0.17.0] - 2026-11-04
 
 ### Added

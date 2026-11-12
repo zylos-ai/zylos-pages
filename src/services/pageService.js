@@ -71,7 +71,7 @@ export async function getPage(rawSlug, config, browserBase = '') {
 
     if (current.type === 'html') {
       st = await stat(current.filePath);
-      const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 1048576;
+      const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 10 * 1024 * 1024;
       if (st.size > maxFileSizeBytes) {
         const err = new Error(`File too large: ${st.size} bytes (max ${maxFileSizeBytes})`);
         err.statusCode = 413;
@@ -91,7 +91,7 @@ export async function getPage(rawSlug, config, browserBase = '') {
     } else {
       rendered = await renderPage(current.filePath, {
         allowRawHtml: config.security?.allowRawHtml ?? false,
-        maxFileSizeBytes: config.security?.maxFileSizeBytes ?? 1048576,
+        maxFileSizeBytes: config.security?.maxFileSizeBytes ?? 10 * 1024 * 1024,
         tocMinHeadings: config.toc?.minHeadings ?? 3,
         codeTheme: config.theme?.codeTheme ?? 'github-dark',
         renderTimeoutMs: config.security?.renderTimeoutMs ?? 5000,

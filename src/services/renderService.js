@@ -29,7 +29,7 @@ export function initRenderService(_config = {}) {
 export async function renderPage(filePath, config = {}) {
   const {
     allowRawHtml = false,
-    maxFileSizeBytes = 1048576,
+    maxFileSizeBytes = 10 * 1024 * 1024,
     tocMinHeadings = 3,
     baseUrl = '',
     codeTheme = 'github-dark',
