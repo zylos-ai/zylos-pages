@@ -36,7 +36,7 @@ if (fs.existsSync(configPath)) {
   if (!config.security || typeof config.security !== 'object' || Array.isArray(config.security)) {
     config.security = {
       allowRawHtml: false,
-      maxFileSizeBytes: 1048576,
+      maxFileSizeBytes: 10 * 1024 * 1024,
       maxAttachmentSizeBytes: 50 * 1024 * 1024,
       renderTimeoutMs: 5000,
     };
@@ -52,9 +52,21 @@ if (fs.existsSync(configPath)) {
     removedLegacySandboxKey = true;
   }
 
+  // Raise the render ceiling from the old 1 MiB default to 10 MiB, but only
+  // when the instance still carries the old default; operator-set values stay.
+  if (config.security.maxFileSizeBytes === 1048576) {
+    config.security.maxFileSizeBytes = 10 * 1024 * 1024;
+    migrated = true;
+  }
+
   // Migration: add rateLimit section if missing
   if (!config.rateLimit) {
-    config.rateLimit = { windowMs: 60000, max: 60 };
+    config.rateLimit = { windowMs: 60000, max: 600 };
+    migrated = true;
+  } else if (config.rateLimit.windowMs === 60000 && config.rateLimit.max === 60) {
+    // Old default (60/min) is exhausted by a single image-heavy page; raise it
+    // only when the instance still carries that exact default.
+    config.rateLimit.max = 600;
     migrated = true;
   }
 

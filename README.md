@@ -157,7 +157,7 @@ Edit `~/zylos/components/pages/config.json`:
   "cache": { "enabled": true, "maxEntries": 200, "ttlSeconds": 3600 },
   "security": {
     "allowRawHtml": false,
-    "maxFileSizeBytes": 1048576,
+    "maxFileSizeBytes": 10485760,
     "maxAttachmentSizeBytes": 52428800
   },
   "sharing": {
@@ -196,7 +196,10 @@ protocol headers.
 The `state` ceilings and write-rate limits apply only to share-link visitors;
 authenticated owner writes are intentionally exempt.
 
-`security.maxFileSizeBytes` remains the render ceiling. The separate
+`security.maxFileSizeBytes` remains the render ceiling (default 10 MiB; it
+also caps each relative image or asset a page loads). `rateLimit` caps
+requests per client IP (default 600 per 60 s). Upgrades raise either value
+only when it still equals the old default (1 MiB, 60 per 60 s). The separate
 `security.maxAttachmentSizeBytes` ceiling applies to attachment registration
 and download (default 50 MiB); install and upgrade hooks add it only when the
 key is absent and preserve configured values.
