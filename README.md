@@ -198,8 +198,9 @@ authenticated owner writes are intentionally exempt.
 
 `security.maxFileSizeBytes` remains the render ceiling (default 10 MiB; it
 also caps each relative image or asset a page loads). `rateLimit` caps
-requests per client IP (default 600 per 60 s). Upgrades raise either value
-only when it still equals the old default (1 MiB, 60 per 60 s). The separate
+requests per client IP (default 600 per 60 s). Upgrades never change a value
+already present in `config.json`; the new defaults apply to new installs and
+to keys that are absent. The separate
 `security.maxAttachmentSizeBytes` ceiling applies to attachment registration
 and download (default 50 MiB); install and upgrade hooks add it only when the
 key is absent and preserve configured values.

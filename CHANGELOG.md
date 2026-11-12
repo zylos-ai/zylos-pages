@@ -9,8 +9,8 @@
   minute per client IP. A single HTML deck with inline images routinely
   exceeded 1 MiB ("File too large"), and splitting its images out made one
   page view cost ~45 requests, so a reader hit 429 after one refresh. New
-  installs get the new defaults; upgrades raise each value only when it still
-  equals the old default, and keep values an operator has changed.
+  installs and absent keys get the new defaults; upgrades never change a value
+  already present in `config.json`, even if it equals the old default.
 
 ## [0.17.0] - 2026-11-04
 

@@ -32,33 +32,22 @@ const base = {
   publicBaseUrl: 'https://pages.example.test/pages',
 };
 
-test('post-upgrade raises render ceiling and rate limit that still equal the old defaults', () => {
-  const config = upgrade({
+test('post-upgrade never changes values already present, even the old defaults', () => {
+  const oldDefaults = upgrade({
     ...base,
     security: { allowRawHtml: false, maxFileSizeBytes: 1048576, maxAttachmentSizeBytes: 52428800, renderTimeoutMs: 5000 },
     rateLimit: { windowMs: 60000, max: 60 },
   });
-  assert.equal(config.security.maxFileSizeBytes, 10 * 1024 * 1024);
-  assert.equal(config.rateLimit.max, 600);
-  assert.equal(config.rateLimit.windowMs, 60000);
-  assert.equal(config.security.maxAttachmentSizeBytes, 52428800);
-});
-
-test('post-upgrade keeps operator-set render ceiling and rate limit', () => {
-  const config = upgrade({
-    ...base,
-    security: { allowRawHtml: false, maxFileSizeBytes: 2097152, maxAttachmentSizeBytes: 52428800, renderTimeoutMs: 5000 },
-    rateLimit: { windowMs: 30000, max: 60 },
-  });
-  assert.equal(config.security.maxFileSizeBytes, 2097152);
-  assert.deepEqual(config.rateLimit, { windowMs: 30000, max: 60 });
+  assert.equal(oldDefaults.security.maxFileSizeBytes, 1048576);
+  assert.deepEqual(oldDefaults.rateLimit, { windowMs: 60000, max: 60 });
 
   const custom = upgrade({
     ...base,
-    security: { allowRawHtml: false, maxFileSizeBytes: 1048576, maxAttachmentSizeBytes: 52428800, renderTimeoutMs: 5000 },
-    rateLimit: { windowMs: 60000, max: 120 },
+    security: { allowRawHtml: false, maxFileSizeBytes: 2097152, maxAttachmentSizeBytes: 52428800, renderTimeoutMs: 5000 },
+    rateLimit: { windowMs: 30000, max: 120 },
   });
-  assert.equal(custom.rateLimit.max, 120);
+  assert.equal(custom.security.maxFileSizeBytes, 2097152);
+  assert.deepEqual(custom.rateLimit, { windowMs: 30000, max: 120 });
 });
 
 test('post-upgrade fills missing sections with the new defaults', () => {
