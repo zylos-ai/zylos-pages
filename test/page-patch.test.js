@@ -133,6 +133,33 @@ test('PATCH exposes capability policy and enforces read capability outbound deni
   }
 });
 
+test('GET /api/pages?q matches %, _ and \\ in titles literally', async () => {
+  const { server, origin, contentDir, config } = await makeServer();
+  try {
+    registerPage(config, contentDir, 'search/underscore', 'Q3_report draft');
+    registerPage(config, contentDir, 'search/underscore-decoy', 'Q3-report draft');
+    registerPage(config, contentDir, 'search/percent', 'Done 50% of budget');
+    registerPage(config, contentDir, 'search/percent-decoy', 'Done 50 of budget');
+    registerPage(config, contentDir, 'search/backslash', 'Paths under C:\\docs');
+    registerPage(config, contentDir, 'search/backslash-decoy', 'Paths under C:/docs');
+
+    const search = async query => {
+      const response = await fetch(`${origin}/api/pages?q=${encodeURIComponent(query)}`);
+      assert.equal(response.status, 200);
+      return (await response.json()).pages.map(page => page.uri).sort();
+    };
+    assert.deepEqual(await search('Q3_report'), ['search/underscore']);
+    assert.deepEqual(await search('50%'), ['search/percent']);
+    assert.deepEqual(await search('C:\\docs'), ['search/backslash']);
+    assert.deepEqual(await search('_'), ['search/underscore']);
+    assert.deepEqual(await search('%'), ['search/percent']);
+    // Plain substrings still match case-insensitively.
+    assert.deepEqual(await search('done 50'), ['search/percent', 'search/percent-decoy']);
+  } finally {
+    server.close();
+  }
+});
+
 test('re-registering without security declarations preserves the explicit policy', async () => {
   const { server, contentDir, config } = await makeServer();
   try {
