@@ -461,13 +461,15 @@ export function updateLogicalPage(pageId, { uri, title, capabilities, outboundDe
 export function searchLogicalPages(query = '') {
   initPageStore();
   const trimmed = String(query || '').trim();
+  // SQLite LIKE has no default escape character, so the ESCAPE clause is what
+  // makes `\_` and `\%` match literally. The backslash itself is escaped too.
   const rows = trimmed
     ? db.prepare(`
         SELECT * FROM logical_pages
-        WHERE title LIKE ?
+        WHERE title LIKE ? ESCAPE '\\'
         ORDER BY updated_at DESC
         LIMIT 100
-      `).all(`%${trimmed.replace(/[%_]/g, char => `\\${char}`)}%`)
+      `).all(`%${trimmed.replace(/[\\%_]/g, char => `\\${char}`)}%`)
     : db.prepare('SELECT * FROM logical_pages ORDER BY updated_at DESC LIMIT 100').all();
   return rows.map(mapPageRecord);
 }
