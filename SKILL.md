@@ -100,6 +100,12 @@ node $PAGES_DIR/src/cli/pages.js unshare reports/q3
 # The source file on disk is left untouched.
 node $PAGES_DIR/src/cli/pages.js unregister reports/q3
 
+# Move a page to a new uri, or change its title, in place. Share links, state
+# and attachments follow the page; the old uri stops resolving. Never move a
+# page by unregister + register: that orphans everything keyed by the old page.
+node $PAGES_DIR/src/cli/pages.js move reports/q3 archive/2026/q3
+node $PAGES_DIR/src/cli/pages.js rename archive/2026/q3 --title "Q3 Report (final)"
+
 # Add a local directory to the allowed source roots.
 node $PAGES_DIR/src/cli/pages.js allow-root add /absolute/reports --name reports
 ```

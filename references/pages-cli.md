@@ -95,6 +95,19 @@ but cannot reveal, while keyring-only restore contains no passwords.
 Never pass a password value in argv, a URL, an Issue/Task comment, a PR, or a
 group message. Deliver the secret only through the intended private channel.
 
+### Move / Rename
+
+```bash
+node src/cli/pages.js move reports/q3 archive/2026/q3
+node src/cli/pages.js rename archive/2026/q3 --title "Q3 Report (final)"
+```
+
+- `move <uri> <new-uri>` changes the logical uri of a registered page; `rename <uri> --title <title>` changes only its title. Both are the CLI form of the console's drag-to-move and rename (`PATCH /api/pages/:pageId`).
+- The page keeps its `pageId`, so existing share links (`/pages/s/<token>`), page state, attachments and the capability policy all follow it, and `shares` / `share-info` report the new uri. The old uri stops resolving at once. The source file on disk never moves.
+- Use `move` rather than `unregister` + `register`: re-registering mints a new `pageId`, which tombstones the old share links and leaves state and attachments behind.
+- The result reports `pageId`, `uri`, `url`, `title`, plus `previousUri` (move) or `previousTitle` (rename).
+- Stable failures: `page_missing` (no page at `<uri>`), `uri_conflict` (another page already has `<new-uri>`), `invalid_uri` (empty, `.`/`..` segments, or a backslash), `invalid_title` (blank title), and `invalid_args`. A failed command changes nothing.
+
 ### Allow Root
 
 ```bash

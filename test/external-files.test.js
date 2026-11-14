@@ -15,6 +15,7 @@ const { getPage } = await import('../src/services/pageService.js');
 const { getCachedPage, initCache, invalidatePagesForSlug, setCachedPage } = await import('../src/cache/pageCache.js');
 const { resolveLogicalAsset } = await import('../src/pages/asset-resolver.js');
 const { getPagesDb } = await import('../src/db/pages-db.js');
+const { getStateValue, setStateValue } = await import('../src/state/state-store.js');
 
 function makeEnv(home, extra = {}) {
   return {
@@ -189,6 +190,120 @@ test('pages CLI unregister removes registry and sessions, keeps share rows and s
   const repeated = runPagesCli(fixture, ['unregister', 'recruit/obsolete', '--json'], { expectFailure: true });
   assert.equal(repeated.code, 'page_missing');
   assert.equal(repeated.error, 'logical page not found: recruit/obsolete');
+});
+
+// Moving through unregister + register would mint a new page_id and orphan
+// everything keyed by the old one. `move` keeps the page_id, so share links
+// and page state follow the page to its new uri.
+test('pages CLI move changes the uri in place; share links and state follow the page', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'inbox-report.md');
+  fs.writeFileSync(source, '# Report\n');
+  const registered = runPagesCli(fixture, [
+    'register',
+    '--component', 'recruit',
+    '--uri', 'recruit/inbox/report',
+    '--source', source,
+    '--title', 'Report',
+    '--json',
+  ]);
+  const share = runPagesCli(fixture, ['share', 'recruit/inbox/report', '--duration', '24h', '--json']);
+  const db = getPagesDb();
+  const { page_id: pageId } = db.prepare('SELECT page_id FROM logical_pages WHERE uri = ?').get('recruit/inbox/report');
+  setStateValue(pageId, 'progress', '{"done":3}');
+
+  const moved = runPagesCli(fixture, ['move', 'recruit/inbox/report', 'recruit/archive/2026/report', '--json']);
+  assert.deepEqual(moved, {
+    ok: true,
+    command: 'move',
+    pageId,
+    previousUri: 'recruit/inbox/report',
+    uri: 'recruit/archive/2026/report',
+    url: '/pages/p/recruit/archive/2026/report',
+    title: 'Report',
+  });
+
+  const list = runPagesCli(fixture, ['list', '--json']);
+  const entry = list.entries.find(candidate => candidate.uri === 'recruit/archive/2026/report');
+  assert.equal(entry.sourcePath, registered.sourcePath, 'the source file never moves');
+  assert.equal(list.entries.some(candidate => candidate.uri === 'recruit/inbox/report'), false);
+
+  const shares = runPagesCli(fixture, ['shares', 'recruit/archive/2026/report', '--json']);
+  assert.deepEqual(shares.shares.map(candidate => candidate.tokenId), [share.tokenId]);
+  const info = runPagesCli(fixture, ['share-info', share.shortUrl, '--json']);
+  assert.equal(info.share.uri, 'recruit/archive/2026/report');
+  assert.equal(info.share.status, 'active');
+  assert.deepEqual(getStateValue(pageId, 'progress'), { found: true, value: '{"done":3}' });
+
+  const oldUri = runPagesCli(fixture, ['shares', 'recruit/inbox/report', '--json'], { expectFailure: true });
+  assert.equal(oldUri.code, 'page_missing');
+
+  const human = spawnSync(process.execPath, [pagesCliPath, 'move', 'recruit/archive/2026/report', 'recruit/archive/report'], {
+    cwd: repoRoot,
+    env: makeEnv(fixture.home),
+    encoding: 'utf8',
+  });
+  assert.equal(human.status, 0, human.stderr);
+  assert.equal(human.stdout, 'moved recruit/archive/2026/report -> recruit/archive/report\n');
+});
+
+test('pages CLI rename changes only the title', () => {
+  const fixture = makeFixture();
+  const source = path.join(fixture.sourceRoot, 'draft.md');
+  fs.writeFileSync(source, '# Draft\n');
+  runPagesCli(fixture, [
+    'register',
+    '--component', 'recruit',
+    '--uri', 'recruit/draft',
+    '--source', source,
+    '--title', 'Draft',
+    '--json',
+  ]);
+
+  const renamed = runPagesCli(fixture, ['rename', 'recruit/draft', '--title', '  Final Plan  ', '--json']);
+  assert.equal(renamed.ok, true);
+  assert.equal(renamed.command, 'rename');
+  assert.equal(renamed.uri, 'recruit/draft');
+  assert.equal(renamed.url, '/pages/p/recruit/draft');
+  assert.equal(renamed.previousTitle, 'Draft');
+  assert.equal(renamed.title, 'Final Plan');
+
+  const list = runPagesCli(fixture, ['list', '--q', 'Final Plan', '--json']);
+  assert.deepEqual(list.entries.map(entry => [entry.uri, entry.title]), [['recruit/draft', 'Final Plan']]);
+});
+
+test('pages CLI move and rename reject bad input and leave the page unchanged', () => {
+  const fixture = makeFixture();
+  for (const name of ['mover', 'taken']) {
+    const source = path.join(fixture.sourceRoot, `${name}.md`);
+    fs.writeFileSync(source, `# ${name}\n`);
+    runPagesCli(fixture, [
+      'register',
+      '--component', 'recruit',
+      '--uri', `recruit/${name}`,
+      '--source', source,
+      '--title', name,
+      '--json',
+    ]);
+  }
+  const before = getPagesDb().prepare('SELECT * FROM logical_pages WHERE uri = ?').get('recruit/mover');
+
+  for (const [args, code] of [
+    [['move', 'recruit/mover', 'recruit/taken'], 'uri_conflict'],
+    [['move', 'recruit/missing', 'recruit/elsewhere'], 'page_missing'],
+    [['move', 'recruit/mover', '../escape'], 'invalid_uri'],
+    [['move', 'recruit/mover', 'a/./b'], 'invalid_uri'],
+    [['move', 'recruit/mover'], 'invalid_args'],
+    [['move', 'recruit/mover', 'recruit/a', 'recruit/b'], 'invalid_args'],
+    [['rename', 'recruit/mover'], 'invalid_args'],
+    [['rename', 'recruit/mover', '--title', '   '], 'invalid_title'],
+    [['rename', 'recruit/missing', '--title', 'Title'], 'page_missing'],
+  ]) {
+    const result = runPagesCli(fixture, [...args, '--json'], { expectFailure: true });
+    assert.equal(result.ok, false, args.join(' '));
+    assert.equal(result.code, code, args.join(' '));
+  }
+  assert.deepEqual(getPagesDb().prepare('SELECT * FROM logical_pages WHERE uri = ?').get('recruit/mover'), before);
 });
 
 test('pages CLI share base URL uses config when env is absent', () => {

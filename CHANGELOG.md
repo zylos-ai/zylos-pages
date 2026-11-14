@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- Agent CLI `move <uri> <new-uri>` and `rename <uri> --title <title>` change a
+  registered page's uri or title in place, the way the console's drag-to-move
+  and rename already could. The page keeps its page id, so share links, state
+  and attachments follow it. Before this the CLI could only unregister and
+  re-register, which minted a new page id, tombstoned the page's share links
+  and left its state and attachments behind.
+
 ## [0.18.0] - 2026-11-12
 
 ### Added

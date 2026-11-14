@@ -8,7 +8,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CONFIG_PATH, DATA_DIR, getConfig } from '../lib/config.js';
-import { getLogicalPage, registerLogicalPage, searchLogicalPages, unregisterLogicalPage } from '../pages/page-store.js';
+import {
+  getLogicalPage,
+  registerLogicalPage,
+  searchLogicalPages,
+  unregisterLogicalPage,
+  updateLogicalPage,
+} from '../pages/page-store.js';
 import {
   createPasswordProtectedShare,
   createShare,
@@ -68,6 +74,8 @@ Usage:
   node pages.js unshare <uri> [--json]                 # revokes ALL tokens on that uri
   node pages.js unshare --token <token-id> [--json]    # revokes exactly one token
   node pages.js unregister <uri> [--json]
+  node pages.js move <uri> <new-uri> [--json]          # share links, state and attachments follow the page
+  node pages.js rename <uri> --title <title> [--json]
   node pages.js allow-root add <path> [--name <name>] [--json]
   node pages.js status [--json]
 
@@ -84,6 +92,8 @@ Examples:
   node pages.js shares --all
   node pages.js share-info https://example.com/s/7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js unshare --token 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
+  node pages.js move reports/q3 archive/2026/q3
+  node pages.js rename archive/2026/q3 --title "Q3 Report (final)"
   node pages.js allow-root add /Users/howard/zylos/workspace/reports --name reports`);
 }
 
@@ -193,6 +203,8 @@ function humanize(result) {
     if (result.action === 'keyring-retire') return `retired share password key ${result.retiredKeyId}`;
   }
   if (result.command === 'unregister') return `unregistered ${result.uri}`;
+  if (result.command === 'move') return `moved ${result.previousUri} -> ${result.uri}`;
+  if (result.command === 'rename') return `renamed ${result.uri}: ${result.title}`;
   if (result.command === 'allow-root') return `allowed root ${result.name}: ${result.path}`;
   return JSON.stringify(result, null, 2);
 }
@@ -630,6 +642,49 @@ function commandUnregister(args) {
   }
 }
 
+// Resolve a registered page for the in-place update commands. The page_id is
+// what share links, state and attachments are keyed by, which is why moving
+// must go through updateLogicalPage rather than unregister + register.
+function requireLogicalPage(uri) {
+  const page = getLogicalPage(uri);
+  if (!page) throw new CliError('page_missing', `logical page not found: ${uri}`);
+  return page;
+}
+
+function commandMove(args) {
+  if (args._.length !== 2) {
+    throw new CliError('invalid_args', 'expected: move <uri> <new-uri>');
+  }
+  const page = requireLogicalPage(normalizeUri(args._[0]));
+  const moved = updateLogicalPage(page.pageId, { uri: normalizeUri(args._[1]) });
+  output({
+    ok: true,
+    command: 'move',
+    pageId: moved.pageId,
+    previousUri: page.uri,
+    uri: moved.uri,
+    url: getPageUrl(moved.uri),
+    title: moved.title,
+  }, args.json);
+}
+
+function commandRename(args) {
+  if (args._.length !== 1 || args.title === undefined) {
+    throw new CliError('invalid_args', 'expected: rename <uri> --title <title>');
+  }
+  const page = requireLogicalPage(normalizeUri(args._[0]));
+  const renamed = updateLogicalPage(page.pageId, { title: args.title });
+  output({
+    ok: true,
+    command: 'rename',
+    pageId: renamed.pageId,
+    uri: renamed.uri,
+    url: getPageUrl(renamed.uri),
+    previousTitle: page.title,
+    title: renamed.title,
+  }, args.json);
+}
+
 function commandAllowRoot(args) {
   const subcommand = args._[0];
   if (subcommand !== 'add') {
@@ -697,6 +752,10 @@ export async function main(argv) {
       return commandUnshare(args);
     case 'unregister':
       return commandUnregister(args);
+    case 'move':
+      return commandMove(args);
+    case 'rename':
+      return commandRename(args);
     case 'allow-root':
       return commandAllowRoot(args);
     case undefined:
