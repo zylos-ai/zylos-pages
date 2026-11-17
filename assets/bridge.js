@@ -38,7 +38,8 @@
 
   const bridgeError = (code, message) => ({ ok: false, error: { code, message } });
 
-  const openPage = input => {
+  const openPage = async input => {
+    const requestGeneration = generation;
     if (!input || Object.keys(input).length !== 1 || typeof input.href !== 'string') {
       return bridgeError('invalid_request', 'page.open requires only a string href');
     }
@@ -58,8 +59,18 @@
       return bridgeError('navigation_denied', 'page.open does not allow URL credentials');
     }
     if (target.origin === window.location.origin) {
-      if (hasQueryDelimiter(target) || !pageOpenPaths.has(target.pathname)) {
+      let allowed = pageOpenPaths.has(target.pathname);
+      if (!hasQueryDelimiter(target) && iframe.dataset.pageOpenCheck) {
+        try {
+          const response = await fetch(`${iframe.dataset.pageOpenCheck}?${new URLSearchParams({ viewPath: target.pathname })}`, { credentials: 'same-origin' });
+          allowed = response.ok && (await response.json()).allowed === true;
+        } catch { allowed = false; }
+      }
+      if (hasQueryDelimiter(target) || !allowed) {
         return bridgeError('navigation_denied', 'same-site target is not a registered page view');
+      }
+      if (revoked || generation !== requestGeneration) {
+        return bridgeError('port_expired', 'bridge port expired');
       }
       window.location.assign(target.href);
       return { ok: true, result: { ok: true } };
@@ -126,7 +137,7 @@
         return;
       }
       if (request.operation === 'page.open') {
-        reply(openPage(request.input));
+        openPage(request.input).then(reply);
         return;
       }
       if (queue.length + active >= maxPending) {

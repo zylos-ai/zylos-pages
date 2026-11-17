@@ -26,6 +26,7 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
   const express = (await import('express')).default;
   const { initCache } = await import('../src/cache/pageCache.js');
   const { registerLogicalPage } = await import('../src/pages/page-store.js');
+  const { setupPageApi } = await import('../src/routes/page-api.js');
   const { setupBridgeApi } = await import('../src/routes/bridge-api.js');
   const { pageRoute } = await import('../src/routes/pages.js');
   const { setupAuth, hashPassword } = await import('../src/security/auth.js');
@@ -78,6 +79,7 @@ test('Chromium provisions one bridge port, revokes it on navigation, and blocks 
   app.use('/_assets', express.static(path.join(repoRoot(), 'assets')));
   setupAuth(app, config.auth);
   setupBridgeApi(app, config);
+  setupPageApi(app, config);
   app.get('/:slug(*)', pageRoute(config));
   const pagesServer = http.createServer(app);
   await new Promise(resolve => pagesServer.listen(0, '127.0.0.1', resolve));

@@ -2,13 +2,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Admin and sidebar lists fetch direct folder children and title searches in
+  SQL-backed batches of 50, with counts and Load more controls. Admin expansion
+  memory survives pagination, and sidebar navigation reveals the current path.
+  Owner page-open checks run on the server instead of embedding all page URIs.
+
 ### Added
 
 - Admin and CLI lists include all registered pages; the API includes a total,
-  and CLI `list --limit N` optionally bounds output. Title search stays capped
+  and CLI `list --limit N` optionally bounds output. Legacy title search stays capped
   at 100 results (#209).
 - Admin folder collapse state persists per instance, with stale paths pruned only
-  after the full list loads (#208).
+  after server confirmation (#208).
 - Relative audio/video assets stream with HTTP Range support, a separate 200 MiB
   media ceiling, and six-hour signed URLs capped by share expiry (#207).
 

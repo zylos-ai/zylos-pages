@@ -571,6 +571,10 @@ export function setupAuth(app, authConfig, sharingConfig = { enabled: true }) {
       return next();
     }
 
+    if (req.path === '/api/pages' || req.path.startsWith('/api/pages/')) {
+      return res.status(403).json({ error: 'Owner login required' });
+    }
+
     // Share access session bypass for pages and raw HTML artifacts —
     // unauthenticated fallback only. Kept as defense-in-depth for direct /p/
     // hits and legacy share links. Share pages now scope their <base href> to

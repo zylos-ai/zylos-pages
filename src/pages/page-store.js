@@ -472,6 +472,75 @@ export function searchLogicalPages(query = '') {
   return rows.map(mapPageRecord);
 }
 
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, char => `\\${char}`);
+}
+
+export function validatePageFolder(folder) {
+  if (typeof folder !== 'string' || /[\\\u0000-\u001f\u007f]/.test(folder)
+      || (folder !== '' && folder.split('/').some(part => !part || part === '.' || part === '..'))) {
+    throw new SourceValidationError('invalid_folder', 'folder must be a relative path without empty, . or .. segments');
+  }
+  return folder;
+}
+
+export function pageFolderExists(folder = '') {
+  validatePageFolder(folder);
+  initPageStore();
+  if (folder === '') return true;
+  return Boolean(db.prepare("SELECT 1 FROM logical_pages WHERE uri LIKE ? ESCAPE '\\' LIMIT 1")
+    .get(`${escapeLike(folder)}/%`));
+}
+
+// Only the requested batch leaves SQLite. Folders are virtual: their counts
+// include every descendant page, while direct pages are separate list items.
+export function listPageChildren({ folder = '', query = '', offset = 0, limit = 50 } = {}) {
+  validatePageFolder(folder);
+  if (typeof query !== 'string' || !Number.isSafeInteger(offset) || offset < 0
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    throw new SourceValidationError('invalid_pagination', 'offset must be a nonnegative integer and limit must be between 1 and 100');
+  }
+  initPageStore();
+  const total = db.prepare('SELECT COUNT(*) AS count FROM logical_pages').get().count;
+  const trimmed = query.trim();
+  let items;
+  let matchedTotal;
+  let folderTotal;
+  if (trimmed) {
+    const pattern = `%${escapeLike(trimmed)}%`;
+    matchedTotal = db.prepare("SELECT COUNT(*) AS count FROM logical_pages WHERE title LIKE ? ESCAPE '\\'").get(pattern).count;
+    items = db.prepare("SELECT * FROM logical_pages WHERE title LIKE ? ESCAPE '\\' ORDER BY uri COLLATE BINARY LIMIT ? OFFSET ?")
+      .all(pattern, limit, offset).map(row => ({ kind: 'page', ...mapPageRecord(row) }));
+  } else {
+    const prefix = folder ? `${folder}/` : '';
+    const children = `WITH descendants AS (
+        SELECT uri, substr(uri, length(@prefix) + 1) AS remainder
+        FROM logical_pages WHERE uri LIKE @pattern ESCAPE '\\'
+      ), children AS (
+        SELECT 'folder' AS kind, @prefix || substr(remainder, 1, instr(remainder, '/') - 1) AS path,
+          COUNT(*) AS count, NULL AS uri
+        FROM descendants WHERE instr(remainder, '/') > 0 GROUP BY path
+        UNION ALL
+        SELECT 'page', uri, NULL, uri FROM descendants WHERE instr(remainder, '/') = 0
+      )`;
+    const params = { prefix, pattern: `${escapeLike(prefix)}%` };
+    const counts = db.prepare(`${children} SELECT
+      (SELECT COUNT(*) FROM children) AS matchedTotal,
+      (SELECT COUNT(*) FROM descendants) AS folderTotal`).get(params);
+    ({ matchedTotal, folderTotal } = counts);
+    const rows = db.prepare(`${children}
+      SELECT children.kind, children.path, children.count, logical_pages.*
+      FROM (SELECT * FROM children ORDER BY kind, path COLLATE BINARY LIMIT @limit OFFSET @offset) AS children
+      LEFT JOIN logical_pages ON logical_pages.uri = children.uri
+      ORDER BY children.kind, children.path COLLATE BINARY`).all({ ...params, limit, offset });
+    items = rows.map(row => row.kind === 'folder'
+      ? { kind: 'folder', path: row.path, name: row.path.slice(row.path.lastIndexOf('/') + 1), count: row.count }
+      : { kind: 'page', ...mapPageRecord(row) });
+  }
+  return { items, total, matchedTotal, ...(folderTotal === undefined ? {} : { folderTotal }),
+    nextOffset: offset + items.length < matchedTotal ? offset + items.length : null };
+}
+
 export function listLogicalPagesForNavigation() {
   initPageStore();
   const rows = db.prepare(`

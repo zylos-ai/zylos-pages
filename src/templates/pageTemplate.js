@@ -2,7 +2,6 @@
 
 import { APP_VERSION } from '../lib/app-version.js';
 import { escapeHtml } from '../security/sanitize.js';
-import { buildPageTree } from '../utils/pageTree.js';
 import { icon, themeToggleIcons } from './icons.js';
 
 // Stable cache version — generated once per process start
@@ -165,10 +164,11 @@ export function htmlArtifactTemplate({
   bridgeEndpoint = null,
   pageOpenBase = '',
   pageOpenPaths = [],
+  pageOpenCheck = '',
   outboundDenied = false,
 }) {
   const pageOpenData = bridgeEndpoint
-    ? ` data-page-open-base="${escapeHtml(pageOpenBase)}" data-page-open-paths="${escapeHtml(JSON.stringify(pageOpenPaths))}" data-outbound-denied="${outboundDenied ? 'true' : 'false'}"`
+    ? ` data-page-open-base="${escapeHtml(pageOpenBase)}" data-page-open-paths="${escapeHtml(JSON.stringify(pageOpenPaths))}" data-page-open-check="${escapeHtml(pageOpenCheck)}" data-outbound-denied="${outboundDenied ? 'true' : 'false'}"`
     : '';
   return `<!DOCTYPE html>
 <html lang="en">
@@ -311,45 +311,15 @@ export function injectShareViewer(html, options = {}) {
   return html.replace(/<html([^>]*)>/i, `<html$1 data-viewer="share"${editableAttr}>`);
 }
 
-/**
- * Inject pages navigation sidebar into the rendered HTML (post-cache).
- * Adds a left sidebar with all pages for quick switching.
- */
-export function injectNavSidebar(html, pages, currentSlug, baseUrl) {
-  const navHtml = renderNavSidebar(pages, currentSlug, baseUrl);
-  html = html.replace('<!-- NAV_SIDEBAR -->', navHtml);
-  return html;
-}
-
-function renderNavSidebar(pages, currentSlug, baseUrl) {
-  const pageTree = buildPageTree(pages);
-  let html = `<aside class="nav-sidebar auth-only"><nav class="page-nav">
+/** Inject a bounded, owner-only navigation loader after page caching. */
+export function injectNavSidebar(html, currentSlug, baseUrl, title = '') {
+  const uri = currentSlug.startsWith('p/') ? currentSlug.slice(2) : currentSlug;
+  const nav = `<aside class="nav-sidebar auth-only" data-base-url="${escapeHtml(baseUrl || '')}" data-current-uri="${escapeHtml(uri)}" data-current-title="${escapeHtml(title || uri)}"><nav class="page-nav">
     <div class="nav-brand"><span class="nav-brand-mark">${icon('document')}</span><b>Pages</b>${APP_VERSION ? `<span class="header-version">v${APP_VERSION}</span>` : ''}</div>
-    <h4>Workspace</h4><ul class="page-nav-list">`;
-  for (const page of pageTree.topLevel) {
-    html += renderNavPageItem(page, currentSlug, baseUrl);
-  }
-
-  for (const folder of pageTree.folders) {
-    const isOpen = folder.pages.some(page => isCurrentPageSlug(page.slug, currentSlug));
-    html += `<li class="nav-folder"><details${isOpen ? ' open' : ''}><summary>${icon('folder')}<span class="nav-folder-name">${escapeHtml(folder.label)}</span><span class="nav-folder-count">${folder.pages.length}</span></summary><ul class="nav-folder-list">`;
-    for (const page of folder.pages) {
-      html += renderNavPageItem(page, currentSlug, baseUrl);
-    }
-    html += '</ul></details></li>';
-  }
-
-  html += '</ul></nav></aside>';
-  return html;
-}
-
-function renderNavPageItem(page, currentSlug, baseUrl) {
-  const active = isCurrentPageSlug(page.slug, currentSlug) ? ' class="active"' : '';
-  return `<li${active}><a href="${baseUrl}/${encodeURI(page.slug)}">${icon('document')}<span>${escapeHtml(page.title)}</span></a></li>`;
-}
-
-function isCurrentPageSlug(pageSlug, currentSlug) {
-  return pageSlug === currentSlug || pageSlug === `p/${currentSlug}` || `p/${pageSlug}` === currentSlug;
+    <h4>Workspace <span class="nav-total"></span></h4>
+    <form class="nav-search"><input type="search" aria-label="Search sidebar pages" placeholder="Search pages…"><button type="submit">Search</button></form>
+    <ul class="page-nav-list"></ul></nav></aside>`;
+  return html.replace('<!-- NAV_SIDEBAR -->', nav);
 }
 
 function renderBreadcrumb({ baseUrl, slug, title }) {

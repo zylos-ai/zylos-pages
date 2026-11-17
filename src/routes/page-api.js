@@ -1,6 +1,9 @@
 import {
   registerLogicalPage,
   searchLogicalPages,
+  listPageChildren,
+  pageFolderExists,
+  getLogicalPage,
   unregisterLogicalPageById,
   updateLogicalPage,
 } from '../pages/page-store.js';
@@ -57,9 +60,57 @@ function requireOwner(res) {
   return true;
 }
 
+function isRegisteredViewPath(value, base) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')
+      || /[?#\\\u0000-\u0020]/.test(value) || (base && !value.startsWith(`${base}/`))) return false;
+  const relative = value.slice(base.length + 1);
+  // Candidate lookup is bounded; exact comparison below rejects aliases created
+  // by slug normalization (extensions, case changes or redundant slashes).
+  for (const uri of [relative.startsWith('p/') ? relative.slice(2) : null, relative]) {
+    if (!uri) continue;
+    let page;
+    try { page = getLogicalPage(uri); } catch { continue; }
+    if (page && [browserPath(base, `p/${page.uri}`), browserPath(base, page.uri)]
+      .some(candidate => new URL(candidate, 'https://pages.invalid').pathname === value)) return true;
+  }
+  return false;
+}
+
 export function setupPageApi(app, config) {
   app.get('/api/pages', (req, res) => {
     if (!requireOwner(res)) return;
+    const paginated = ['folder', 'limit', 'offset', 'folderExists', 'viewPath'].some(key => req.query[key] !== undefined);
+    if (paginated) {
+      if (res.locals.authenticated !== true) {
+        return res.status(403).json({ error: 'Owner authentication is required to browse pages' });
+      }
+      try {
+        if (req.query.viewPath !== undefined) {
+          return res.json({ ok: true, allowed: isRegisteredViewPath(req.query.viewPath, browserBaseFromRequest(req)) });
+        }
+        if (req.query.folderExists !== undefined) {
+          return res.json({ ok: true, exists: pageFolderExists(req.query.folderExists) });
+        }
+        const parseInteger = (key, fallback) => {
+          const value = req.query[key];
+          if (value === undefined) return fallback;
+          if (typeof value !== 'string' || !/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+            throw Object.assign(new Error(`${key} must be a nonnegative integer`), { statusCode: 400 });
+          }
+          return Number(value);
+        };
+        const result = listPageChildren({
+          folder: req.query.folder ?? '', query: req.query.q ?? '',
+          offset: parseInteger('offset', 0), limit: parseInteger('limit', 50),
+        });
+        const items = result.items.map(item => item.kind === 'page'
+          ? { ...item, url: browserPath(browserBaseFromRequest(req), `p/${item.uri}`) } : item);
+        return res.json({ ok: true, ...result, items });
+      } catch (err) {
+        const status = err.statusCode || 500;
+        return res.status(status).json({ error: status === 500 ? 'Internal Server Error' : err.message });
+      }
+    }
     const pages = searchLogicalPages(req.query.q || '').map(page => ({
       ...page,
       url: browserPath(browserBaseFromRequest(req), `p/${page.uri}`),

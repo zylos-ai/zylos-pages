@@ -132,8 +132,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
       if (isShareViewer) {
         html = injectShareViewer(html, { canWriteAttachments: false });
       } else {
-        const pages = await scanPages(config.contentDir);
-        html = injectNavSidebar(html, pages, displaySlug, browserBase);
+        html = injectNavSidebar(html, displaySlug, browserBase, descriptor.title);
       }
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Referrer-Policy', 'no-referrer');
@@ -231,7 +230,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         ? `s/${shareContext.tokenId}?raw=1`
         : `${displaySlug}?raw=1`;
       const iframeSrc = browserPath(browserBase, iframeRoute);
-      const navigationPages = sandboxEnabled && policy.enabled
+      const navigationPages = sandboxEnabled && policy.enabled && isShareViewer
         ? await scanPages(config.contentDir)
         : null;
       if (sandboxEnabled && policy.enabled) {
@@ -253,6 +252,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
           browserBase,
           displaySlug.startsWith('p/') ? displaySlug.slice(2) : displaySlug,
         ),
+        pageOpenCheck: !isShareViewer ? browserPath(browserBase, 'api/pages') : '',
         pageOpenPaths: navigationPages ? pageOpenPaths({
           pages: navigationPages,
           browserBase,
@@ -271,8 +271,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         html = injectShareViewer(html, { canWriteAttachments: shareCanWriteAttachments });
         html = await finalizeShareHtml(html, { config, browserBase, displaySlug, share: shareContext || res.locals.shareContext });
       } else {
-        const pages = navigationPages || await scanPages(config.contentDir);
-        html = injectNavSidebar(html, pages, displaySlug, browserBase);
+        html = injectNavSidebar(html, displaySlug, browserBase, descriptor.title);
       }
       logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth', type: result.type });
       return res.send(html);
@@ -295,8 +294,7 @@ async function renderPageSlug({ req, res, config, browserBase, rawSlug, shareCon
         );
       }
     } else {
-      const pages = await scanPages(config.contentDir);
-      html = injectNavSidebar(html, pages, displaySlug, browserBase);
+      html = injectNavSidebar(html, displaySlug, browserBase, descriptor.title);
     }
 
     logger.info('page served', { path: slug, status: 200, cache_hit: result.cacheHit, singleflight_shared: result.singleflightShared, render_ms: elapsed, viewer: isShareViewer ? 'share' : 'auth' });

@@ -164,7 +164,10 @@ test('legacy auth.enabled=false cannot bypass the owner wall when a password is 
     password: hashPassword('secret'),
   });
   try {
-    for (const requestPath of ['/', '/docs/page', '/api/pages']) {
+    const listDenied = await fetch(`${origin}/api/pages`, { redirect: 'manual' });
+    assert.equal(listDenied.status, 403);
+    assert.equal(listDenied.headers.get('location'), null);
+    for (const requestPath of ['/', '/docs/page']) {
       const response = await fetch(`${origin}${requestPath}`, { redirect: 'manual' });
       assert.equal(response.status, 302, `${requestPath} should require owner login`);
       assert.match(response.headers.get('location'), /^\/login(?:\?|$)/);

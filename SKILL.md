@@ -57,6 +57,7 @@ PAGES_DIR="$HOME/zylos/.claude/skills/pages"
 # Register a local source file as a logical page. Default access is private.
 node $PAGES_DIR/src/cli/pages.js register --source /absolute/report.md --uri reports/q3 --title "Q3 Report"
 
+# Browser lists load folders/search in 50-item batches; CLI output remains independent.
 # List all registered logical pages (optional --limit N; --q searches at most 100 titles).
 node $PAGES_DIR/src/cli/pages.js list
 node $PAGES_DIR/src/cli/pages.js list --limit 50

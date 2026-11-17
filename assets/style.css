@@ -1842,3 +1842,10 @@ svg { display: block; }
     white-space: normal;
   }
 }
+
+/* Bounded, on-demand workspace navigation. */
+.nav-search { display: flex; gap: 4px; padding: 0 12px 12px; }
+.nav-search input { min-width: 0; width: 100%; }
+.nav-search button, .nav-load-more { cursor: pointer; }
+.nav-load-more { margin: 8px; }
+.nav-folder-list .nav-folder-list { padding-left: 12px; }

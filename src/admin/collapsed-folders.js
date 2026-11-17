@@ -20,16 +20,17 @@ export function saveCollapsedFolders(basePath, collapsed, storage) {
   }
 }
 
-export function pruneCollapsedFolders(collapsed, pages, clientFolders, fullListLoaded) {
-  if (!fullListLoaded) return collapsed;
-  const folders = new Set();
-  for (const uri of [...pages.map(page => page.uri), ...clientFolders.map(path => `${path}/`)]) {
-    let index = uri.indexOf('/');
-    while (index !== -1) {
-      folders.add(uri.slice(0, index));
-      index = uri.indexOf('/', index + 1);
-    }
-  }
-  const kept = new Set([...collapsed].filter(path => folders.has(path)));
-  return kept.size === collapsed.size ? collapsed : kept;
+// Only prune paths the server has positively confirmed are absent.
+export function pruneCollapsedFolders(remembered, missingPaths) {
+  const missing = new Set(missingPaths);
+  const kept = new Set([...remembered].filter(path => !missing.has(path)));
+  return kept.size === remembered.size ? remembered : kept;
+}
+
+export function loadExpandedFolders(basePath, storage) {
+  return loadCollapsedFolders(`expanded:${basePath}`, storage);
+}
+
+export function saveExpandedFolders(basePath, expanded, storage) {
+  saveCollapsedFolders(`expanded:${basePath}`, expanded, storage);
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { collapsedFoldersKey, loadCollapsedFolders, saveCollapsedFolders, pruneCollapsedFolders } from '../src/admin/collapsed-folders.js';
+import { collapsedFoldersKey, loadCollapsedFolders, saveCollapsedFolders, pruneCollapsedFolders, loadExpandedFolders, saveExpandedFolders } from '../src/admin/collapsed-folders.js';
 
 function memoryStorage() {
   const values = new Map();
@@ -39,13 +39,13 @@ test('invalid or unavailable storage falls back to expanded without throwing', (
   }
 });
 
-test('prune keeps nested and client folders only after an unfiltered list loads', () => {
-  const collapsed = new Set(['docs', 'docs/deep', 'missing', 'empty', 'empty/nested']);
-  assert.equal(pruneCollapsedFolders(collapsed, [], [], false), collapsed, 'initial or filtered list must not prune');
-  const filtered = pruneCollapsedFolders(collapsed, [{ uri: 'docs/a' }], [], false);
-  assert.equal(filtered, collapsed, 'search must retain folders absent from matches');
-  const kept = pruneCollapsedFolders(collapsed, [{ uri: 'docs/deep/a' }], ['empty/nested'], true);
-  assert.deepEqual([...kept], ['docs', 'docs/deep', 'empty', 'empty/nested']);
-  assert.equal(pruneCollapsedFolders(kept, [{ uri: 'docs/deep/a' }], ['empty/nested'], true), kept);
-  assert.equal(pruneCollapsedFolders(kept, [], [], true).size, 0);
+test('only explicitly server-confirmed missing paths are pruned', () => {
+  const remembered = new Set(['docs', 'docs/deep', 'missing', 'unloaded']);
+  assert.equal(pruneCollapsedFolders(remembered, []), remembered, 'partial lists and search do not prove absence');
+  const kept = pruneCollapsedFolders(remembered, ['missing']);
+  assert.deepEqual([...kept], ['docs', 'docs/deep', 'unloaded']);
+  const storage = memoryStorage();
+  saveExpandedFolders('/one', kept, storage);
+  assert.deepEqual(loadExpandedFolders('/one', storage), kept);
+  assert.equal(loadExpandedFolders('/two', storage).size, 0);
 });

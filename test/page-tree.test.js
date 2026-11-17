@@ -81,27 +81,14 @@ test('scanPages lists only registered logical pages and preserves directory grou
   }
 });
 
-test('injectNavSidebar expands active folder and escapes folder labels', () => {
-  const html = injectNavSidebar('<html><body><!-- NAV_SIDEBAR --></body></html>', [
-    { slug: 'top', title: 'Top', date: '2026-06-14' },
-    { slug: 'daily-digest/a', title: 'Daily A', date: '2026-06-13' },
-    { slug: 'safe/<script>/page', title: 'Unsafe Folder', date: '2026-06-12' },
-  ], 'daily-digest/a', '/pages');
-
-  assert.match(html, /<details open><summary><svg class="i"[^>]*stroke="currentColor"[^>]*><path d="M3 7/);
-  assert.match(html, /<span class="nav-folder-name">daily-digest<\/span>/);
-  assert.match(html, /<li class="active"><a href="\/pages\/daily-digest\/a"><svg class="i"[^>]*stroke="currentColor"[^>]*><path d="M15 2/);
-  assert.match(html, /<span>Daily A<\/span><\/a><\/li>/);
-  assert.match(html, /safe \/ &lt;script&gt;/);
-  assert.doesNotMatch(html, /<span class="nav-folder-name">safe \/ <script>/);
-});
-
-test('injectNavSidebar highlights p-prefixed logical pages for canonical routes', () => {
-  const html = injectNavSidebar('<html><body><!-- NAV_SIDEBAR --></body></html>', [
-    { slug: 'p/visual', title: 'Visual', date: '2026-07-01' },
-  ], 'visual', '/pages');
-
-  assert.match(html, /<li class="active"><a href="\/pages\/p\/visual">/);
+test('sidebar emits a bounded loader and escaped current-page metadata', () => {
+  const html = injectNavSidebar('<html><body><!-- NAV_SIDEBAR --></body></html>',
+    'p/daily/<script>/a', '/pages', 'Daily <title>');
+  assert.match(html, /data-base-url="\/pages"/);
+  assert.match(html, /data-current-uri="daily\/&lt;script&gt;\/a"/);
+  assert.match(html, /data-current-title="Daily &lt;title&gt;"/);
+  assert.match(html, /<ul class="page-nav-list"><\/ul>/);
+  assert.doesNotMatch(html, /<details|href="\/pages\/p\//);
 });
 
 test('viewer chrome uses inline SVG icons and no emoji theme fallback', async () => {

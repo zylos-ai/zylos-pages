@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { loadCollapsedFolders, saveCollapsedFolders, pruneCollapsedFolders } from './collapsed-folders.js';
+import { loadCollapsedFolders, saveCollapsedFolders, pruneCollapsedFolders, loadExpandedFolders, saveExpandedFolders } from './collapsed-folders.js';
 
 const rootElement = document.getElementById('pages-admin-root');
 const baseUrl = rootElement?.dataset.baseUrl || '';
@@ -361,40 +361,6 @@ function ShareDialog({ page, onClose, notify }) {
   );
 }
 
-// The tree is derived purely from uri path prefixes. Folders have no backing
-// entity: client-created folders live only in memory until a doc lands in them.
-function buildTree(pages, clientFolders) {
-  const root = { path: '', name: '', folders: new Map(), docs: [] };
-  function ensureFolder(folderPath) {
-    let node = root;
-    if (!folderPath) return node;
-    let current = '';
-    for (const segment of folderPath.split('/')) {
-      current = current ? `${current}/${segment}` : segment;
-      if (!node.folders.has(segment)) {
-        node.folders.set(segment, { path: current, name: segment, folders: new Map(), docs: [] });
-      }
-      node = node.folders.get(segment);
-    }
-    return node;
-  }
-  for (const folderPath of clientFolders) ensureFolder(folderPath);
-  for (const page of pages) ensureFolder(parentPath(page.uri)).docs.push(page);
-
-  function finalize(node) {
-    const folders = Array.from(node.folders.values())
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map(finalize);
-    const docs = node.docs.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    return { path: node.path, name: node.name, folders, docs };
-  }
-  return finalize(root);
-}
-
-function countDocs(node) {
-  return node.docs.length + node.folders.reduce((total, folder) => total + countDocs(folder), 0);
-}
-
 function RenameInput({ page, onCommit, onCancel }) {
   const [draft, setDraft] = useState(page.title || '');
   const committed = useRef(false);
@@ -434,7 +400,7 @@ function DocRow({ page, renaming, setRenaming, onRename, onShare, showFullUri = 
       className={`tree-row tree-doc${dragging ? ' is-dragging' : ''}`}
       draggable={draggable && !renaming}
       onDragStart={e => {
-        e.dataTransfer.setData('text/plain', page.pageId);
+        e.dataTransfer.setData('text/plain', JSON.stringify(page));
         e.dataTransfer.effectAllowed = 'move';
         setDragging(true);
       }}
@@ -468,10 +434,66 @@ function DocRow({ page, renaming, setRenaming, onRename, onShare, showFullUri = 
   );
 }
 
-function FolderNode({ node, collapsed, onToggle, onDropDoc, renaming, setRenaming, onRename, onShare }) {
+function FolderContents({ folder, query = '', treeProps, onFolderTotal }) {
+  const { revision, notify, onCounts, clientFolders, expanded } = treeProps;
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const params = offset => new URLSearchParams({ folder, q: query, offset, limit: 50 });
+  useEffect(() => {
+    let active = true;
+    setData(null); setError('');
+    api(`/api/pages?${new URLSearchParams({ folder, q: query, offset: 0, limit: 50 })}`)
+      .then(result => {
+        if (!active) return;
+        setData(result);
+        onFolderTotal?.(result.folderTotal);
+        if (!folder) onCounts(result);
+      }).catch(err => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, [folder, query, revision, onCounts, onFolderTotal]);
+
+  async function more() {
+    setBusy(true);
+    try {
+      const result = await api(`/api/pages?${params(data.nextOffset)}`);
+      setData(current => ({ ...result, items: [...current.items, ...result.items] }));
+    } catch (err) { notify('error', err.message); }
+    finally { setBusy(false); }
+  }
+  if (error) return <div role="alert">{error}</div>;
+  if (!data) return <div className="tree-empty-folder">Loading…</div>;
+  const items = data.items.slice();
+  if (!query) {
+    const paths = new Set(items.filter(item => item.kind === 'folder').map(item => item.path));
+    const prefix = folder ? `${folder}/` : '';
+    for (const path of [...clientFolders, ...expanded]) {
+      if (!path.startsWith(prefix) || path === folder) continue;
+      const name = path.slice(prefix.length).split('/')[0];
+      const child = `${prefix}${name}`;
+      if (!paths.has(child)) {
+        paths.add(child); items.unshift({ kind: 'folder', path: child, name, count: clientFolders.includes(child) ? 0 : null });
+      }
+    }
+  }
+  return <>
+    {items.map(item => item.kind === 'folder'
+      ? <FolderNode key={`folder:${item.path}`} node={item} {...treeProps} treeProps={treeProps} />
+      : <DocRow key={item.pageId} page={item} renaming={treeProps.renaming === item.pageId}
+          setRenaming={treeProps.setRenaming} onRename={treeProps.onRename} onShare={treeProps.onShare}
+          showFullUri={Boolean(query)} draggable={!query} />)}
+    {items.length === 0 ? <div className="tree-empty-folder">{query ? 'No matching pages.' : 'Empty folder — drop a document here to keep it.'}</div> : null}
+    {data.nextOffset !== null ? <button type="button" className="btn btn-sm btn-ghost load-more" disabled={busy} onClick={more}>
+      {busy ? 'Loading…' : 'Load more'}
+    </button> : null}
+  </>;
+}
+
+function FolderNode({ node, expanded, onToggle, onDropDoc, renaming, setRenaming, onRename, onShare, treeProps }) {
   const [dragOver, setDragOver] = useState(false);
-  const isOpen = !collapsed.has(node.path);
-  const total = countDocs(node);
+  const isOpen = expanded.has(node.path);
+  const [loadedCount, setLoadedCount] = useState(null);
+  const total = loadedCount ?? node.count;
   return (
     <div className="tree-group">
       <div
@@ -502,32 +524,7 @@ function FolderNode({ node, collapsed, onToggle, onDropDoc, renaming, setRenamin
       </div>
       {isOpen ? (
         <div className="tree-children">
-          {node.folders.map(folder => (
-            <FolderNode
-              key={folder.path}
-              node={folder}
-              collapsed={collapsed}
-              onToggle={onToggle}
-              onDropDoc={onDropDoc}
-              renaming={renaming}
-              setRenaming={setRenaming}
-              onRename={onRename}
-              onShare={onShare}
-            />
-          ))}
-          {node.docs.map(page => (
-            <DocRow
-              key={page.pageId}
-              page={page}
-              renaming={renaming === page.pageId}
-              setRenaming={setRenaming}
-              onRename={onRename}
-              onShare={onShare}
-            />
-          ))}
-          {node.folders.length === 0 && node.docs.length === 0 ? (
-            <div className="tree-empty-folder">Empty folder — drop a document here to keep it.</div>
-          ) : null}
+          <FolderContents folder={node.path} treeProps={treeProps} onFolderTotal={setLoadedCount} />
         </div>
       ) : null}
     </div>
@@ -535,14 +532,14 @@ function FolderNode({ node, collapsed, onToggle, onDropDoc, renaming, setRenamin
 }
 
 function AdminApp() {
-  const [pages, setPages] = useState([]);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState(null);
+  const [matchedTotal, setMatchedTotal] = useState(0);
+  const [revision, setRevision] = useState(0);
   const [query, setQuery] = useState('');
   const [searched, setSearched] = useState('');
   const [toast, setToast] = useState(null);
-  const [loading, setLoading] = useState(true);
   const [collapsed, setCollapsed] = useState(() => loadCollapsedFolders(baseUrl));
-  const [fullListLoaded, setFullListLoaded] = useState(false);
+  const [expanded, setExpanded] = useState(() => loadExpandedFolders(baseUrl));
   const [clientFolders, setClientFolders] = useState([]);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -556,43 +553,40 @@ function AdminApp() {
     setToast({ kind, message, id: toastSeq.current });
   }, []);
 
-  const loadPages = useCallback(async (nextQuery = '') => {
-    setLoading(true);
-    try {
-      const data = await api(`/api/pages${nextQuery ? `?q=${encodeURIComponent(nextQuery)}` : ''}`);
-      setPages(data.pages || []);
-      setTotal(data.total ?? data.pages?.length ?? 0);
-      setSearched(nextQuery);
-      setFullListLoaded(!nextQuery);
-    } catch (err) {
-      notify('error', err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [notify]);
-
-  useEffect(() => { loadPages(''); }, [loadPages]);
+  const loadPages = useCallback((nextQuery = '') => {
+    setSearched(nextQuery);
+    setRevision(current => current + 1);
+  }, []);
 
   useEffect(() => { saveCollapsedFolders(baseUrl, collapsed); }, [collapsed]);
-
+  useEffect(() => { saveExpandedFolders(baseUrl, expanded); }, [expanded]);
   useEffect(() => {
-    if (!loading) {
-      setCollapsed(current => pruneCollapsedFolders(current, pages, clientFolders, fullListLoaded));
-    }
-  }, [loading, pages, clientFolders, fullListLoaded]);
+    const paths = [...new Set([...loadCollapsedFolders(baseUrl), ...loadExpandedFolders(baseUrl)])];
+    Promise.all(paths.map(async path => {
+      try {
+        const data = await api(`/api/pages?${new URLSearchParams({ folderExists: path })}`);
+        return data.exists === false ? path : null;
+      } catch { return null; }
+    })).then(paths => {
+      const missing = paths.filter(path => path !== null);
+      setCollapsed(current => pruneCollapsedFolders(current, missing));
+      setExpanded(current => pruneCollapsedFolders(current, missing));
+    });
+  }, []);
 
-  const tree = useMemo(() => buildTree(pages, clientFolders), [pages, clientFolders]);
+  const onCounts = useCallback(data => {
+    setTotal(data.total);
+    setMatchedTotal(data.matchedTotal);
+  }, []);
+  const countLabel = total === null ? 'Loading…' : searched
+    ? `${matchedTotal} match${matchedTotal === 1 ? '' : 'es'} for “${searched}”`
+    : `${total} page${total === 1 ? '' : 's'}`;
 
-  const countLabel = useMemo(() => {
-    if (loading) return 'Loading…';
-    const n = pages.length;
-    if (searched) return `${n} match${n === 1 ? '' : 'es'} for “${searched}”`;
-    return `${total} page${total === 1 ? '' : 's'}`;
-  }, [loading, pages.length, searched, total]);
-
-  const moveDoc = useCallback(async (pageId, folderPath) => {
-    const page = pages.find(entry => entry.pageId === pageId);
-    if (!page) return;
+  const moveDoc = useCallback(async (pageData, folderPath) => {
+    let page;
+    try { page = JSON.parse(pageData); } catch { return; }
+    if (!page?.pageId || typeof page.uri !== 'string') return;
+    const pageId = page.pageId;
     if (parentPath(page.uri) === folderPath) return;
     const nextUri = folderPath ? `${folderPath}/${lastSegment(page.uri)}` : lastSegment(page.uri);
     try {
@@ -606,7 +600,7 @@ function AdminApp() {
     } catch (err) {
       notify('error', err.message);
     }
-  }, [loadPages, notify, pages, searched]);
+  }, [loadPages, notify, searched]);
 
   const renameDoc = useCallback(async (page, title) => {
     setRenaming(null);
@@ -623,13 +617,18 @@ function AdminApp() {
   }, [loadPages, notify, searched]);
 
   const toggleFolder = useCallback((folderPath) => {
-    setCollapsed(current => {
+    const opening = !expanded.has(folderPath);
+    setExpanded(current => {
       const next = new Set(current);
-      if (next.has(folderPath)) next.delete(folderPath);
-      else next.add(folderPath);
+      if (opening) next.add(folderPath); else next.delete(folderPath);
       return next;
     });
-  }, []);
+    setCollapsed(current => {
+      const next = new Set(current);
+      if (opening) next.delete(folderPath); else next.add(folderPath);
+      return next;
+    });
+  }, [expanded]);
 
   function createFolder(event) {
     event.preventDefault();
@@ -654,7 +653,8 @@ function AdminApp() {
     loadPages('');
   }
 
-  const treeIsEmpty = tree.folders.length === 0 && tree.docs.length === 0;
+  const treeProps = { expanded, onToggle: toggleFolder, onDropDoc: moveDoc, renaming, setRenaming,
+    onRename: renameDoc, onShare: setSharePage, clientFolders, revision, notify, onCounts };
 
   return (
     <div className="admin-shell">
@@ -711,81 +711,14 @@ function AdminApp() {
           </form>
         ) : null}
 
-        {loading ? (
-          <div className="admin-skeleton">
-            <div className="skeleton-row" /><div className="skeleton-row" /><div className="skeleton-row" />
-          </div>
-        ) : searched ? (
-          pages.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon"><Icon name="layers" /></div>
-              <p className="empty-title">No pages match “{searched}”.</p>
-              <button type="button" className="btn btn-sm btn-ghost" onClick={clearSearch}>Clear search</button>
-            </div>
-          ) : (
-            <div className="doc-tree">
-              {pages.map(page => (
-                <DocRow
-                  key={page.pageId}
-                  page={page}
-                  renaming={renaming === page.pageId}
-                  setRenaming={setRenaming}
-                  onRename={renameDoc}
-                  onShare={setSharePage}
-                  showFullUri
-                  draggable={false}
-                />
-              ))}
-            </div>
-          )
-        ) : treeIsEmpty ? (
-          <div className="empty-state">
-            <div className="empty-icon"><Icon name="layers" /></div>
-            <p className="empty-title">No pages registered yet.</p>
-            <p className="empty-hint">Register pages with the agent CLI — they’ll appear here.</p>
-          </div>
-        ) : (
-          <div
-            className={`doc-tree${rootDragOver ? ' is-drop-target' : ''}`}
-            onDragOver={e => {
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-              setRootDragOver(true);
-            }}
-            onDragLeave={e => {
-              if (e.target === e.currentTarget) setRootDragOver(false);
-            }}
-            onDrop={e => {
-              e.preventDefault();
-              setRootDragOver(false);
-              moveDoc(e.dataTransfer.getData('text/plain'), '');
-            }}
-          >
-            {tree.folders.map(folder => (
-              <FolderNode
-                key={folder.path}
-                node={folder}
-                collapsed={collapsed}
-                onToggle={toggleFolder}
-                onDropDoc={moveDoc}
-                renaming={renaming}
-                setRenaming={setRenaming}
-                onRename={renameDoc}
-                onShare={setSharePage}
-              />
-            ))}
-            {tree.docs.map(page => (
-              <DocRow
-                key={page.pageId}
-                page={page}
-                renaming={renaming === page.pageId}
-                setRenaming={setRenaming}
-                onRename={renameDoc}
-                onShare={setSharePage}
-              />
-            ))}
-          </div>
-        )}
+        <div
+          className={`doc-tree${rootDragOver ? ' is-drop-target' : ''}`}
+          onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setRootDragOver(true); }}
+          onDragLeave={e => { if (e.target === e.currentTarget) setRootDragOver(false); }}
+          onDrop={e => { e.preventDefault(); setRootDragOver(false); moveDoc(e.dataTransfer.getData('text/plain'), ''); }}
+        >
+          <FolderContents key={`${searched}:${revision}`} folder="" query={searched} treeProps={treeProps} />
+        </div>
       </section>
     </div>
   );

@@ -34,7 +34,7 @@ async function flush() {
   await new Promise(resolve => setImmediate(resolve));
 }
 
-async function createShellBridge({ outboundDenied = false, userActive = true, locationHash = '' } = {}) {
+async function createShellBridge({ outboundDenied = false, userActive = true, locationHash = '', ownerLookup = null } = {}) {
   const source = await readFile(new URL('../assets/bridge.js', import.meta.url), 'utf8');
   const windowListeners = new Map();
   const iframeListeners = new Map();
@@ -55,6 +55,10 @@ async function createShellBridge({ outboundDenied = false, userActive = true, lo
     contentWindow: childWindow,
     addEventListener(type, listener) { iframeListeners.set(type, listener); },
   };
+  if (ownerLookup) {
+    iframe.dataset.pageOpenCheck = '/api/pages';
+    delete iframe.dataset.pageOpenPaths;
+  }
   const assigned = [];
   const opened = [];
   const forwarded = [];
@@ -76,11 +80,13 @@ async function createShellBridge({ outboundDenied = false, userActive = true, lo
     navigator: { userActivation: activation },
     MessageChannel: FakeMessageChannel,
     URL,
+    URLSearchParams,
     Set,
     JSON,
     Object,
     Array,
     fetch: async (endpoint, options) => {
+      if (ownerLookup && endpoint.startsWith('/api/pages?')) return ownerLookup(endpoint, options);
       forwarded.push({ endpoint, body: JSON.parse(options.body) });
       return { json: async () => ({ ok: true, result: { forwarded: true } }) };
     },
@@ -103,8 +109,46 @@ async function createShellBridge({ outboundDenied = false, userActive = true, lo
     await flush();
     return response;
   };
-  return { activation, assigned, iframe, opened, forwarded, request };
+  return { activation, assigned, iframe, opened, forwarded, request, navigate: () => iframeListeners.get('load')() };
 }
+
+test('owner page.open validates registered targets through lookup without inline paths', async () => {
+  const checks = [];
+  const bridge = await createShellBridge({ ownerLookup: async (endpoint, options) => {
+    const url = new URL(endpoint, 'https://pages.example.test');
+    checks.push({ path: url.searchParams.get('viewPath'), credentials: options.credentials });
+    return { ok: true, json: async () => ({ ok: true, allowed: url.searchParams.get('viewPath') === '/p/registered' }) };
+  } });
+  assert.equal(bridge.iframe.dataset.pageOpenPaths, undefined);
+  assert.equal((await bridge.request('page.open', { href: '/p/registered#details' })).ok, true);
+  assert.deepEqual(bridge.assigned, ['https://pages.example.test/p/registered#details']);
+  assert.equal((await bridge.request('page.open', { href: '/p/unknown' })).error.code, 'navigation_denied');
+  assert.equal(bridge.assigned.length, 1);
+  assert.deepEqual(checks, [
+    { path: '/p/registered', credentials: 'same-origin' },
+    { path: '/p/unknown', credentials: 'same-origin' },
+  ]);
+  assert.deepEqual(bridge.forwarded, []);
+});
+
+test('owner page.open cannot navigate after its port expires during lookup', async () => {
+  let finishLookup;
+  let lookupStarted = false;
+  const bridge = await createShellBridge({ ownerLookup: async () => {
+    lookupStarted = true;
+    await new Promise(resolve => { finishLookup = resolve; });
+    return { ok: true, json: async () => ({ ok: true, allowed: true }) };
+  } });
+  // A revoked port intentionally receives no response, so observe navigation
+  // rather than awaiting the request's response promise.
+  void bridge.request('page.open', { href: '/p/registered' });
+  await flush();
+  assert.equal(lookupStarted, true);
+  bridge.navigate();
+  finishLookup();
+  await flush();
+  assert.deepEqual(bridge.assigned, []);
+});
 
 test('trusted shell bridge provisions once, preserves concurrency accounting, and revokes on navigation', async () => {
   const source = await readFile(new URL('../assets/bridge.js', import.meta.url), 'utf8');
