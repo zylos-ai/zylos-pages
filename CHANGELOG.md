@@ -34,6 +34,13 @@
   active links can change (`share_not_found` otherwise). `shares` and
   `share-info` default output now say which links are writable.
 
+### Fixed
+
+- `share-info` and `share-password` accept a share's download link
+  (`/s/<token>/download`, the attachment page's "Download file" button) and
+  raw Markdown link (`/s/<token>.md`), not only `/s/<token>`. Those links
+  failed with `share_not_found` although they belong to a live share.
+
 ## [0.18.0] - 2026-11-12
 
 ### Added

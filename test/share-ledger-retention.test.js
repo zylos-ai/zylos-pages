@@ -164,6 +164,39 @@ test('share-info accepts the whole share URL, not just the token', () => {
   assert.equal(info.share.uri, uri);
 });
 
+// The share page is not the only URL a link holder has: an attachment share's
+// "Download file" button points at /s/<token>/download, and agents read
+// Markdown from /s/<token>.md. Those must resolve to the same share.
+test('share-info accepts the download and raw Markdown URLs of a share', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'ledger/url-variants');
+  const shared = runCli(fixture, ['share', uri, '--duration', '30d', '--json']);
+
+  for (const input of [
+    `${shared.shortUrl}/download`,
+    `${shared.shortUrl}/download/`,
+    `${shared.shortUrl}/download?x=1#top`,
+    `${shared.shortUrl}.md`,
+    `${shared.shortUrl}.md?raw=1`,
+    `${shared.tokenId}.md`,
+  ]) {
+    const info = runCli(fixture, ['share-info', input, '--json']);
+    assert.equal(info.share.tokenId, shared.tokenId, input);
+    assert.equal(info.share.uri, uri, input);
+  }
+});
+
+test('share-info does not read a token out of other paths under a share', () => {
+  const fixture = makeFixture();
+  const uri = registerPage(fixture, 'ledger/url-other-paths');
+  const shared = runCli(fixture, ['share', uri, '--duration', '30d', '--json']);
+
+  for (const input of [`${shared.shortUrl}/unlock`, `${shared.shortUrl}.html`, `${shared.shortUrl}/download/extra`]) {
+    const failed = runCli(fixture, ['share-info', input, '--json'], { expectFailure: true });
+    assert.equal(failed.code, 'share_not_found', input);
+  }
+});
+
 // --- unregistered documents ---
 //
 // The other half of the ledger. Retaining expired rows is worthless if

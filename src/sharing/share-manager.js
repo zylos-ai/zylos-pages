@@ -1218,11 +1218,19 @@ export function listAllShares() {
 }
 
 // Accepts either a bare token id or the whole share URL someone pasted, since
-// what people actually hold is the link, not the id inside it.
+// what people actually hold is the link, not the id inside it. That includes
+// the other representations a share serves: the attachment download
+// (/s/<token>/download) and the raw Markdown (/s/<token>.md).
 export function tokenIdFromInput(input) {
   const raw = String(input || '').trim();
   if (!raw) return null;
-  const candidate = raw.includes('/') ? raw.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop() : raw;
+  let candidate = raw;
+  if (raw.includes('/')) {
+    const segments = raw.split(/[?#]/)[0].replace(/\/+$/, '').split('/');
+    candidate = segments.pop();
+    if (candidate === 'download') candidate = segments.pop();
+  }
+  if (candidate?.endsWith('.md')) candidate = candidate.slice(0, -'.md'.length);
   return isTokenId(candidate) ? candidate : null;
 }
 
