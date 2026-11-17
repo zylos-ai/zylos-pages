@@ -2,44 +2,68 @@
 
 ## [Unreleased]
 
-### Changed
-
-- Paginated folder pages and title search keep recently updated pages first,
-  with URI tie-breaking for stable batch boundaries; folders stay first by name.
-- Admin and sidebar lists fetch direct folder children and title searches in
-  SQL-backed batches of 50, with counts and Load more controls. Admin expansion
-  memory survives pagination, and sidebar navigation reveals the current path.
-  Owner page-open checks run on the server instead of embedding all page URIs.
+## [0.19.0] - 2026-11-18
 
 ### Added
 
-- Admin and CLI lists include all registered pages; the API includes a total,
-  and CLI `list --limit N` optionally bounds output. Legacy title search stays capped
-  at 100 results (#209).
-- Admin folder collapse state persists per instance, with stale paths pruned only
-  after server confirmation (#208).
-- Relative audio/video assets stream with HTTP Range support, a separate 200 MiB
-  media ceiling, and six-hour signed URLs capped by share expiry (#207).
+- Pages can play their own audio and video. Relative `.mp3`, `.m4a`, `.ogg`,
+  `.wav`, `.mp4` and `.webm` assets next to a page are served with HTTP Range
+  support, so seeking fetches only the needed part, and are streamed from disk
+  instead of read into memory. They have their own size ceiling,
+  `security.maxMediaFileSizeBytes` (default 200 MiB), so the page render
+  ceiling no longer limits them. Access rules are the same as for images:
+  owner session or a valid share, with the path confined to the page's folder.
+  Media signed URLs stay valid for six hours (capped by the share's expiry) so
+  a long recording can be paused and resumed; revoking, expiring or
+  re-passwording a share still invalidates them immediately. CSP allows media
+  from the site itself only (#207).
+- Admin folder collapse state is remembered per instance across reloads and
+  searches; remembered folders are pruned only after the server confirms they
+  no longer exist (#208).
+- Admin and CLI lists include all registered pages instead of the first 100,
+  and the admin shows the total. CLI `pages list --limit N` optionally bounds
+  the output (#209).
 - Agent CLI `move <uri> <new-uri>` and `rename <uri> --title <title>` change a
   registered page's uri or title in place, the way the console's drag-to-move
   and rename already could. The page keeps its page id, so share links, state
   and attachments follow it. Before this the CLI could only unregister and
   re-register, which minted a new page id, tombstoned the page's share links
-  and left its state and attachments behind.
+  and left its state and attachments behind (#201).
 - `pages.js share-writable enable|disable <token-or-url>` grants or withdraws
   photo upload/delete on an existing share link from the agent CLI, as the
   console's per-link toggle already could. Before, the only CLI way to make a
   `--writable` link read-only was to revoke it and send a new one. The token,
   expiry and password stay the same and open sessions follow at once; only
   active links can change (`share_not_found` otherwise). `shares` and
-  `share-info` default output now say which links are writable.
+  `share-info` default output now say which links are writable (#205).
+
+### Changed
+
+- The admin list and the page sidebar load one folder level at a time, 50
+  items per batch, with a **Load more** button; title search runs on the
+  server in the same batches. With 2,400 pages the admin's first load drops
+  from about 1.1 MB to 3.4 KB and the per-page sidebar from about 777 KB to
+  8.5 KB. Pages inside a folder stay most recently updated first. Owner
+  navigation checks run on the server instead of embedding every page URI in
+  the HTML; share pages keep their linked-destination allowlist. The new
+  paged `GET /api/pages?folder=&limit=&offset=` (owner session only) sits
+  beside the unchanged legacy form, whose `q` search keeps its 100-result
+  cap (#210).
 
 ### Fixed
 
+- Title search (`GET /api/pages?q=` and `pages.js list --q`) matches `%`, `_`
+  and `\` literally. A query containing `_` or `%`, such as `Q3_report`,
+  previously found nothing (#202).
 - `share-info` and `share-password` accept a share's download link
   (`/s/<token>/download`, the attachment page's "Download file" button) and
   raw Markdown link (`/s/<token>.md`), not only `/s/<token>`. Those links
-  failed with `share_not_found` although they belong to a live share.
+  failed with `share_not_found` although they belong to a live share (#206).
+
+### Upgrade notes
+
+- No config change is needed. When `security.maxMediaFileSizeBytes` is absent
+  from `config.json` the 200 MiB default applies; upgrades do not write it.
 
 ## [0.18.0] - 2026-11-12
 
