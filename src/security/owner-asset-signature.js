@@ -17,8 +17,8 @@ function signature({ uri, realPath, expiresAt, config }) {
     .digest('hex');
 }
 
-export function ownerAssetExpiresAt(now = Date.now()) {
-  return now + OWNER_ASSET_MAX_AGE_MS;
+export function ownerAssetExpiresAt(now = Date.now(), maxAgeMs = OWNER_ASSET_MAX_AGE_MS) {
+  return now + maxAgeMs;
 }
 
 export function createOwnerAssetSignature(input) {

@@ -1075,9 +1075,9 @@ export function clearShareScopeCookieHeader(cookiePath = '/') {
   return `${SHARE_SCOPE_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=${cookiePath}; Max-Age=0`;
 }
 
-export function shareAssetExpiresAt(shareExpiresAt) {
+export function shareAssetExpiresAt(shareExpiresAt, maxAgeMs = SHARE_ASSET_MAX_AGE_MS) {
   const current = nowMs();
-  const cap = current + SHARE_ASSET_MAX_AGE_MS;
+  const cap = current + maxAgeMs;
   if (!shareExpiresAt || shareExpiresAt === 0) return cap;
   return Math.max(0, Math.min(cap, Number(shareExpiresAt)));
 }

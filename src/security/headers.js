@@ -12,6 +12,7 @@ export const HTML_ARTIFACT_CSP = "default-src 'self'; " +
   "script-src 'self' 'unsafe-inline'; " +
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: https:; " +
+  "media-src 'self'; " +
   "connect-src 'self'; " +
   "object-src 'none'; " +
   "frame-ancestors 'self'; " +
@@ -23,6 +24,7 @@ export const SANDBOXED_HTML_ARTIFACT_CSP = "sandbox allow-scripts; " +
   "style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: https:; " +
   "font-src 'self' data:; " +
+  "media-src 'self'; " +
   "connect-src 'self'; " +
   "object-src 'none'; " +
   "frame-ancestors 'self'; " +
@@ -32,7 +34,7 @@ export function sandboxedHtmlArtifactCsp({ scriptsEnabled = true, outboundDenied
   const sandbox = scriptsEnabled ? 'sandbox allow-scripts' : 'sandbox';
   const script = scriptsEnabled ? "script-src 'self' 'unsafe-inline'" : "script-src 'none'";
   if (!outboundDenied) {
-    return `${sandbox}; default-src 'self'; ${script}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'`;
+    return `${sandbox}; default-src 'self'; ${script}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'`;
   }
   return `${sandbox}; default-src 'none'; ${script}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; font-src 'self' data:; connect-src 'none'; form-action 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; object-src 'none'; frame-ancestors 'self'; base-uri 'self'`;
 }

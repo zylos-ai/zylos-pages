@@ -37,6 +37,7 @@ export const DEFAULT_CONFIG = {
   security: {
     allowRawHtml: false,
     maxFileSizeBytes: 10 * 1024 * 1024,
+    maxMediaFileSizeBytes: 200 * 1024 * 1024,
     maxAttachmentSizeBytes: 50 * 1024 * 1024,
     renderTimeoutMs: 5000,
   },

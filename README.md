@@ -164,6 +164,7 @@ Edit `~/zylos/components/pages/config.json`:
   "security": {
     "allowRawHtml": false,
     "maxFileSizeBytes": 10485760,
+    "maxMediaFileSizeBytes": 209715200,
     "maxAttachmentSizeBytes": 52428800
   },
   "sharing": {
@@ -203,7 +204,9 @@ The `state` ceilings and write-rate limits apply only to share-link visitors;
 authenticated owner writes are intentionally exempt.
 
 `security.maxFileSizeBytes` remains the render ceiling (default 10 MiB; it
-also caps each relative image or asset a page loads). `rateLimit` caps
+also caps each relative non-media asset a page loads). Audio/video assets use
+`security.maxMediaFileSizeBytes` (default 200 MiB), stream with HTTP Range support,
+and have signed URLs valid for six hours (capped by the share expiry). `rateLimit` caps
 requests per client IP (default 600 per 60 s). Upgrades never change a value
 already present in `config.json`; the new defaults apply to new installs and
 to keys that are absent. The separate

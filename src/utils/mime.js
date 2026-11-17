@@ -11,6 +11,12 @@ const MIME_TYPES = new Map([
   ['.css', 'text/css; charset=utf-8'],
   ['.js', 'application/javascript; charset=utf-8'],
   ['.pdf', 'application/pdf'],
+  ['.mp3', 'audio/mpeg'],
+  ['.m4a', 'audio/mp4'],
+  ['.ogg', 'audio/ogg'],
+  ['.wav', 'audio/wav'],
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm'],
   ['.woff', 'font/woff'],
   ['.woff2', 'font/woff2'],
   ['.ttf', 'font/ttf'],
@@ -23,4 +29,8 @@ export function isAssetExtension(extension) {
 
 export function getMimeType(extension) {
   return MIME_TYPES.get(String(extension || '').toLowerCase()) || null;
+}
+
+export function isMediaType(mimeType) {
+  return /^(audio|video)\//.test(mimeType || '');
 }

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getLogicalPage } from './page-store.js';
-import { getMimeType, isAssetExtension } from '../utils/mime.js';
+import { getMimeType, isAssetExtension, isMediaType } from '../utils/mime.js';
 import { normalizeSlug } from '../utils/slug.js';
 import {
   createShareAssetSignature,
@@ -199,8 +199,9 @@ async function signAssetReference(value, context) {
     const resolved = await resolveLogicalAsset(uri, assetPath, {
       config: context.config,
     });
+    const mediaMaxAgeMs = isMediaType(resolved.mimeType) ? 6 * 3600_000 : undefined;
     if (context.viewer === 'owner') {
-      const exp = context.expiresAt;
+      const exp = mediaMaxAgeMs ? ownerAssetExpiresAt(Date.now(), mediaMaxAgeMs) : context.expiresAt;
       const sig = createOwnerAssetSignature({
         uri: context.pageUri,
         realPath: resolved.filePath,
@@ -209,7 +210,7 @@ async function signAssetReference(value, context) {
       });
       return signedOwnerAssetPath(context.baseUrl, context.pageUri, assetPath, { exp, sig });
     }
-    const exp = shareAssetExpiresAt(context.share.expiresAt);
+    const exp = shareAssetExpiresAt(context.share.expiresAt, mediaMaxAgeMs);
     const sig = createShareAssetSignature({
       uri: context.pageUri,
       realPath: resolved.filePath,

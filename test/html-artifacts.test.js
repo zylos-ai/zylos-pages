@@ -22,6 +22,7 @@ const {
   HTML_ARTIFACT_CSP,
   SANDBOXED_HTML_ARTIFACT_CSP,
   securityHeaders,
+  sandboxedHtmlArtifactCsp,
 } = await import('../src/security/headers.js');
 const { notFoundTemplate, errorTemplate } = await import('../src/templates/errorTemplate.js');
 const { resolvePageDescriptor, resolveSafePath } = await import('../src/security/pathGuard.js');
@@ -654,5 +655,14 @@ test('500 error response carries X-Robots-Tag header', async () => {
     assert.match(await res.text(), /<meta name="robots" content="noindex, nofollow">/);
   } finally {
     server.close();
+  }
+});
+
+
+test('HTML artifact CSPs explicitly allow same-origin media', () => {
+  for (const csp of [HTML_ARTIFACT_CSP, SANDBOXED_HTML_ARTIFACT_CSP,
+    sandboxedHtmlArtifactCsp(), sandboxedHtmlArtifactCsp({ scriptsEnabled: false }),
+    sandboxedHtmlArtifactCsp({ outboundDenied: true })]) {
+    assert.match(csp, /(?:^|; )media-src 'self'(?: data:)?;/);
   }
 });

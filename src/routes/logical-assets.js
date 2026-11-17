@@ -1,4 +1,5 @@
 import { readFile, stat } from 'node:fs/promises';
+import { isMediaType } from '../utils/mime.js';
 import { resolveLogicalAsset } from '../pages/asset-resolver.js';
 import { verifyShareAssetSignature } from '../sharing/share-manager.js';
 import { verifyOwnerAssetSignature } from '../security/owner-asset-signature.js';
@@ -48,9 +49,22 @@ export function setupLogicalAssetRoute(app, config) {
         allowOpaqueSandboxOrigin(req, res);
       }
       const info = await stat(filePath);
-      const maxFileSizeBytes = config.security?.maxFileSizeBytes ?? 10 * 1024 * 1024;
+      const media = isMediaType(mimeType);
+      const maxFileSizeBytes = media
+        ? (config.security?.maxMediaFileSizeBytes ?? 200 * 1024 * 1024)
+        : (config.security?.maxFileSizeBytes ?? 10 * 1024 * 1024);
       if (info.size > maxFileSizeBytes) {
         return res.status(413).send(`File too large: ${info.size} bytes (max ${maxFileSizeBytes})`);
+      }
+      if (media) {
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Cache-Control', signedRequest ? 'no-store' : 'public, max-age=3600');
+        // Express streams from disk, uses a size/mtime ETag, and handles Range/HEAD.
+        return res.sendFile(filePath, { cacheControl: false, dotfiles: 'allow' }, (err) => {
+          if (!err || err.code === 'ECONNABORTED' || err.syscall === 'write') return;
+          if (err.status === 416) return res.status(416).set(err.headers).end();
+          next(err);
+        });
       }
       const content = await readFile(filePath);
       const etag = generateEtag(content);

@@ -16,6 +16,7 @@ const { setupAssetRoute } = await import('../src/routes/asset.js');
 const { adminRoute } = await import('../src/routes/admin.js');
 const { setupLogicalAssetRoute } = await import('../src/routes/logical-assets.js');
 const { pageRoute } = await import('../src/routes/pages.js');
+const { rewriteSignedShareAssetRefs } = await import('../src/pages/asset-resolver.js');
 const { registerLogicalPage } = await import('../src/pages/page-store.js');
 const { setupShareApi } = await import('../src/routes/share-api.js');
 const { setupStateApi } = await import('../src/routes/state-api.js');
@@ -73,6 +74,7 @@ async function withServer(config, fn) {
   initCache({ maxEntries: 50, ttlSeconds: 60 });
   const app = express();
   app.use(securityHeaders());
+  app.use('/_assets', express.static(path.resolve('assets')));
   setupAuth(app, config.auth || { password: hashPassword('secret') });
   setupShareApi(app, config.sharing || { enabled: true }, config);
   setupStateApi(app);
@@ -855,6 +857,143 @@ test('markdown, html artifact, extension redirects, and state API still work wit
       assert.equal(res.status, 200);
     });
   } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('media assets stream full/ranged bodies, HEAD, size limits and signed URLs', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    const config = baseConfig(contentDir);
+    config.security.htmlArtifactSandboxDisabled = false;
+    config.security.maxMediaFileSizeBytes = 4096;
+    const pagePath = path.join(contentDir, 'media.html');
+    await writeFile(pagePath, '<!doctype html><audio src="a.mp3"><source src="a.m4a"></audio><img src="cover.png">');
+    const bytes = Buffer.from(Array.from({ length: 2048 }, (_, i) => i % 256));
+    await writeFile(path.join(contentDir, 'a.mp3'), bytes);
+    await writeFile(path.join(contentDir, 'a.m4a'), bytes);
+    await writeFile(path.join(contentDir, 'large.mp3'), Buffer.alloc(4097));
+    await writeFile(path.join(contentDir, 'cover.png'), 'image');
+    registerPage(config, 'media', pagePath);
+    const share = createShare('media', '24h');
+
+    await withServer(config, async ({ origin, fetch: ownerFetch }) => {
+      const assetUrl = `${origin}/assets/media?path=a.mp3`;
+      const full = await ownerFetch(assetUrl);
+      assert.equal(full.status, 200);
+      assert.equal(full.headers.get('content-type'), 'audio/mpeg');
+      assert.equal(full.headers.get('accept-ranges'), 'bytes');
+      assert.equal(full.headers.get('content-length'), '2048');
+      assert.deepEqual(Buffer.from(await full.arrayBuffer()), bytes);
+      for (const [range, start, end] of [['bytes=0-99', 0, 99], ['bytes=2000-', 2000, 2047], ['bytes=-48', 2000, 2047]]) {
+        const res = await ownerFetch(assetUrl, { headers: { Range: range } });
+        assert.equal(res.status, 206);
+        assert.equal(res.headers.get('content-range'), `bytes ${start}-${end}/2048`);
+        assert.equal(Number(res.headers.get('content-length')), end - start + 1);
+        assert.deepEqual(Buffer.from(await res.arrayBuffer()), bytes.subarray(start, end + 1));
+      }
+      const invalid = await ownerFetch(assetUrl, { headers: { Range: 'bytes=2048-' } });
+      assert.equal(invalid.status, 416);
+      assert.equal(invalid.headers.get('content-range'), 'bytes */2048');
+      const head = await ownerFetch(assetUrl, { method: 'HEAD' });
+      assert.equal(head.status, 200);
+      assert.equal(head.headers.get('content-length'), '2048');
+      assert.equal((await head.arrayBuffer()).byteLength, 0);
+      assert.equal(head.headers.get('etag'), full.headers.get('etag'));
+      assert.match(full.headers.get('etag'), /^W\//);
+      assert.equal((await ownerFetch(`${origin}/assets/media?path=large.mp3`)).status, 413);
+      assert.equal((await fetch(assetUrl, { redirect: 'manual' })).status, 403);
+      assert.equal((await fetch(`${origin}/a.mp3`, { redirect: 'manual' })).status, 403);
+
+      const before = Date.now();
+      const ownerPage = await ownerFetch(`${origin}/p/media?raw=1`, { headers: { 'Sec-Fetch-Dest': 'iframe' } });
+      assert.match(ownerPage.headers.get('content-security-policy'), /media-src 'self'/);
+      const ownerHtml = await ownerPage.text();
+      const sharePage = await fetch(`${origin}/s/${share.tokenId}?raw=1`, { headers: { 'Sec-Fetch-Dest': 'iframe' } });
+      const shareHtml = await sharePage.text();
+      for (const html of [ownerHtml, shareHtml]) {
+        for (const name of ['a.mp3', 'a.m4a']) {
+          const signed = new URL(signedAssetPath(html, name), origin);
+          assert.ok(Number(signed.searchParams.get('exp')) >= before + 6 * 3600_000);
+          assert.ok(Number(signed.searchParams.get('exp')) <= Date.now() + 6 * 3600_000);
+          const res = await fetch(signed, { headers: { Range: 'bytes=0-99', Origin: 'null' } });
+          assert.equal(res.status, 206);
+          assert.equal(res.headers.get('access-control-allow-origin'), 'null');
+          assert.deepEqual(Buffer.from(await res.arrayBuffer()), bytes.subarray(0, 100));
+        }
+        const imageExp = Number(new URL(signedAssetPath(html, 'cover.png'), origin).searchParams.get('exp'));
+        const maxAge = html === ownerHtml ? 5 * 60_000 : 3600_000;
+        assert.ok(imageExp >= before + maxAge && imageExp <= Date.now() + maxAge);
+      }
+      const expiresAt = Date.now() + 3600_000;
+      const shortHtml = await rewriteSignedShareAssetRefs('<audio src="a.mp3">', {
+        pageUri: 'media', config, share: { ...share, expiresAt },
+      });
+      const shortUrl = new URL(signedAssetPath(shortHtml, 'a.mp3'), origin);
+      assert.equal(Number(shortUrl.searchParams.get('exp')), expiresAt);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+test('Chromium plays and seeks signed media in owner and share opaque sandboxes', {
+  skip: !process.env.PAGES_PLAYWRIGHT_CORE_PATH || !process.env.PAGES_CHROMIUM_PATH,
+  timeout: 30_000,
+}, async () => {
+  const { createRequire } = await import('node:module');
+  const { chromium } = createRequire(import.meta.url)(process.env.PAGES_PLAYWRIGHT_CORE_PATH);
+  const contentDir = await makeContentDir();
+  const browser = await chromium.launch({ executablePath: process.env.PAGES_CHROMIUM_PATH,
+    headless: true, args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
+  try {
+    const config = baseConfig(contentDir);
+    config.security.htmlArtifactSandboxDisabled = false;
+    config.security.maxFileSizeBytes = 4 * 1024 * 1024;
+    const pagePath = path.join(contentDir, 'player.html');
+    await writeFile(pagePath, '<!doctype html><audio controls src="first.wav"></audio><audio controls src="second.wav"></audio>');
+    // Valid 90-second mono PCM WAV, over the configured 4 MiB render ceiling.
+    const wav = Buffer.alloc(44 + 90 * 44100 * 2);
+    wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+    wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+    wav.writeUInt32LE(44100, 24); wav.writeUInt32LE(88200, 28);
+    wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36);
+    wav.writeUInt32LE(wav.length - 44, 40);
+    await writeFile(path.join(contentDir, 'first.wav'), wav);
+    await writeFile(path.join(contentDir, 'second.wav'), wav);
+    registerPage(config, 'player', pagePath);
+    const share = createShare('player', '24h');
+    await withServer(config, async ({ origin, ownerCookie }) => {
+      for (const viewer of ['owner', 'share']) {
+        const context = await browser.newContext();
+        try {
+          if (viewer === 'owner') await context.setExtraHTTPHeaders({ Cookie: ownerCookie });
+          const page = await context.newPage();
+          const partials = [];
+          page.on('response', res => {
+            if (res.url().includes('/assets/player?') && res.status() === 206) partials.push(res.url());
+          });
+          await page.goto(`${origin}${viewer === 'owner' ? '/p/player' : `/s/${share.tokenId}`}`);
+          const frame = page.frameLocator('iframe');
+          for (let i = 0; i < 2; i++) {
+            const audio = frame.locator('audio').nth(i);
+            await audio.evaluate(async el => { el.muted = true; await el.play(); });
+            await audio.evaluate(el => { el.currentTime = 70; });
+            await audio.evaluate(el => new Promise((resolve, reject) => {
+              if (el.readyState >= 3 && el.currentTime >= 70) return resolve();
+              el.addEventListener('seeked', resolve, { once: true });
+              el.addEventListener('error', () => reject(new Error('media error')), { once: true });
+            }));
+            assert.ok(await audio.evaluate(el => !el.paused && el.currentTime >= 70));
+            await audio.evaluate(el => el.pause());
+          }
+          assert.ok(partials.some(url => url.includes('first.wav')), `${viewer}: first track Range`);
+          assert.ok(partials.some(url => url.includes('second.wav')), `${viewer}: second track Range`);
+        } finally { await context.close(); }
+      }
+    });
+  } finally {
+    await browser.close();
     await rm(contentDir, { recursive: true, force: true });
   }
 });

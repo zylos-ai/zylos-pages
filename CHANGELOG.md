@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Relative audio/video assets stream with HTTP Range support, a separate 200 MiB
+  media ceiling, and six-hour signed URLs capped by share expiry (#207).
+
 ## [0.18.0] - 2026-11-12
 
 ### Added
