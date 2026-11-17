@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { loadCollapsedFolders, saveCollapsedFolders, pruneCollapsedFolders } from './collapsed-folders.js';
 
 const rootElement = document.getElementById('pages-admin-root');
 const baseUrl = rootElement?.dataset.baseUrl || '';
@@ -539,7 +540,8 @@ function AdminApp() {
   const [searched, setSearched] = useState('');
   const [toast, setToast] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [collapsed, setCollapsed] = useState(() => new Set());
+  const [collapsed, setCollapsed] = useState(() => loadCollapsedFolders(baseUrl));
+  const [fullListLoaded, setFullListLoaded] = useState(false);
   const [clientFolders, setClientFolders] = useState([]);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -559,6 +561,7 @@ function AdminApp() {
       const data = await api(`/api/pages${nextQuery ? `?q=${encodeURIComponent(nextQuery)}` : ''}`);
       setPages(data.pages || []);
       setSearched(nextQuery);
+      setFullListLoaded(!nextQuery);
     } catch (err) {
       notify('error', err.message);
     } finally {
@@ -567,6 +570,14 @@ function AdminApp() {
   }, [notify]);
 
   useEffect(() => { loadPages(''); }, [loadPages]);
+
+  useEffect(() => { saveCollapsedFolders(baseUrl, collapsed); }, [collapsed]);
+
+  useEffect(() => {
+    if (!loading) {
+      setCollapsed(current => pruneCollapsedFolders(current, pages, clientFolders, fullListLoaded));
+    }
+  }, [loading, pages, clientFolders, fullListLoaded]);
 
   const tree = useMemo(() => buildTree(pages, clientFolders), [pages, clientFolders]);
 

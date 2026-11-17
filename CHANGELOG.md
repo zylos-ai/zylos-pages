@@ -4,6 +4,8 @@
 
 ### Added
 
+- Admin folder collapse state persists per instance, with stale paths pruned only
+  after the full list loads (#208).
 - Relative audio/video assets stream with HTTP Range support, a separate 200 MiB
   media ceiling, and six-hour signed URLs capped by share expiry (#207).
 
