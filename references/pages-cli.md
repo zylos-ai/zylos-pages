@@ -49,6 +49,9 @@ node src/cli/pages.js share-password get <token-id-or-url>
 node src/cli/pages.js share-password enable <token-id-or-url>
 printf '%s\n' "$SHARE_SECRET" | node src/cli/pages.js share-password rotate <token-id-or-url> --password-stdin
 node src/cli/pages.js share-password disable <token-id-or-url>
+node src/cli/pages.js share reports/q3 --duration 7d --writable
+node src/cli/pages.js share-writable enable <token-id-or-url>
+node src/cli/pages.js share-writable disable <token-id-or-url>
 node src/cli/pages.js unshare --token <token-id>
 node src/cli/pages.js unshare reports/q3
 ```
@@ -74,6 +77,10 @@ password to stdout, so treat terminal capture and `--json` output as sensitive.
   - `enable` and `rotate` generate a 6-digit numeric password by default, or read a provided 4–1024 byte (UTF-8) password from stdin via `--password-stdin` — never from argv. They print the secret to stdout **once** (`--json`: `protection.password`), so the same terminal-capture caution as `share --password` applies.
   - Every successful change bumps the share's credential version, which **invalidates all existing browser unlock sessions** for that link; visitors re-enter the (new) password. `disable` clears sessions the same way.
   - Stable failures: `share_not_found` (unknown, expired, or revoked token), `already_protected`, `not_protected`, `invalid_password` (provided secret outside the 4–1024 byte bounds), `credential_conflict` (share changed concurrently — retry), `password_custody_unavailable` (keyring missing/unreadable).
+- **`share --writable` mints a link whose holders can also upload and delete the page's photos** (the attachment API); without it a link is read-only. **`share-writable enable|disable <token-or-url>` grants or withdraws that on an existing link** — the CLI side of the console's per-link toggle — so a circulated link can be made read-only without revoking it and sending a new one.
+  - The change applies to the very next request, including browsers that already opened the link; the token, expiry and password are unchanged.
+  - It operates on **active** shares only. Unknown, expired, revoked and document-deleted links fail with `share_not_found` and are left unchanged; a missing action or link fails with `invalid_args`.
+  - It is idempotent. The result reports `canWriteAttachments` (the state now) and `changed` (`false` when the link already was in that state). `shares` and `share-info` report `canWriteAttachments` in JSON, and their default output marks writable links (`writable` per `shares` row, `Writable: yes|no` in `share-info`).
 - **`unshare --token <token-id>` revokes exactly one link. `unshare <uri>` revokes EVERY active token on that page** — run `shares <uri>` first and look at what else is live. An unknown token and an already-revoked token both fail with `share_not_found`; the CLI does not distinguish them.
 - Revocation sets a flag. The row and its token stay in the table, so revoking is reversible and is not a guarantee that the URL can never work again. Expiry no longer deletes rows either, which is what keeps `share-info` able to answer for lapsed links.
 - `unregister <uri>` keeps that page's share rows as tombstones, stamped with the uri the page had, and deletes only the browser sessions. The links stop working at once (every access path resolves through the page row, which is gone), but `share-info` still names the historical document and reports `status: document_deleted`. `shares --all` excludes tombstones — it answers what is exposed now, not what once was. The unregister result reports `tombstonedShares`, not `removedShares`.

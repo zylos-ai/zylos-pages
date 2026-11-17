@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import { mkdtemp, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import http from 'node:http';
@@ -465,6 +466,43 @@ test('the capability is read fresh on every request: grant and withdrawal both t
       await patchSharePermission(origin, share.tokenId, false, authCookie);
       res = await upload(origin, 'renovation-checklist', 'toggle-withdrawn', cookies);
       assert.equal(res.status, 403);
+    });
+  } finally {
+    await rm(contentDir, { recursive: true, force: true });
+  }
+});
+
+// The agent CLI flips the same column from another process, against the same
+// pages.db, while the service keeps running; the open session must follow it.
+function shareWritableCli(action, tokenId) {
+  const result = spawnSync(process.execPath, [
+    path.join(import.meta.dirname, '..', 'src/cli/pages.js'), 'share-writable', action, tokenId, '--json',
+  ], { env: { ...process.env, PAGES_DATA_DIR: dataDir }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return JSON.parse(result.stdout);
+}
+
+test('share-writable from the CLI grants and withdraws uploads on an already-open session', async () => {
+  const contentDir = await makeContentDir();
+  try {
+    await withServer(baseConfig(contentDir), async ({ origin }) => {
+      const share = createShare('renovation-checklist', '24h');
+      const cookies = await openShare(origin, share.tokenId);
+
+      let res = await upload(origin, 'renovation-checklist', 'cli-before', cookies);
+      assert.equal(res.status, 403);
+
+      assert.equal(shareWritableCli('enable', share.tokenId).canWriteAttachments, true);
+      res = await upload(origin, 'renovation-checklist', 'cli-granted', cookies);
+      assert.equal(res.status, 201);
+      const { attachment } = await res.json();
+
+      assert.equal(shareWritableCli('disable', share.tokenId).canWriteAttachments, false);
+      res = await upload(origin, 'renovation-checklist', 'cli-withdrawn', cookies);
+      assert.equal(res.status, 403);
+      res = await deleteAttachment(origin, 'renovation-checklist', attachment.attachmentId, cookies);
+      assert.equal(res.status, 403);
+      assert.ok(storedAttachment('renovation-checklist', attachment.attachmentId));
     });
   } finally {
     await rm(contentDir, { recursive: true, force: true });

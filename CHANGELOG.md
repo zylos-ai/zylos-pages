@@ -26,6 +26,13 @@
   and attachments follow it. Before this the CLI could only unregister and
   re-register, which minted a new page id, tombstoned the page's share links
   and left its state and attachments behind.
+- `pages.js share-writable enable|disable <token-or-url>` grants or withdraws
+  photo upload/delete on an existing share link from the agent CLI, as the
+  console's per-link toggle already could. Before, the only CLI way to make a
+  `--writable` link read-only was to revoke it and send a new one. The token,
+  expiry and password stay the same and open sessions follow at once; only
+  active links can change (`share_not_found` otherwise). `shares` and
+  `share-info` default output now say which links are writable.
 
 ## [0.18.0] - 2026-11-12
 

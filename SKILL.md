@@ -90,6 +90,11 @@ node $PAGES_DIR/src/cli/pages.js share-password enable https://domain/s/<token-i
 printf '%s\n' "$SHARE_SECRET" | node $PAGES_DIR/src/cli/pages.js share-password rotate <token-id> --password-stdin
 node $PAGES_DIR/src/cli/pages.js share-password disable <token-id>
 
+# Let link holders upload and delete this page's photos (share --writable at
+# mint time), or take that away again, without changing or re-sending the link.
+node $PAGES_DIR/src/cli/pages.js share-writable enable <token-id>
+node $PAGES_DIR/src/cli/pages.js share-writable disable https://domain/s/<token-id>
+
 # Custody keyring maintenance (init/rotate/retire) is rare operator work:
 # see references/pages-cli.md before running share-password keyring commands.
 

@@ -29,6 +29,7 @@ import {
   revokeAllForSlug,
   revokeShare,
   setSharePassword,
+  updateShareAttachmentPermission,
 } from '../sharing/share-manager.js';
 import { generateSharePassword } from '../sharing/share-password-crypto.js';
 import {
@@ -71,6 +72,8 @@ Usage:
   node pages.js share-password disable <token-or-url> [--json]
   node pages.js share-password keyring init|rotate [--json]
   node pages.js share-password keyring retire <key-id> [--json]
+  node pages.js share-writable enable|disable <token-or-url> [--json]
+                                                       # grant or withdraw photo upload/delete on an existing link
   node pages.js unshare <uri> [--json]                 # revokes ALL tokens on that uri
   node pages.js unshare --token <token-id> [--json]    # revokes exactly one token
   node pages.js unregister <uri> [--json]
@@ -89,6 +92,7 @@ Examples:
   printf '%s\\n' "$SECRET" | node pages.js share-password rotate 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1 --password-stdin
   node pages.js share-password disable 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js share renovation-checklist --duration 7d --writable
+  node pages.js share-writable disable 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js shares --all
   node pages.js share-info https://example.com/s/7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
   node pages.js unshare --token 7d640a8d1f2e4b3c9a05e6d7c8b9a0f1
@@ -156,6 +160,7 @@ function humanize(result) {
       ...(result.all ? [share.uri ?? '(page no longer registered)'] : []),
       share.expiresAt ? new Date(Number(share.expiresAt)).toISOString() : 'never',
       share.protection?.type === 'password' ? 'protected' : 'unprotected',
+      ...(share.canWriteAttachments ? ['writable'] : []),
     ].join(' ')).join('\n') || 'no active shares';
   }
   if (result.command === 'unshare') {
@@ -181,6 +186,7 @@ function humanize(result) {
       ...(share.protection?.type === 'password'
         ? [`Retrievable: ${share.protection.retrievable === true ? 'yes' : 'no'}`]
         : []),
+      `Writable: ${share.canWriteAttachments ? 'yes' : 'no'}`,
       ...(share.revokedAt ? [`Revoked:  ${new Date(Number(share.revokedAt)).toISOString()}`] : []),
     ].join('\n');
   }
@@ -201,6 +207,14 @@ function humanize(result) {
       return `rotated share password keyring (${result.activeKeyId}); re-encrypted ${result.reencrypted} share(s)`;
     }
     if (result.action === 'keyring-retire') return `retired share password key ${result.retiredKeyId}`;
+  }
+  if (result.command === 'share-writable') {
+    const link = `link ${result.tokenId} on ${result.uri}`;
+    const mode = result.canWriteAttachments ? 'writable' : 'read-only';
+    if (!result.changed) return `${link} is already ${mode}; nothing changed`;
+    return result.canWriteAttachments
+      ? `${link} is now writable; link holders can upload and delete this page's photos`
+      : `${link} is now read-only; link holders can no longer upload or delete this page's photos`;
   }
   if (result.command === 'unregister') return `unregistered ${result.uri}`;
   if (result.command === 'move') return `moved ${result.previousUri} -> ${result.uri}`;
@@ -604,6 +618,34 @@ async function commandSharePassword(args) {
   throw new CliError('invalid_args', 'expected: share-password keyring init, rotate, or retire <key-id>');
 }
 
+// The CLI side of the console's per-link "editable" toggle (PATCH
+// /api/share/:tokenId). Without it, the only way for an agent to withdraw
+// --writable from a circulated link was to revoke it and send a new one.
+function commandShareWritable(args) {
+  const action = args._[0];
+  if (action !== 'enable' && action !== 'disable') {
+    throw new CliError('invalid_args', 'expected: share-writable enable|disable <token-or-url>');
+  }
+  const input = args._[1] || args.token || args.tokenId || args.url;
+  if (!input) throw new CliError('invalid_args', `share-writable ${action} requires a share token or URL`);
+  const described = describeShare(input);
+  if (!described || described.status !== 'active') throw new CliError('share_not_found', 'active share not found');
+  const canWriteAttachments = action === 'enable';
+  // The UPDATE re-checks liveness, so a link revoked or expired since the
+  // lookup above is refused here rather than silently changed.
+  const updated = updateShareAttachmentPermission(described.tokenId, canWriteAttachments);
+  if (!updated) throw new CliError('share_not_found', 'active share not found');
+  output({
+    ok: true,
+    command: 'share-writable',
+    action,
+    tokenId: updated.tokenId,
+    uri: updated.uri,
+    canWriteAttachments: updated.canWriteAttachments,
+    changed: described.canWriteAttachments !== updated.canWriteAttachments,
+  }, args.json);
+}
+
 function commandUnshare(args) {
   // Revoking one token requires --token: `unshare <uri>` revokes EVERY token on
   // that uri, which is easy to reach for when only one link was meant to die.
@@ -753,6 +795,8 @@ export async function main(argv) {
       return commandShareInfo(args);
     case 'share-password':
       return commandSharePassword(args);
+    case 'share-writable':
+      return commandShareWritable(args);
     case 'unshare':
       return commandUnshare(args);
     case 'unregister':
