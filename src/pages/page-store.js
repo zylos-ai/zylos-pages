@@ -468,7 +468,7 @@ export function searchLogicalPages(query = '') {
         ORDER BY updated_at DESC
         LIMIT 100
       `).all(`%${trimmed.replace(/[%_]/g, char => `\\${char}`)}%`)
-    : db.prepare('SELECT * FROM logical_pages ORDER BY updated_at DESC LIMIT 100').all();
+    : db.prepare('SELECT * FROM logical_pages ORDER BY updated_at DESC').all();
   return rows.map(mapPageRecord);
 }
 

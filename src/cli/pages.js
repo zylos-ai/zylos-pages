@@ -52,7 +52,7 @@ Usage:
   node pages.js register --source <path> --uri <uri> [--title <title>] [--component <name>]
                          [--capabilities state.read,state.write,attachment.read,attachment.write]
                          [--deny-outbound] [--no-scripts] [--json]
-  node pages.js list [--q <query>] [--json]
+  node pages.js list [--q <query>] [--limit <N>] [--json]
   node pages.js share <uri> [--duration 24h|7d|30d|permanent] [--writable] [--password|--password-stdin] [--json]
                                                        # --writable also lets link holders upload/delete this page's photos
   node pages.js shares <uri> [--json]
@@ -365,8 +365,13 @@ function commandRegister(args) {
 function commandList(args) {
   const config = getConfig();
   requireExternalFilesEnabled(config);
+  const limit = args.limit === undefined ? undefined : Number(args.limit);
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit <= 0)) {
+    throw new CliError('invalid_args', '--limit must be a positive integer');
+  }
   const entries = searchLogicalPages(args.q || '')
     .sort((a, b) => a.uri.localeCompare(b.uri))
+    .slice(0, limit)
     .map(entry => ({
       slug: entry.uri,
       uri: entry.uri,

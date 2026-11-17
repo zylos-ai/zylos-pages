@@ -27,11 +27,14 @@ download are capped by `security.maxAttachmentSizeBytes`.
 
 ```bash
 node src/cli/pages.js list
+node src/cli/pages.js list --limit 50
 node src/cli/pages.js list --q report --json
 ```
 
 Lists registered logical pages from the DB, including `type` (`markdown`,
-`html`, or `attachment`). `--q` searches page titles.
+`html`, or `attachment`). The default list includes all pages; `--limit N`
+returns at most N entries (a positive integer). `--q` searches page titles and
+keeps the title-search ceiling of 100 matches.
 
 ### Share / Shares / Share-info / Unshare
 

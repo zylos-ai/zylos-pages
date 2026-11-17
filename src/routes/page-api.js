@@ -64,7 +64,7 @@ export function setupPageApi(app, config) {
       ...page,
       url: browserPath(browserBaseFromRequest(req), `p/${page.uri}`),
     }));
-    res.json({ ok: true, pages });
+    res.json({ ok: true, pages, total: pages.length });
   });
 
   app.post('/api/pages', async (req, res) => {

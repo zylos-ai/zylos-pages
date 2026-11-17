@@ -536,6 +536,7 @@ function FolderNode({ node, collapsed, onToggle, onDropDoc, renaming, setRenamin
 
 function AdminApp() {
   const [pages, setPages] = useState([]);
+  const [total, setTotal] = useState(0);
   const [query, setQuery] = useState('');
   const [searched, setSearched] = useState('');
   const [toast, setToast] = useState(null);
@@ -560,6 +561,7 @@ function AdminApp() {
     try {
       const data = await api(`/api/pages${nextQuery ? `?q=${encodeURIComponent(nextQuery)}` : ''}`);
       setPages(data.pages || []);
+      setTotal(data.total ?? data.pages?.length ?? 0);
       setSearched(nextQuery);
       setFullListLoaded(!nextQuery);
     } catch (err) {
@@ -585,8 +587,8 @@ function AdminApp() {
     if (loading) return 'Loading…';
     const n = pages.length;
     if (searched) return `${n} match${n === 1 ? '' : 'es'} for “${searched}”`;
-    return `${n} document${n === 1 ? '' : 's'}`;
-  }, [loading, pages.length, searched]);
+    return `${total} page${total === 1 ? '' : 's'}`;
+  }, [loading, pages.length, searched, total]);
 
   const moveDoc = useCallback(async (pageId, folderPath) => {
     const page = pages.find(entry => entry.pageId === pageId);

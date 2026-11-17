@@ -4,6 +4,9 @@
 
 ### Added
 
+- Admin and CLI lists include all registered pages; the API includes a total,
+  and CLI `list --limit N` optionally bounds output. Title search stays capped
+  at 100 results (#209).
 - Admin folder collapse state persists per instance, with stale paths pruned only
   after the full list loads (#208).
 - Relative audio/video assets stream with HTTP Range support, a separate 200 MiB
