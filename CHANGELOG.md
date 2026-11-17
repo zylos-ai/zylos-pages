@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Paginated folder pages and title search keep recently updated pages first,
+  with URI tie-breaking for stable batch boundaries; folders stay first by name.
 - Admin and sidebar lists fetch direct folder children and title searches in
   SQL-backed batches of 50, with counts and Load more controls. Admin expansion
   memory survives pagination, and sidebar navigation reveals the current path.

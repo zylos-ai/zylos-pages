@@ -174,3 +174,48 @@ test('real auth middleware refuses anonymous list browsing and accepts owner ses
   assert.equal(owner.status, 200);
   assert.equal((await owner.json()).items.length, 50);
 });
+
+
+test('recent-first folder/search batches retain every page across tied timestamps', async t => {
+  const update = db.prepare('UPDATE logical_pages SET updated_at = ? WHERE uri = ?');
+  const fixture = Array.from({ length: 225 }, (_, i) => ({
+    uri: `bulk/page-${String(i).padStart(3, '0')}`, title: `Match ${i}`, updatedAt: 1000 + i % 7,
+  }));
+  db.transaction(() => {
+    // Insert in reverse URI order so timestamp ties cannot pass by insertion order.
+    db.prepare("DELETE FROM logical_pages WHERE uri LIKE 'bulk/%'").run();
+    for (const page of fixture.slice().reverse()) seed(page.uri, page.title);
+    for (const page of fixture) update.run(page.updatedAt, page.uri);
+    update.run(20000, 'root');
+  })();
+  try {
+    const expected = fixture.slice().sort((a, b) => b.updatedAt - a.updatedAt || (a.uri < b.uri ? -1 : 1));
+    assert.deepEqual(expected.slice(0, 3).map(page => page.uri), ['bulk/page-006', 'bulk/page-013', 'bulk/page-020']);
+    for (const scope of [{ folder: 'bulk' }, { query: 'Match' }]) {
+      const seen = [];
+      let offset = 0;
+      do {
+        const batch = listPageChildren({ ...scope, offset, limit: 17 });
+        assert.equal(batch.matchedTotal, 225);
+        seen.push(...batch.items.map(page => page.uri));
+        offset = batch.nextOffset;
+      } while (offset !== null);
+      assert.equal(seen.length, 225);
+      assert.equal(new Set(seen).size, 225);
+      assert.deepEqual(seen, expected.map(page => page.uri));
+    }
+    const root = listPageChildren({ limit: 100 }).items;
+    assert.equal(root.at(-1).uri, 'root', 'even the newest root page follows folders');
+    const folders = root.slice(0, -1);
+    assert.ok(folders.every(item => item.kind === 'folder'));
+    assert.deepEqual(folders.map(item => item.path), folders.map(item => item.path).sort());
+    const get = await serve(t);
+    for (const scope of [{ folder: 'bulk' }, { q: 'Match' }]) {
+      const body = await (await get({ ...scope, limit: '2' })).json();
+      assert.deepEqual(body.items.map(page => page.uri), expected.slice(0, 2).map(page => page.uri));
+      assert.equal(body.nextOffset, 2);
+    }
+  } finally {
+    db.prepare('UPDATE logical_pages SET updated_at = 1').run();
+  }
+});

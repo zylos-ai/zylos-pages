@@ -509,19 +509,19 @@ export function listPageChildren({ folder = '', query = '', offset = 0, limit = 
   if (trimmed) {
     const pattern = `%${escapeLike(trimmed)}%`;
     matchedTotal = db.prepare("SELECT COUNT(*) AS count FROM logical_pages WHERE title LIKE ? ESCAPE '\\'").get(pattern).count;
-    items = db.prepare("SELECT * FROM logical_pages WHERE title LIKE ? ESCAPE '\\' ORDER BY uri COLLATE BINARY LIMIT ? OFFSET ?")
+    items = db.prepare("SELECT * FROM logical_pages WHERE title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC, uri COLLATE BINARY LIMIT ? OFFSET ?")
       .all(pattern, limit, offset).map(row => ({ kind: 'page', ...mapPageRecord(row) }));
   } else {
     const prefix = folder ? `${folder}/` : '';
     const children = `WITH descendants AS (
-        SELECT uri, substr(uri, length(@prefix) + 1) AS remainder
+        SELECT uri, updated_at, substr(uri, length(@prefix) + 1) AS remainder
         FROM logical_pages WHERE uri LIKE @pattern ESCAPE '\\'
       ), children AS (
         SELECT 'folder' AS kind, @prefix || substr(remainder, 1, instr(remainder, '/') - 1) AS path,
-          COUNT(*) AS count, NULL AS uri
+          COUNT(*) AS count, NULL AS uri, NULL AS updated_at
         FROM descendants WHERE instr(remainder, '/') > 0 GROUP BY path
         UNION ALL
-        SELECT 'page', uri, NULL, uri FROM descendants WHERE instr(remainder, '/') = 0
+        SELECT 'page', uri, NULL, uri, updated_at FROM descendants WHERE instr(remainder, '/') = 0
       )`;
     const params = { prefix, pattern: `${escapeLike(prefix)}%` };
     const counts = db.prepare(`${children} SELECT
@@ -530,9 +530,9 @@ export function listPageChildren({ folder = '', query = '', offset = 0, limit = 
     ({ matchedTotal, folderTotal } = counts);
     const rows = db.prepare(`${children}
       SELECT children.kind, children.path, children.count, logical_pages.*
-      FROM (SELECT * FROM children ORDER BY kind, path COLLATE BINARY LIMIT @limit OFFSET @offset) AS children
+      FROM (SELECT * FROM children ORDER BY kind, updated_at DESC, path COLLATE BINARY LIMIT @limit OFFSET @offset) AS children
       LEFT JOIN logical_pages ON logical_pages.uri = children.uri
-      ORDER BY children.kind, children.path COLLATE BINARY`).all({ ...params, limit, offset });
+      ORDER BY children.kind, children.updated_at DESC, children.path COLLATE BINARY`).all({ ...params, limit, offset });
     items = rows.map(row => row.kind === 'folder'
       ? { kind: 'folder', path: row.path, name: row.path.slice(row.path.lastIndexOf('/') + 1), count: row.count }
       : { kind: 'page', ...mapPageRecord(row) });
